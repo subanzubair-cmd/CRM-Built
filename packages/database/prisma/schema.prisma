@@ -1,0 +1,1201 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum LeadType {
+  DIRECT_TO_SELLER
+  DIRECT_TO_AGENT
+}
+
+enum LeadStatus {
+  ACTIVE
+  WARM
+  DEAD
+  REFERRED_TO_AGENT
+}
+
+enum ActiveLeadStage {
+  NEW_LEAD
+  DISCOVERY
+  INTERESTED_ADD_TO_FOLLOW_UP
+  VETTED_AGENTS
+  APPOINTMENT_MADE
+  DUE_DILIGENCE
+  OFFER_MADE
+  OFFER_FOLLOW_UP
+  UNDER_CONTRACT
+}
+
+enum TmStage {
+  NEW_CONTRACT
+  MARKETING_TO_BUYERS
+  SHOWING_TO_BUYERS
+  EVALUATING_OFFERS
+  ACCEPTED_OFFER
+  CLEAR_TO_CLOSE
+}
+
+enum InventoryStage {
+  NEW_INVENTORY
+  GETTING_ESTIMATES
+  UNDER_REHAB
+  LISTED_FOR_SALE
+  UNDER_CONTRACT
+}
+
+enum ExitStrategy {
+  WHOLESALE_ASSIGNMENT
+  WHOLESALE_DOUBLE_CLOSE
+  INSTALLMENT
+  SELLER_FINANCE
+  FIX_AND_FLIP
+  JOINT_VENTURE
+  NEW_CONSTRUCTION
+  NOVATION
+  PARTNERSHIP
+  PROJECT_MANAGEMENT
+  RETAIL_LISTING
+  SALE_LEASEBACK
+  WHOLETAIL
+  RENTAL
+  TURNKEY
+}
+
+enum DispoStage {
+  POTENTIAL_BUYER
+  COLD_BUYER
+  WARM_BUYER
+  HOT_BUYER
+  DISPO_OFFER_RECEIVED
+  SOLD
+}
+
+enum PropertyStatus {
+  LEAD
+  UNDER_CONTRACT
+  IN_TM
+  IN_INVENTORY
+  IN_DISPO
+  SOLD
+  RENTAL
+  DEAD
+  WARM
+  REFERRED
+}
+
+enum ContactType {
+  SELLER
+  BUYER
+  AGENT
+  VENDOR
+  OTHER
+}
+
+enum MessageChannel {
+  SMS
+  CALL
+  RVM
+  EMAIL
+  NOTE
+  SYSTEM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum TaskStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskType {
+  FOLLOW_UP
+  APPOINTMENT
+  OFFER
+  CALL
+  EMAIL
+  OTHER
+}
+
+enum CampaignType {
+  DRIP
+  BROADCAST
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum AutomationTrigger {
+  STAGE_CHANGE
+  LEAD_CREATED
+  TAG_ADDED
+  NO_CONTACT_X_DAYS
+  OFFER_MADE
+  UNDER_CONTRACT
+  MANUAL
+}
+
+enum AutomationActionType {
+  SEND_SMS
+  SEND_EMAIL
+  SEND_RVM
+  ADD_TAG
+  CHANGE_STAGE
+  ASSIGN_USER
+  CREATE_TASK
+  ENROLL_CAMPAIGN
+}
+
+enum FileType {
+  DOCUMENT
+  IMAGE
+  CONTRACT
+  INSPECTION
+  PHOTO
+  OTHER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  INVITED
+}
+
+enum NotificationType {
+  NEW_LEAD
+  MESSAGE_RECEIVED
+  TASK_DUE
+  STAGE_CHANGE
+  MENTION
+  SYSTEM
+}
+
+enum WebhookEventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum AiEngine {
+  TEXT_CONVERSATIONAL
+  LEAD_SUMMARIZATION
+  HOT_LEAD_DETECTION
+  VOICE_CONVERSATIONAL
+  DRIP_PERSONALIZATION
+}
+
+// ─── Core ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  phone        String?
+  avatarUrl    String?
+  status       UserStatus @default(ACTIVE)
+  roleId              String
+  role                Role       @relation(fields: [roleId], references: [id])
+  permissions         String[]   // Direct user permissions (decoupled from role)
+  sessionVersion      Int        @default(0)  // Incremented on permission change to invalidate stale JWTs
+  marketIds           String[]
+  notificationPrefs   Json?
+  vacationMode        Boolean    @default(false)
+  vacationStart       DateTime?
+  vacationEnd         DateTime?
+  createdAt           DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  assignedProperties Property[]     @relation("AssignedTo")
+  createdProperties  Property[]     @relation("CreatedBy")
+  dispoProperties    Property[]     @relation("dispoAssignee")
+  financialGoals     FinancialGoal[]
+  tasks              Task[]         @relation("AssignedToUser")
+  createdTasks       Task[]         @relation("CreatedByUser")
+  messages           Message[]      @relation("SentBy")
+  activityLogs       ActivityLog[]
+  notifications      Notification[]
+  savedFilters       SavedFilter[]
+  activeCalls        ActiveCall[] @relation("AgentCalls")
+  campaignAssignments UserCampaignAssignment[]
+  roleConfigs         UserRoleConfig[]
+  leadCampaignAssignments LeadCampaignUser[] @relation("LeadCampaignAssignedUsers")
+  propertyTeamAssignments PropertyTeamAssignment[] @relation("PropertyTeamUser")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  permissions String[]
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users                User[]
+  campaignAssignments  UserCampaignAssignment[]
+  userConfigs          UserRoleConfig[]
+  leadCampaignToggles  LeadCampaignRoleToggle[]
+  propertyTeamAssignments PropertyTeamAssignment[]
+}
+
+model UserRoleConfig {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId            String
+  role              Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  leadAccessEnabled Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+enum LeadCampaignType {
+  DTS
+  DTA
+  BUYER
+  VENDOR
+}
+
+enum LeadAssignmentMethod {
+  ROUND_ROBIN
+  FIRST_TO_CLAIM
+  MANUAL
+}
+
+model LeadSource {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  isSystem  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leadCampaigns LeadCampaign[]
+}
+
+model LeadCampaign {
+  id                String                   @id @default(cuid())
+  name              String
+  type              LeadCampaignType
+  phoneNumberId     String?                  @unique
+  phoneNumber       TwilioNumber?            @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+  leadSourceId      String?
+  leadSource        LeadSource?              @relation(fields: [leadSourceId], references: [id])
+  callFlowName      String?
+  assignmentMethod  LeadAssignmentMethod     @default(ROUND_ROBIN)
+  isActive          Boolean                  @default(true)
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  properties        Property[]
+  roleToggles       LeadCampaignRoleToggle[]
+  assignedUsers     LeadCampaignUser[]
+  userAssignments   UserCampaignAssignment[]
+  activeCalls       ActiveCall[]
+  messages          Message[]
+
+  @@index([type])
+  @@index([leadSourceId])
+}
+
+model LeadCampaignRoleToggle {
+  id             String       @id @default(cuid())
+  leadCampaignId String
+  leadCampaign   LeadCampaign @relation(fields: [leadCampaignId], references: [id], onDelete: Cascade)
+  roleId         String
+  role           Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  enabled        Boolean      @default(false)
+
+  @@unique([leadCampaignId, roleId])
+}
+
+model PropertyTeamAssignment {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roleId     String
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation("PropertyTeamUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([propertyId, roleId])
+  @@index([userId])
+  @@index([propertyId])
+}
+
+model LeadCampaignUser {
+  id             String       @id @default(cuid())
+  leadCampaignId String
+  leadCampaign   LeadCampaign @relation(fields: [leadCampaignId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation("LeadCampaignAssignedUsers", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@unique([leadCampaignId, userId])
+  @@index([userId])
+}
+
+model CommProviderConfig {
+  id            String   @id @default(cuid())
+  providerName  String   @unique  // 'twilio' | 'telnyx' | 'signalhouse'
+  isActive      Boolean  @default(false)
+  defaultNumber String?
+  configJson    Json     @default("{}")  // provider-specific credentials (secret fields encrypted)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model UserCampaignAssignment {
+  id                    String       @id @default(cuid())
+  userId                String
+  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId                String
+  role                  Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  campaignId            String
+  campaign              LeadCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  assignNewLeads        Boolean      @default(false)
+  backfillExistingLeads Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@unique([userId, roleId, campaignId])
+  @@index([campaignId, roleId, assignNewLeads])
+}
+
+model Market {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  state     String   @default("TX")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  properties Property[]
+  campaigns  Campaign[]
+}
+
+// ─── Property ─────────────────────────────────────────────────────────────────
+
+model Property {
+  id                String          @id @default(cuid())
+  streetAddress     String?
+  city              String?
+  state             String?
+  zip               String?
+  county            String?
+  normalizedAddress String?
+  bedrooms          Int?
+  bathrooms         Decimal?        @db.Decimal(4, 1)
+  sqft              Int?
+  yearBuilt         Int?
+  lotSize           Decimal?        @db.Decimal(10, 2)
+  propertyType      String?
+  leadType          LeadType
+  leadStatus        LeadStatus      @default(ACTIVE)
+  propertyStatus    PropertyStatus  @default(LEAD)
+  activeLeadStage   ActiveLeadStage?
+  exitStrategy      ExitStrategy?
+  isHot             Boolean         @default(false)
+  isFavorited       Boolean         @default(false)
+  isOpen            Boolean         @default(true)
+  askingPrice       Decimal?        @db.Decimal(12, 2)
+  offerPrice        Decimal?        @db.Decimal(12, 2)
+  soldPrice         Decimal?        @db.Decimal(12, 2)
+  arv               Decimal?        @db.Decimal(12, 2)
+  repairEstimate    Decimal?        @db.Decimal(12, 2)
+  tmStage           TmStage?
+  inventoryStage    InventoryStage?
+  inDispo           Boolean         @default(false)
+  soldAt            DateTime?
+  rentalAt          DateTime?
+  marketId          String?
+  market            Market?         @relation(fields: [marketId], references: [id])
+  assignedToId      String?
+  assignedTo        User?           @relation("AssignedTo", fields: [assignedToId], references: [id])
+  createdById       String
+  createdBy         User            @relation("CreatedBy", fields: [createdById], references: [id])
+  source            String?
+  campaignName      String?
+  leadCampaignId    String?
+  leadCampaign      LeadCampaign?   @relation(fields: [leadCampaignId], references: [id], onDelete: SetNull)
+  aiSummary         String?
+  tags              String[]
+  contractDate         DateTime?
+  offerType            String?
+  offerDate            DateTime?
+  expectedProfit       Decimal?        @db.Decimal(12, 2)
+  expectedProfitDate   DateTime?
+  contractPrice        Decimal?        @db.Decimal(12, 2)
+  scheduledClosingDate DateTime?
+  contingencies        String?
+  leadNumber           String?         @unique
+  occupancyStatus      String?
+  propertyCondition    String?
+  createdAt            DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  lastActivityAt    DateTime?
+  dispoAssigneeId    String?
+  dispoAssignee      User?    @relation("dispoAssignee", fields: [dispoAssigneeId], references: [id])
+  leadScore          Int?
+  underContractPrice Decimal? @db.Decimal(12, 2)
+  deadAt             DateTime?
+  warmAt             DateTime?
+  referredAt         DateTime?
+  underContractAt    DateTime?
+  versionNo          Int      @default(1)
+  estimatedValue     Decimal? @db.Decimal(12, 2)
+  valuationJson      Json?
+  mortgageInfoJson   Json?
+  taxInfoJson        Json?
+  garageType         String?
+  garageArea         Int?
+  apn                String?
+  defaultOutboundNumber String?
+
+  contacts            PropertyContact[]
+  conversations       Conversation[]
+  messages            Message[]
+  tasks               Task[]
+  appointments        Appointment[]
+  stageHistory        StageHistory[]
+  files               PropertyFile[]
+  campaignEnrollments CampaignEnrollment[]
+  buyerMatches        BuyerMatch[]
+  offers              BuyerOffer[]
+  leadOffers          LeadOffer[]
+  aiLogs              AiLog[]
+  activityLogs        ActivityLog[]
+  notes               Note[]
+  activeCalls         ActiveCall[]
+  teamAssignments     PropertyTeamAssignment[]
+}
+
+model Contact {
+  id        String      @id @default(cuid())
+  type      ContactType
+  firstName String
+  lastName  String?
+  email     String?
+  phone     String?
+  phone2    String?
+  address   String?
+  city      String?
+  state     String?
+  zip       String?
+  notes            String?
+  tags             String[]
+  doNotCall        Boolean     @default(false)
+  doNotText        Boolean     @default(false)
+  doNotEmail       Boolean     @default(false)
+  preferredChannel String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  properties    PropertyContact[]
+  buyerProfile  Buyer?
+  vendorProfile Vendor?
+  messages      Message[]
+  conversations Conversation[]
+}
+
+model PropertyContact {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  contactId  String
+  contact    Contact  @relation(fields: [contactId], references: [id])
+  isPrimary  Boolean  @default(false)
+  role       String?
+  createdAt  DateTime @default(now())
+
+  @@unique([propertyId, contactId])
+}
+
+model StageHistory {
+  id            String   @id @default(cuid())
+  propertyId    String
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  pipeline      String
+  fromStage     String?
+  toStage       String
+  changedById   String?
+  changedByName String?
+  reason        String?
+  createdAt     DateTime @default(now())
+}
+
+// ─── Communications ───────────────────────────────────────────────────────────
+
+model Conversation {
+  id            String    @id @default(cuid())
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactPhone  String?
+  contactEmail  String?
+  isRead        Boolean   @default(false)
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  messages Message[]
+
+  @@unique([propertyId, contactId])
+  @@index([contactId])
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  propertyId     String?
+  property       Property?        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation?    @relation(fields: [conversationId], references: [id])
+  channel        MessageChannel
+  direction      MessageDirection
+  body           String?
+  subject        String?
+  from           String?
+  to             String?
+  sentById       String?
+  sentBy         User?            @relation("SentBy", fields: [sentById], references: [id])
+  twilioSid      String?
+  emailMessageId String?
+  isAiGenerated  Boolean          @default(false)
+  aiReviewed     Boolean          @default(false)
+  readAt         DateTime?
+  deliveredAt    DateTime?
+  failedAt       DateTime?
+  failReason      String?
+  callOutcome     String?
+  durationSeconds Int?
+  contactId       String?
+  contact         Contact?         @relation(fields: [contactId], references: [id])
+  leadCampaignId  String?
+  leadCampaign    LeadCampaign?    @relation(fields: [leadCampaignId], references: [id], onDelete: SetNull)
+  status          String?  // sent/delivered/failed
+  recordingUrl    String?
+  aiSummaryText   String?  @db.Text
+  aiGradeJson     Json?
+  scheduledAt     DateTime?
+  timezone        String?
+  attachmentUrls  String[]
+  createdAt       DateTime         @default(now())
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  body       String
+  authorId   String?
+  authorName String?
+  isPinned   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── Tasks / Calendar ─────────────────────────────────────────────────────────
+
+model Task {
+  id           String     @id @default(cuid())
+  propertyId   String?
+  property     Property?  @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  title        String
+  description  String?
+  type         TaskType   @default(OTHER)
+  status       TaskStatus @default(PENDING)
+  priority     Int        @default(0)
+  dueAt        DateTime?
+  completedAt  DateTime?
+  assignedToId String?
+  assignedTo   User?      @relation("AssignedToUser", fields: [assignedToId], references: [id])
+  createdById  String?
+  createdBy    User?      @relation("CreatedByUser", fields: [createdById], references: [id])
+  dueTime          String?  // HH:mm format
+  sourceType       String?  @default("manual") // manual/template/automation/system
+  templateId       String?
+  repeatType       String?  // none/daily/weekly/monthly/custom
+  repeatConfigJson Json?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Appointment {
+  id            String   @id @default(cuid())
+  propertyId    String
+  property      Property @relation(fields: [propertyId], references: [id])
+  title         String
+  description   String?
+  startAt       DateTime
+  endAt         DateTime
+  location      String?
+  attendees     String[]
+  googleEventId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─── Campaigns / Automations ──────────────────────────────────────────────────
+
+model Campaign {
+  id          String         @id @default(cuid())
+  name        String
+  type        CampaignType
+  status      CampaignStatus @default(DRAFT)
+  description String?
+  marketId    String?
+  market      Market?        @relation(fields: [marketId], references: [id])
+  tags        String[]
+  leadTypes   LeadType[]
+  aiEnabled   Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  steps           CampaignStep[]
+  enrollments     CampaignEnrollment[]
+}
+
+model CampaignStep {
+  id         String         @id @default(cuid())
+  campaignId String
+  campaign   Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  order      Int
+  delayDays  Int            @default(0)
+  delayHours Int            @default(0)
+  channel    MessageChannel
+  subject    String?
+  body       String
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+}
+
+model CampaignEnrollment {
+  id          String    @id @default(cuid())
+  campaignId  String
+  campaign    Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  propertyId  String
+  property    Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  currentStep Int       @default(0)
+  isActive    Boolean   @default(true)
+  pausedAt    DateTime?
+  completedAt DateTime?
+  enrolledAt  DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([campaignId, propertyId])
+}
+
+model Automation {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  trigger     AutomationTrigger
+  conditions  Json              @default("{}")
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  actions AutomationAction[]
+}
+
+model AutomationAction {
+  id           String               @id @default(cuid())
+  automationId String
+  automation   Automation           @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  order        Int
+  actionType   AutomationActionType
+  config       Json                 @default("{}")
+  createdAt    DateTime             @default(now())
+}
+
+enum WorkspaceType {
+  leads
+  tm
+  inventory
+  sold
+  rental
+}
+
+enum TemplateType {
+  sms
+  email
+  rvm
+  task
+  direct_mail
+}
+
+model StatusAutomation {
+  id              String        @id @default(cuid())
+  workspaceType   WorkspaceType
+  stageCode       String        // e.g. NEW_LEADS, DISCOVERY, etc. (remains free-form — enum per workspace would be 50+ values)
+  dripCampaignId  String?
+  taskTemplateId  String?
+  taskTitle       String?
+  taskAssigneeId  String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([workspaceType, stageCode])
+}
+
+model Template {
+  id           String       @id @default(cuid())
+  templateType TemplateType
+  name         String
+  category     String?
+  subject      String?      // for email templates
+  bodyContent  String       @db.Text
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+// ─── Buyers / Vendors ─────────────────────────────────────────────────────────
+
+model Buyer {
+  id               String   @id @default(cuid())
+  contactId        String   @unique
+  contact          Contact  @relation(fields: [contactId], references: [id])
+  isActive         Boolean  @default(true)
+  preferredMarkets String[]
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  criteria BuyerCriteria[]
+  matches  BuyerMatch[]
+  offers   BuyerOffer[]
+}
+
+model BuyerCriteria {
+  id            String   @id @default(cuid())
+  buyerId       String
+  buyer         Buyer    @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  markets       String[]
+  propertyTypes String[]
+  minBeds       Int?
+  maxBeds       Int?
+  minBaths      Decimal? @db.Decimal(4, 1)
+  maxBaths      Decimal? @db.Decimal(4, 1)
+  minPrice      Decimal? @db.Decimal(12, 2)
+  maxPrice      Decimal? @db.Decimal(12, 2)
+  minSqft       Int?
+  maxSqft       Int?
+  minArv        Decimal? @db.Decimal(12, 2)
+  maxArv        Decimal? @db.Decimal(12, 2)
+  maxRepairs    Decimal? @db.Decimal(12, 2)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model BuyerMatch {
+  id         String     @id @default(cuid())
+  buyerId    String
+  buyer      Buyer      @relation(fields: [buyerId], references: [id])
+  propertyId String
+  property   Property   @relation(fields: [propertyId], references: [id])
+  score      Int        @default(0)
+  notified   Boolean    @default(false)
+  dispoStage  DispoStage @default(POTENTIAL_BUYER)
+  dispoOfferAmount Decimal? @db.Decimal(12, 2)
+  createdAt        DateTime @default(now())
+
+  @@unique([buyerId, propertyId])
+}
+
+model BuyerOffer {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id])
+  buyerId     String
+  buyer       Buyer    @relation(fields: [buyerId], references: [id])
+  dispoOfferAmount   Decimal  @db.Decimal(12, 2)
+  status             String   @default("PENDING")
+  recordType         String   @default("offer")
+  earnestMoney       Decimal? @db.Decimal(12, 2)
+  inspectionEndDate  DateTime?
+  contractPayload    Json?
+  notes              String?
+  closingDate       DateTime?
+  exitTypeSnapshot  String?
+  expectedProfit    Decimal? @db.Decimal(12, 2)
+  submittedAt        DateTime @default(now())
+  respondedAt        DateTime?
+  updatedAt          DateTime @updatedAt
+}
+
+model LeadOffer {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  offerBy     String   // OUR_OFFER or SELLER_OFFER
+  offerDate   DateTime
+  offerType   String   // VERBAL or WRITTEN
+  offerPrice  Decimal  @db.Decimal(12, 2)
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([propertyId])
+}
+
+model Vendor {
+  id        String   @id @default(cuid())
+  contactId String   @unique
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  category  String
+  isActive  Boolean  @default(true)
+  markets   String[]
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Files ────────────────────────────────────────────────────────────────────
+
+model PropertyFile {
+  id             String   @id @default(cuid())
+  propertyId     String
+  property       Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  type           FileType @default(OTHER)
+  name           String
+  mimeType       String
+  size           Int
+  storageKey     String
+  uploadedById   String?
+  uploadedByName String?
+  createdAt      DateTime @default(now())
+}
+
+model EsignTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  documentUrl String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  documents   EsignDocument[]
+}
+
+model EsignDocument {
+  id          String          @id @default(cuid())
+  propertyId  String
+  name        String
+  providerRef String?
+  status      String          @default("DRAFT")
+  signedAt    DateTime?
+  storageKey  String?
+  templateId  String?
+  template    EsignTemplate?  @relation(fields: [templateId], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+// ─── Notifications / Activity ─────────────────────────────────────────────────
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       NotificationType
+  title      String
+  body       String?
+  propertyId String?
+  isRead     Boolean          @default(false)
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+}
+
+model ActivityLog {
+  id         String    @id @default(cuid())
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userName   String?
+  action     String
+  actorType  String    @default("user")
+  detail     Json      @default("{}")
+  createdAt  DateTime  @default(now())
+}
+
+// ─── Saved Filters ────────────────────────────────────────────────────────────
+
+model SavedFilter {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  pipeline  String
+  filters   Json
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name, pipeline])
+}
+
+// ─── AI / Webhooks ────────────────────────────────────────────────────────────
+
+model AiLog {
+  id           String    @id @default(cuid())
+  propertyId   String?
+  property     Property? @relation(fields: [propertyId], references: [id])
+  engine       AiEngine
+  input        Json
+  output       Json
+  tokens       Int?
+  latencyMs    Int?
+  reviewed     Boolean   @default(false)
+  reviewedAt   DateTime?
+  reviewedById String?
+  createdAt    DateTime  @default(now())
+}
+
+model AiConfiguration {
+  id              String   @id @default(cuid())
+  capabilityType  String   @unique // call_answer, voice_follow, speed_to_lead, conversational, call_grade, meet_grade
+  isEnabled       Boolean  @default(false)
+  configJson      Json     @default("{}")
+  voiceSettings   Json     @default("{}")
+  escalationRules Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model WebhookEvent {
+  id          String             @id @default(cuid())
+  source      String
+  eventType   String
+  payload     Json
+  status      WebhookEventStatus @default(PENDING)
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime           @default(now())
+}
+
+model TwilioNumber {
+  id           String   @id @default(cuid())
+  number       String   @unique
+  friendlyName String?
+  marketId     String?
+  isActive     Boolean  @default(true)
+  purpose      String   @default("general")
+  spamStatus   String?
+  tenDlcStatus String?
+  speedToLead  Boolean  @default(false)
+  providerName String?  // 'twilio' | 'telnyx' | 'signalhouse'
+  providerSid  String?  // remote ID at the provider
+  lastSyncedAt DateTime?
+  createdAt    DateTime @default(now())
+
+  leadCampaign LeadCampaign?
+}
+
+model ListStackSource {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  tags          String[]
+  totalImported Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model FinancialGoal {
+  id        String   @id @default(cuid())
+  year      Int
+  type      String   // REVENUE | MARKETING_SPEND | NET_INCOME
+  target    Decimal  @db.Decimal(14, 2)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, year, type])
+}
+
+model ActiveCall {
+  id                String    @id @default(cuid())
+  conferenceId      String?   @unique    // Twilio Conference SID (CF…), populated via webhook
+  conferenceName    String    @unique    // our generated unique room name
+  agentCallSid      String?              // Twilio Call SID for agent's leg
+  customerCallSid   String?              // Twilio Call SID for customer's leg
+  supervisorCallSid String?              // Twilio Call SID for supervisor's leg (if joined)
+  propertyId        String?
+  property          Property? @relation(fields: [propertyId], references: [id])
+  leadCampaignId    String?
+  leadCampaign      LeadCampaign? @relation(fields: [leadCampaignId], references: [id], onDelete: SetNull)
+  agentUserId       String?
+  agent             User?     @relation("AgentCalls", fields: [agentUserId], references: [id])
+  customerPhone     String?
+  status            String    @default("INITIATING") // INITIATING | RINGING | ACTIVE | COMPLETED | REJECTED
+  supervisorMode    String?                           // WHISPER | BARGE (set when supervisor joins)
+  direction         String    @default("OUTBOUND")    // OUTBOUND | INBOUND
+  rejectedReason    String?
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// ─── Tags ────────────────────────────────────────────────────────────────────
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String
+  color     String   @default("#3B82F6")
+  category  String   @default("lead") // lead, buyer, task
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, category])
+}
+
+// ─── Outgoing Webhooks / API Tokens ──────────────────────────────────────────
+
+model Webhook {
+  id           String   @id @default(cuid())
+  friendlyName String
+  state        String   @default("active") // active, inactive
+  endpointUrl  String
+  events       String[]
+  secretHash   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String
+  prefix     String
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ─── Financials ──────────────────────────────────────────────────────────────
+
+model FinancialAccount {
+  id           String   @id @default(cuid())
+  bankName     String
+  accountType  String?
+  balance      Decimal  @default(0) @db.Decimal(14, 2)
+  startBalance Decimal  @default(0) @db.Decimal(14, 2)
+  lastUpdated  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  transactions FinancialTransaction[]
+}
+
+model FinancialTransaction {
+  id          String   @id @default(cuid())
+  date        DateTime
+  description String
+  amount      Decimal  @db.Decimal(14, 2)
+  type        String   @default("expense")
+  accountId   String
+  account     FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  vendorName  String?
+  propertyId  String?
+  categoryId  String?
+  category    AccountTag? @relation(fields: [categoryId], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+}
+
+model AccountTag {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  accountType String   @default("expense")
+  category    String?
+  subCategory String?
+  createdAt   DateTime @default(now())
+  transactions FinancialTransaction[]
+}
+
+// ─── Global Files ────────────────────────────────────────────────────────────
+
+model GlobalFolder {
+  id        String   @id @default(cuid())
+  name      String
+  parentId  String?
+  createdAt DateTime @default(now())
+
+  files GlobalFile[]
+}
+
+model GlobalFile {
+  id         String        @id @default(cuid())
+  name       String
+  url        String?
+  size       Int?
+  mimeType   String?
+  folderId   String?
+  folder     GlobalFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  createdAt  DateTime      @default(now())
+  modifiedAt DateTime      @default(now())
+}
+
+// ─── Custom Forms / Web Forms ────────────────────────────────────────────────
+
+model CustomFormConfig {
+  id         String   @id @default(cuid())
+  entityType String   @unique // leads, buyers, vendors, dispo, inventory
+  sections   Json     @default("[]") // [{title, order, fields: [{label, fieldType, required}]}]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model WebFormConfig {
+  id         String   @id @default(cuid())
+  entityType String   @unique // leads, buyers, vendors
+  fields     Json     @default("[]") // [{fieldName, label, visible, required}]
+  embedCode  String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── Direct Mail ─────────────────────────────────────────────────────────────
+
+model DirectMailCampaign {
+  id           String    @id @default(cuid())
+  name         String
+  status       String    @default("draft") // draft, scheduled, sent, delivered
+  sendDate     DateTime?
+  recipients   Int       @default(0)
+  delivered    Int       @default(0)
+  returned     Int       @default(0)
+  templateId   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}

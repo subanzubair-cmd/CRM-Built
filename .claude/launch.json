@@ -1,0 +1,9 @@
+{
+  "command": "C:\\node-x64\\node.exe",
+  "args": ["node_modules/.bin/next", "dev", "--port", "3000"],
+  "cwd": "apps/web",
+  "port": 3000,
+  "env": {
+    "PATH": "C:\\node-x64;${env:PATH}"
+  }
+}

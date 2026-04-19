@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@crm/shared": ["../../packages/shared/src/index.ts"],
+      "@crm/database": ["../../packages/database/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

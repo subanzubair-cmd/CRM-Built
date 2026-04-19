@@ -1,0 +1,143 @@
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.pnpm-store/
+
+# ─── Build output ─────────────────────────────────────────────────────────────
+# Next.js (both root-level and per-app)
+.next/
+out/
+
+# Express / tsc
+dist/
+build/
+
+# Turborepo cache
+.turbo/
+
+# Bundlers
+.swc/
+.parcel-cache/
+
+# ─── Prisma ───────────────────────────────────────────────────────────────────
+# Generated Prisma client lives inside node_modules/.prisma and is already
+# covered by node_modules/. These catch non-standard output locations.
+packages/database/src/generated/
+apps/web/src/generated/prisma/
+**/.prisma/
+
+# ─── TypeScript ───────────────────────────────────────────────────────────────
+*.tsbuildinfo
+next-env.d.ts
+
+# ─── Testing / coverage ───────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+.vitest-cache/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+lerna-debug.log*
+
+# ─── Environment & secrets ────────────────────────────────────────────────────
+# All .env variants are ignored; commit a sanitized `.env.example` if you need
+# to share the schema.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets.json
+
+# ─── Editors & IDEs ───────────────────────────────────────────────────────────
+# VS Code — keep recommended extensions + shared settings; ignore personal
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim / Emacs / misc
+*.swp
+*.swo
+*.swn
+*~
+.\#*
+\#*\#
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ─── OS files ─────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ─── Deployment platforms ─────────────────────────────────────────────────────
+.vercel
+.netlify
+.wrangler/
+
+# ─── Docker / local data ──────────────────────────────────────────────────────
+# Local MinIO / Postgres / Redis volumes (docker-compose.yml mounts)
+docker-data/
+.docker/
+minio-data/
+postgres-data/
+redis-data/
+tmp/
+
+# ─── Claude Code / AI tooling artefacts ───────────────────────────────────────
+# Per-session state, worktrees, and local overrides should stay local.
+.claude/worktrees/
+.claude/session-data/
+.claude/sessions/
+.claude/settings.local.json
+.claude/*.local.json
+# Per-session Claude tooling scratch (brainstorm html previews, pids, etc.)
+.superpowers/
+
+# ─── Project-specific ────────────────────────────────────────────────────────
+# Uploaded files / local scratch work
+uploads/
+local-uploads/
+.cache/
+
+# Generated docs snapshots that shouldn't be version-controlled
+docs/CODEMAPS/generated/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Lock files from other package managers (we use pnpm)
+package-lock.json
+yarn.lock
