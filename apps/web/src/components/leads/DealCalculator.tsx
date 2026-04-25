@@ -56,22 +56,32 @@ function defaultState(arv?: number | null): CalcState {
 export function DealCalculator({ arv: initialArv, propertyId }: Props) {
   const storageKey = propertyId ? `${STORAGE_PREFIX}${propertyId}` : null
 
-  const [s, setS] = useState<CalcState>(() => {
-    if (storageKey && typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem(storageKey)
-        if (saved) return JSON.parse(saved) as CalcState
-      } catch {}
-    }
-    return defaultState(initialArv)
-  })
+  // Always initialize with the default state so server and client first render
+  // produce identical HTML. We hydrate from localStorage in a post-mount effect
+  // below, and gate persistence on a `hydrated` flag so we don't immediately
+  // overwrite the saved value with the default state.
+  const [s, setS] = useState<CalcState>(() => defaultState(initialArv))
+  const [hydrated, setHydrated] = useState(false)
 
-  // Save to localStorage on every change
+  // Load saved state after mount (client only). Runs once per storageKey.
   useEffect(() => {
-    if (storageKey) {
-      localStorage.setItem(storageKey, JSON.stringify(s))
+    if (!storageKey) {
+      setHydrated(true)
+      return
     }
-  }, [s, storageKey])
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) setS(JSON.parse(saved) as CalcState)
+    } catch {}
+    setHydrated(true)
+  }, [storageKey])
+
+  // Save to localStorage on every change, but only AFTER hydration so we don't
+  // stomp the saved state with the initial default on first render.
+  useEffect(() => {
+    if (!hydrated || !storageKey) return
+    localStorage.setItem(storageKey, JSON.stringify(s))
+  }, [s, storageKey, hydrated])
 
   const set = useCallback(<K extends keyof CalcState>(key: K, val: CalcState[K]) => {
     setS((prev) => ({ ...prev, [key]: val }))
