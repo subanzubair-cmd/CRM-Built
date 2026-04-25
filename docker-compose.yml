@@ -12,6 +12,23 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  # Shadow DB for verifying Umzug migrations cleanly during the
+  # Prisma → Sequelize cutover. Used by `pnpm db:migrate:check` to dump
+  # the freshly-migrated schema and diff against the main DB. Same image,
+  # different port + database name so the two never share state.
+  postgres-shadow:
+    image: postgres:16-alpine
+    container_name: rei-crm-db-shadow
+    restart: unless-stopped
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: crm_user
+      POSTGRES_PASSWORD: crm_password
+      POSTGRES_DB: rei_crm_shadow
+    volumes:
+      - postgres_shadow_data:/var/lib/postgresql/data
+
   redis:
     image: redis:7-alpine
     container_name: rei-crm-redis
@@ -37,5 +54,6 @@ services:
 
 volumes:
   postgres_data:
+  postgres_shadow_data:
   redis_data:
   minio_data:
