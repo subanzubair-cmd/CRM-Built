@@ -1,7 +1,7 @@
 // apps/web/src/app/api/twilio-numbers/route.ts
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { TwilioNumber } from '@crm/database'
 
 /**
  * GET /api/twilio-numbers
@@ -11,12 +11,12 @@ export async function GET() {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const numbers = await prisma.twilioNumber.findMany({
+  const numbers = await TwilioNumber.findAll({
     where: {
       isActive: true,
     },
-    select: { id: true, number: true, friendlyName: true, marketId: true },
-    orderBy: { friendlyName: 'asc' },
+    attributes: ['id', 'number', 'friendlyName', 'marketId'],
+    order: [['friendlyName', 'ASC']],
   })
 
   return NextResponse.json({ data: numbers })

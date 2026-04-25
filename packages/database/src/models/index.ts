@@ -1,24 +1,54 @@
 /**
  * Sequelize model registry — barrel file.
  *
- * As clusters migrate (Phase 2 onward), each model class is exported from a
- * sibling file (e.g. `./LeadSource.ts`) and re-exported here. The
- * `registerSequelizeModel` helper attaches it to the Sequelize singleton.
- *
- * After every model in a phase is added, `_associations.ts` (loaded LAST)
- * wires the cross-model `@HasMany` / `@BelongsTo` so circular imports stay
- * tame.
- *
- * Phase 1: empty registry — Sequelize boots with zero models so we can
- * verify infrastructure works end-to-end before any class lands here.
+ * As clusters migrate, each model class is exported from a sibling file
+ * and re-exported here. The Sequelize singleton picks them up via
+ * `addModels()` in the bootstrapper below. Then `_associations.ts`
+ * (loaded LAST) wires cross-model relations to avoid circular imports.
  */
+import { sequelize } from '../sequelize'
 
-// Per-phase model exports go here:
-// export { LeadSource } from './LeadSource'    // Phase 2
-// export { TwilioNumber } from './TwilioNumber' // Phase 2
-// ...
+// ── Phase 2: Independent leaf models ────────────────────────────────────────
+import { LeadSource } from './LeadSource'
+import { TwilioNumber } from './TwilioNumber'
+import { Tag } from './Tag'
+import { Market } from './Market'
+import { AiConfiguration } from './AiConfiguration'
+import { GlobalFolder } from './GlobalFolder'
+import { GlobalFile } from './GlobalFile'
+import { ListStackSource } from './ListStackSource'
+import { CommProviderConfig } from './CommProviderConfig'
 
-// Always last — wires associations between exported models.
-import './_associations'
+// Register all migrated model classes with the Sequelize instance.
+// Order matters when using sequelize-typescript decorators that reference
+// other classes — children before parents. Phase 2 leaves are independent
+// (only GlobalFile → GlobalFolder, registered in that order below).
+sequelize.addModels([
+  LeadSource,
+  TwilioNumber,
+  Tag,
+  Market,
+  AiConfiguration,
+  GlobalFolder, // before GlobalFile (FK target)
+  GlobalFile,
+  ListStackSource,
+  CommProviderConfig,
+])
 
-export {}
+// Wire cross-model associations AFTER addModels (the registry must be
+// populated first). Importing this module is a side effect.
+import { wireAssociations } from './_associations'
+wireAssociations()
+
+// ── Public re-exports ───────────────────────────────────────────────────────
+export {
+  LeadSource,
+  TwilioNumber,
+  Tag,
+  Market,
+  AiConfiguration,
+  GlobalFolder,
+  GlobalFile,
+  ListStackSource,
+  CommProviderConfig,
+}

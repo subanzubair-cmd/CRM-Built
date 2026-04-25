@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { TwilioNumber } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -157,9 +158,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         //    (i.e. they haven't been manually overridden since lead creation).
         if (rest.phoneNumberId !== undefined && rest.phoneNumberId !== existing.phoneNumberId) {
           const newNumberRow = rest.phoneNumberId
-            ? await prisma.twilioNumber.findUnique({
-                where: { id: rest.phoneNumberId },
-                select: { number: true },
+            ? await TwilioNumber.findByPk(rest.phoneNumberId, {
+                attributes: ['number'],
               })
             : null
           const newNumber = newNumberRow?.number ?? null

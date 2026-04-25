@@ -1,13 +1,15 @@
 import { prisma } from '@/lib/prisma'
+import { ListStackSource } from '@crm/database'
 
 export async function getListSources() {
-  return prisma.listStackSource.findMany({
-    orderBy: { createdAt: 'desc' },
+  return ListStackSource.findAll({
+    order: [['createdAt', 'DESC']],
   })
 }
 
 export async function getOverlapProperties(limit = 50) {
-  const sources = await prisma.listStackSource.findMany({ select: { id: true } })
+  // Sources moved to Sequelize; properties stay on Prisma until Phase 6.
+  const sources = await ListStackSource.findAll({ attributes: ['id'] })
   if (sources.length < 2) return []
 
   const allListTags = sources.map((s) => `list:${s.id}`)

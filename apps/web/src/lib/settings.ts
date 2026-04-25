@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { Market, literal } from '@crm/database'
 
 export async function getUserList() {
   return prisma.user.findMany({
@@ -39,9 +40,29 @@ export async function getLeadCampaignListSimple() {
 }
 
 export async function getMarketList() {
-  return prisma.market.findMany({
-    include: { _count: { select: { properties: true } } },
-    orderBy: { name: 'asc' },
+  // Markets moved to Sequelize in Phase 2. The original Prisma version
+  // included `_count: { select: { properties: true } }` — emulated here
+  // via a correlated-subquery attribute so the response shape is
+  // unchanged for the settings UI.
+  const markets = await Market.findAll({
+    order: [['name', 'ASC']],
+    attributes: {
+      include: [
+        [
+          literal(
+            `(SELECT COUNT(*)::int FROM "Property" p WHERE p."marketId" = "Market"."id")`,
+          ),
+          'propertyCount',
+        ],
+      ],
+    },
+  })
+  return markets.map((m) => {
+    const json = m.toJSON() as any
+    return {
+      ...json,
+      _count: { properties: Number(json.propertyCount ?? 0) },
+    }
   })
 }
 

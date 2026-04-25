@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { TwilioNumber } from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -23,7 +23,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateNumberSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const phoneNumber = await prisma.twilioNumber.update({ where: { id }, data: parsed.data })
+  const phoneNumber = await TwilioNumber.findByPk(id)
+  if (!phoneNumber) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await phoneNumber.update(parsed.data)
   return NextResponse.json(phoneNumber)
 }
 
@@ -32,7 +34,8 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-
-  await prisma.twilioNumber.delete({ where: { id } })
+  const phoneNumber = await TwilioNumber.findByPk(id)
+  if (!phoneNumber) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await phoneNumber.destroy()
   return NextResponse.json({ success: true })
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { TwilioNumber } from '@crm/database'
 
 const CreateNumberSchema = z.object({
   number: z.string().min(1),
@@ -20,9 +20,9 @@ export async function GET(req: NextRequest) {
   const where: Record<string, unknown> = {}
   if (purpose) where.purpose = purpose
 
-  const numbers = await prisma.twilioNumber.findMany({
+  const numbers = await TwilioNumber.findAll({
     where,
-    orderBy: { createdAt: 'desc' },
+    order: [['createdAt', 'DESC']],
   })
 
   return NextResponse.json({ data: numbers })
@@ -36,6 +36,6 @@ export async function POST(req: NextRequest) {
   const parsed = CreateNumberSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const phoneNumber = await prisma.twilioNumber.create({ data: parsed.data })
+  const phoneNumber = await TwilioNumber.create(parsed.data)
   return NextResponse.json(phoneNumber, { status: 201 })
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { Tag } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 
 const CreateTagSchema = z.object({
@@ -20,9 +20,9 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get('category')
 
   const where = category ? { category } : {}
-  const tags = await prisma.tag.findMany({
+  const tags = await Tag.findAll({
     where,
-    orderBy: { name: 'asc' },
+    order: [['name', 'ASC']],
   })
 
   return NextResponse.json({ data: tags })
@@ -39,9 +39,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  // Check for duplicate
-  const existing = await prisma.tag.findUnique({
-    where: { name_category: { name: parsed.data.name, category: parsed.data.category } },
+  // Composite-unique check (name, category) — equivalent to Prisma's
+  // findUnique on the @@unique([name, category]) compound key.
+  const existing = await Tag.findOne({
+    where: { name: parsed.data.name, category: parsed.data.category },
   })
   if (existing) {
     return NextResponse.json(
@@ -50,6 +51,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const tag = await prisma.tag.create({ data: parsed.data })
+  const tag = await Tag.create(parsed.data)
   return NextResponse.json({ data: tag }, { status: 201 })
 }

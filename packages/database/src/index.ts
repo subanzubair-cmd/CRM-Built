@@ -18,13 +18,18 @@ export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
 // Prisma row-shape types — used as `import type` at call sites. These
 // disappear cluster-by-cluster as their model gets replaced by a Sequelize
 // class (which IS both the runtime and the type).
+//
+// Phase 2 leaves migrated → exported from ./models below:
+//   - Market, TwilioNumber, ListStackSource (the ones the original list
+//     covered). LeadSource, Tag, AiConfiguration, GlobalFolder, GlobalFile,
+//     CommProviderConfig were never in this re-export, so no removal needed.
 export type {
-  User, Role, Market, Property, Contact, PropertyContact,
+  User, Role, Property, Contact, PropertyContact,
   StageHistory, Conversation, Message, Note, Task, Appointment,
   Campaign, CampaignStep, CampaignEnrollment, Automation, AutomationAction,
   Buyer, BuyerCriteria, BuyerMatch, BuyerOffer, Vendor,
   PropertyFile, EsignDocument, Notification, ActivityLog,
-  SavedFilter, AiLog, WebhookEvent, TwilioNumber, ListStackSource,
+  SavedFilter, AiLog, WebhookEvent,
 } from '../node_modules/.prisma/client'
 
 // Prisma's runtime enums — kept for backwards compat. Prefer importing the
@@ -42,6 +47,13 @@ export { sequelize, pingDatabase, registerSequelizeModel } from './sequelize'
 // Re-export migrated model classes from the registry barrel. As clusters
 // migrate, this line picks up the new exports automatically.
 export * from './models'
+
+// Re-export the Sequelize query-building helpers callers commonly need
+// (operators, raw SQL fragments, aggregate functions). Keeps `sequelize`
+// out of `apps/web`'s direct deps — they import from `@crm/database`
+// just like the model classes.
+export { Op, fn, col, literal, where, cast, QueryTypes } from 'sequelize'
+export type { Transaction, FindOptions, WhereOptions, Includeable } from 'sequelize'
 
 // ── Group 3: TS-union enums (Sequelize-friendly, no Prisma dep) ─────────────
 // Renamed exports avoid clashing with Group 1's Prisma enum runtime values.

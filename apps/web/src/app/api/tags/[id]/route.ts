@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { Tag } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 
 type Params = { params: Promise<{ id: string }> }
@@ -23,13 +23,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const tag = await prisma.tag.findUnique({ where: { id } })
+  const tag = await Tag.findByPk(id)
   if (!tag) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // If renaming, check duplicate within the same category
+  // If renaming, check duplicate within the same category.
   if (parsed.data.name && parsed.data.name !== tag.name) {
-    const duplicate = await prisma.tag.findUnique({
-      where: { name_category: { name: parsed.data.name, category: tag.category } },
+    const duplicate = await Tag.findOne({
+      where: { name: parsed.data.name, category: tag.category },
     })
     if (duplicate) {
       return NextResponse.json(
@@ -39,8 +39,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
   }
 
-  const updated = await prisma.tag.update({ where: { id }, data: parsed.data })
-  return NextResponse.json({ data: updated })
+  await tag.update(parsed.data)
+  return NextResponse.json({ data: tag })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -49,9 +49,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const tag = await prisma.tag.findUnique({ where: { id } })
+  const tag = await Tag.findByPk(id)
   if (!tag) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  await prisma.tag.delete({ where: { id } })
+  await tag.destroy()
   return NextResponse.json({ success: true })
 }

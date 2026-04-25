@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { GlobalFile, GlobalFolder } from '@crm/database'
 
 const CreateFileSchema = z.object({
   name: z.string().min(1).max(255),
@@ -23,10 +23,10 @@ export async function GET(req: NextRequest) {
       ? { folderId }
       : {}
 
-  const files = await prisma.globalFile.findMany({
+  const files = await GlobalFile.findAll({
     where,
-    include: { folder: { select: { id: true, name: true } } },
-    orderBy: { createdAt: 'desc' },
+    include: [{ model: GlobalFolder, as: 'folder', attributes: ['id', 'name'] }],
+    order: [['createdAt', 'DESC']],
   })
 
   return NextResponse.json(files)
@@ -40,14 +40,12 @@ export async function POST(req: NextRequest) {
   const parsed = CreateFileSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const file = await prisma.globalFile.create({
-    data: {
-      name: parsed.data.name,
-      url: parsed.data.url ?? null,
-      size: parsed.data.size ?? null,
-      mimeType: parsed.data.mimeType ?? null,
-      folderId: parsed.data.folderId ?? null,
-    },
+  const file = await GlobalFile.create({
+    name: parsed.data.name,
+    url: parsed.data.url ?? null,
+    size: parsed.data.size ?? null,
+    mimeType: parsed.data.mimeType ?? null,
+    folderId: parsed.data.folderId ?? null,
   })
 
   return NextResponse.json(file, { status: 201 })

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { TwilioNumber } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { getActiveCommConfig } from '@/lib/comm-provider'
 
@@ -66,21 +66,25 @@ export async function POST() {
 
       for (const n of numbers) {
         if (!n.phone_number) continue
-        await prisma.twilioNumber.upsert({
+        // Sequelize doesn't have Prisma's native upsert with create/update
+        // diverging shapes — emulate via findOrCreate then conditional update.
+        const [row, created] = await TwilioNumber.findOrCreate({
           where: { number: n.phone_number },
-          create: {
+          defaults: {
             number: n.phone_number,
             friendlyName: n.friendly_name ?? null,
             providerName: 'twilio',
             providerSid: n.sid ?? null,
             lastSyncedAt: now,
           },
-          update: {
+        })
+        if (!created) {
+          await row.update({
             friendlyName: n.friendly_name ?? null,
             providerSid: n.sid ?? null,
             lastSyncedAt: now,
-          },
-        })
+          })
+        }
         count++
       }
 
@@ -126,21 +130,23 @@ export async function POST() {
 
       for (const n of numbers) {
         if (!n.phone_number) continue
-        await prisma.twilioNumber.upsert({
+        const [row, created] = await TwilioNumber.findOrCreate({
           where: { number: n.phone_number },
-          create: {
+          defaults: {
             number: n.phone_number,
             friendlyName: n.phone_number,
             providerName: 'telnyx',
             providerSid: n.id ?? null,
             lastSyncedAt: now,
           },
-          update: {
+        })
+        if (!created) {
+          await row.update({
             friendlyName: n.phone_number,
             providerSid: n.id ?? null,
             lastSyncedAt: now,
-          },
-        })
+          })
+        }
         count++
       }
 

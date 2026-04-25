@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { ListStackSource } from '@crm/database'
 
 export async function DELETE(
   _req: NextRequest,
@@ -10,6 +10,8 @@ export async function DELETE(
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  await prisma.listStackSource.delete({ where: { id } })
+  const row = await ListStackSource.findByPk(id)
+  if (!row) return new NextResponse(null, { status: 204 })
+  await row.destroy()
   return new NextResponse(null, { status: 204 })
 }

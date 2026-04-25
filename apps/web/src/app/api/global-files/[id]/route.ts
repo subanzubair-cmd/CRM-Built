@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { GlobalFile } from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -10,7 +10,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  await prisma.globalFile.delete({ where: { id } })
+  const file = await GlobalFile.findByPk(id)
+  if (!file) return new NextResponse(null, { status: 204 })
+  await file.destroy()
 
   return new NextResponse(null, { status: 204 })
 }

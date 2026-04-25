@@ -7,6 +7,7 @@ import { getAbandonedLeadsMatrix } from '@/lib/analytics'
 import { getTaskList } from '@/lib/tasks'
 import { getMarketScope } from '@/lib/auth-utils'
 import { prisma } from '@/lib/prisma'
+import { Market } from '@crm/database'
 
 const STAGE_LABELS: Record<string, string> = {
   NEW_LEAD: 'New Leads',
@@ -26,14 +27,16 @@ function formatK(n: number): string {
 
 async function resolveMarketLabel(marketIds: string[] | null): Promise<string> {
   if (marketIds === null) {
-    const total = await prisma.market.count({ where: { isActive: true } })
-    return total === 1
-      ? ((await prisma.market.findFirst({ where: { isActive: true }, select: { name: true } }))?.name ?? 'All Markets')
-      : 'All Markets'
+    const total = await Market.count({ where: { isActive: true } })
+    if (total === 1) {
+      const m = await Market.findOne({ where: { isActive: true }, attributes: ['name'] })
+      return m?.name ?? 'All Markets'
+    }
+    return 'All Markets'
   }
   if (marketIds.length === 0) return '—'
   if (marketIds.length === 1) {
-    const m = await prisma.market.findUnique({ where: { id: marketIds[0] }, select: { name: true } })
+    const m = await Market.findByPk(marketIds[0], { attributes: ['name'] })
     return m?.name ?? '—'
   }
   return `${marketIds.length} Markets`

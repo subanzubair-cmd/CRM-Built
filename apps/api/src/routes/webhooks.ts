@@ -7,6 +7,7 @@
 
 import { Router, type Request, type Response } from 'express'
 import { prisma } from '../lib/prisma.js'
+import { TwilioNumber } from '@crm/database'
 import { validateWebhookSignature } from '../lib/twilio.js'
 import { automationQueue } from '../queues/index.js'
 
@@ -47,14 +48,20 @@ router.post('/twilio', async (req: Request, res: Response) => {
     const propertyId = contact?.properties[0]?.property.id ?? null
     const contactId = contact?.id ?? null
 
-    // 2. Resolve the LeadCampaign that owns the inbound number (for attribution)
+    // 2. Resolve the LeadCampaign that owns the inbound number (for attribution).
+    //    TwilioNumber moved to Sequelize in Phase 2; LeadCampaign is still
+    //    on Prisma until Phase 4 — split into two queries to avoid a
+    //    cross-ORM `include`.
     let leadCampaignId: string | null = null
     if (To) {
-      const twilioNumber = await prisma.twilioNumber.findFirst({
-        where: { number: To },
-        select: { leadCampaign: { select: { id: true } } },
-      })
-      leadCampaignId = twilioNumber?.leadCampaign?.id ?? null
+      const tn = await TwilioNumber.findOne({ where: { number: To }, attributes: ['id'] })
+      if (tn) {
+        const lc = await prisma.leadCampaign.findFirst({
+          where: { phoneNumberId: tn.id },
+          select: { id: true },
+        })
+        leadCampaignId = lc?.id ?? null
+      }
     }
 
     // 3. Per-contact Conversation: unique on (propertyId, contactId)

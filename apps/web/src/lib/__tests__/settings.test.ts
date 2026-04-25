@@ -1,14 +1,23 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
+// Prisma mock — still used for User, Role, Campaign etc. (not yet migrated).
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     user: { findMany: vi.fn() },
-    market: { findMany: vi.fn() },
     role: { findMany: vi.fn() },
   },
 }))
 
+// Sequelize mock — Market migrated to Sequelize in Phase 2. We mock the
+// model class's static `findAll` plus `toJSON()` on each row.
+vi.mock('@crm/database', () => ({
+  Market: {
+    findAll: vi.fn(),
+  },
+}))
+
 import { prisma } from '@/lib/prisma'
+import { Market } from '@crm/database'
 import { getUserList, getMarketList, getRoleList } from '../settings'
 
 describe('getUserList', () => {
@@ -34,9 +43,18 @@ describe('getMarketList', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns markets with property counts', async () => {
-    vi.mocked(prisma.market.findMany).mockResolvedValue([
-      { id: 'm1', name: 'DFW', state: 'TX', isActive: true, _count: { properties: 42 } },
-    ] as any)
+    // Each row simulates a Sequelize instance with toJSON returning the
+    // shape our query produces (`propertyCount` from the literal subquery).
+    const row = {
+      toJSON: () => ({
+        id: 'm1',
+        name: 'DFW',
+        state: 'TX',
+        isActive: true,
+        propertyCount: 42,
+      }),
+    }
+    vi.mocked(Market.findAll).mockResolvedValue([row as any])
     const result = await getMarketList()
     expect(result[0]._count.properties).toBe(42)
   })

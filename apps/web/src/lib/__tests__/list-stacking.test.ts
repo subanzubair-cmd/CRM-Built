@@ -1,20 +1,28 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
+// Prisma mock — Property still on Prisma until Phase 6.
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    listStackSource: { findMany: vi.fn() },
     property: { findMany: vi.fn() },
   },
 }))
 
+// Sequelize mock — ListStackSource migrated in Phase 2.
+vi.mock('@crm/database', () => ({
+  ListStackSource: {
+    findAll: vi.fn(),
+  },
+}))
+
 import { prisma } from '@/lib/prisma'
+import { ListStackSource } from '@crm/database'
 import { getListSources, getOverlapProperties } from '../list-stacking'
 
 describe('getListSources', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns sources ordered by createdAt desc', async () => {
-    vi.mocked(prisma.listStackSource.findMany).mockResolvedValue([
+    vi.mocked(ListStackSource.findAll).mockResolvedValue([
       { id: 's1', name: 'Tax Delinquent Q1', totalImported: 150, tags: [], description: null, createdAt: new Date(), updatedAt: new Date() },
     ] as any)
     const result = await getListSources()
@@ -27,14 +35,14 @@ describe('getOverlapProperties', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns empty array when fewer than 2 sources exist', async () => {
-    vi.mocked(prisma.listStackSource.findMany).mockResolvedValue([{ id: 's1' }] as any)
+    vi.mocked(ListStackSource.findAll).mockResolvedValue([{ id: 's1' }] as any)
     const result = await getOverlapProperties()
     expect(result).toHaveLength(0)
     expect(prisma.property.findMany).not.toHaveBeenCalled()
   })
 
   it('returns only properties tagged with 2+ list: tags', async () => {
-    vi.mocked(prisma.listStackSource.findMany).mockResolvedValue([
+    vi.mocked(ListStackSource.findAll).mockResolvedValue([
       { id: 's1' }, { id: 's2' },
     ] as any)
     vi.mocked(prisma.property.findMany).mockResolvedValue([

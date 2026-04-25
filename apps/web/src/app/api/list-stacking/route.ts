@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { ListStackSource } from '@crm/database'
 import { getListSources } from '@/lib/list-stacking'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -51,8 +52,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'CSV has no data rows' }, { status: 400 })
   }
 
-  const source = await prisma.listStackSource.create({
-    data: { name, description, totalImported: 0 },
+  const source = await ListStackSource.create({
+    name,
+    description: description ?? null,
+    totalImported: 0,
   })
 
   const listTag = `list:${source.id}`
@@ -134,10 +137,7 @@ export async function POST(req: NextRequest) {
 
   const total = created + duped
 
-  await prisma.listStackSource.update({
-    where: { id: source.id },
-    data: { totalImported: total },
-  })
+  await source.update({ totalImported: total })
 
   return NextResponse.json({ id: source.id, name, total, created, duped }, { status: 201 })
 }
