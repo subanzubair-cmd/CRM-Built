@@ -175,7 +175,13 @@ export function CommProviderForm() {
   }
 
   const activeName = providers.find((r) => r.isActive)?.providerName
-  const webhookUrl = origin ? `${origin}/api/webhooks/${selected}` : ''
+  // Prefer the operator-saved Public Webhook URL when set — that's the
+  // URL Telnyx is actually configured to call. Auto-derived from page
+  // origin only as a fallback so the diagnostic comparison and the
+  // copy panel stay accurate even when running behind a tunnel.
+  const derivedUrl = origin ? `${origin}/api/webhooks/${selected}` : ''
+  const savedUrl = (fields.webhookUrl ?? '').trim()
+  const webhookUrl = savedUrl || derivedUrl
 
   return (
     <div className="max-w-2xl space-y-4">
