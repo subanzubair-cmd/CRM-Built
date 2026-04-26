@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
-import { ListStackSource } from '@crm/database'
+import {
+  ListStackSource,
+  Property,
+  Contact,
+  PropertyContact,
+  sequelize,
+  fn,
+  col,
+  literal,
+} from '@crm/database'
 import { getListSources } from '@/lib/list-stacking'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -56,7 +64,7 @@ export async function POST(req: NextRequest) {
     name,
     description: description ?? null,
     totalImported: 0,
-  })
+  } as any)
 
   const listTag = `list:${source.id}`
   const createdById = ((session as any)?.user?.id ?? '') as string
@@ -73,34 +81,31 @@ export async function POST(req: NextRequest) {
     const phone = findCol(row, ['phone', 'mobile', 'cell']) || null
     const email = findCol(row, ['email']) || null
 
-    // Compute normalized address for duplicate detection
     const normalizedAddress = streetAddress && city && state
       ? `${streetAddress.toLowerCase()}, ${city.toLowerCase()}, ${state.toLowerCase()} ${zip ?? ''}`.trim()
       : null
 
-    // Check for duplicate address in existing properties
     if (normalizedAddress) {
-      const existing = await prisma.property.findFirst({
+      const existing = await Property.findOne({
         where: { normalizedAddress },
-        select: { id: true, tags: true },
-      })
+        attributes: ['id', 'tags'],
+        raw: true,
+      }) as any
       if (existing) {
-        // Tag the existing property with this source if not already tagged
-        if (!existing.tags.includes(listTag)) {
-          await prisma.property.update({
-            where: { id: existing.id },
-            data: { tags: { push: listTag } },
-          })
+        if (!(existing.tags ?? []).includes(listTag)) {
+          await Property.update(
+            { tags: fn('array_append', col('tags'), listTag) as any },
+            { where: { id: existing.id } },
+          )
         }
         duped++
         continue
       }
     }
 
-    // Create new property + primary contact
     try {
-      await prisma.property.create({
-        data: {
+      await sequelize.transaction(async (tx) => {
+        const property = await Property.create({
           streetAddress,
           city,
           state,
@@ -113,30 +118,29 @@ export async function POST(req: NextRequest) {
           marketId: marketId || undefined,
           createdById,
           tags: [listTag],
-          contacts: {
-            create: {
-              isPrimary: true,
-              contact: {
-                create: {
-                  type: 'SELLER',
-                  firstName,
-                  lastName,
-                  phone: phone || null,
-                  email: email || null,
-                },
-              },
-            },
-          },
-        },
+        } as any, { transaction: tx })
+
+        const contact = await Contact.create({
+          type: 'SELLER',
+          firstName,
+          lastName,
+          phone: phone || null,
+          email: email || null,
+        } as any, { transaction: tx })
+
+        await PropertyContact.create({
+          propertyId: property.id,
+          contactId: contact.id,
+          isPrimary: true,
+        } as any, { transaction: tx })
       })
       created++
     } catch {
-      // Skip rows that fail (e.g., constraint violations)
+      // skip on constraint violation
     }
   }
 
   const total = created + duped
-
   await source.update({ totalImported: total })
 
   return NextResponse.json({ id: source.id, name, total, created, duped }, { status: 201 })

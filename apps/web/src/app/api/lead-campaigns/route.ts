@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  LeadCampaign,
+  LeadCampaignRoleToggle,
+  LeadCampaignUser,
+  TwilioNumber,
+  LeadSource,
+  literal,
+  sequelize,
+} from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -23,38 +31,46 @@ const CreateLeadCampaignSchema = z.object({
   assignedUserIds: z.array(z.string().min(1)).optional(),
 })
 
-/**
- * GET /api/lead-campaigns
- * Returns all lead campaigns with supporting relation summaries.
- */
 export async function GET() {
   const session = await auth()
   const deny = requirePermission(session, 'settings.view')
   if (deny) return deny
 
-  const campaigns = await (prisma as any).leadCampaign.findMany({
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      callFlowName: true,
-      assignmentMethod: true,
-      isActive: true,
-      phoneNumber: { select: { number: true, friendlyName: true } },
-      leadSource: { select: { name: true } },
-      _count: { select: { properties: true } },
+  const campaigns = await LeadCampaign.findAll({
+    attributes: {
+      include: [
+        [
+          literal(`(SELECT COUNT(*) FROM "Property" p WHERE p."leadCampaignId" = "LeadCampaign"."id")`),
+          '_count_properties',
+        ],
+      ],
+      exclude: [],
     },
-    orderBy: { createdAt: 'desc' },
+    include: [
+      { model: TwilioNumber, as: 'phoneNumber', attributes: ['number', 'friendlyName'] },
+      { model: LeadSource, as: 'leadSource', attributes: ['name'] },
+    ],
+    order: [['createdAt', 'DESC']],
   })
 
-  return NextResponse.json({ data: campaigns })
+  const data = campaigns.map((c) => {
+    const plain = c.get({ plain: true }) as any
+    return {
+      id: plain.id,
+      name: plain.name,
+      type: plain.type,
+      callFlowName: plain.callFlowName,
+      assignmentMethod: plain.assignmentMethod,
+      isActive: plain.isActive,
+      phoneNumber: plain.phoneNumber,
+      leadSource: plain.leadSource,
+      _count: { properties: Number(plain._count_properties ?? 0) },
+    }
+  })
+
+  return NextResponse.json({ data })
 }
 
-/**
- * POST /api/lead-campaigns
- * Creates a new lead campaign (claims the phone number) and persists its
- * role toggle matrix.
- */
 export async function POST(req: NextRequest) {
   const session = await auth()
   const deny = requirePermission(session, 'settings.manage')
@@ -77,11 +93,11 @@ export async function POST(req: NextRequest) {
     assignedUserIds,
   } = parsed.data
 
-  // Guard: phone number must not already be claimed by another campaign
-  const existingClaim = await (prisma as any).leadCampaign.findUnique({
+  const existingClaim = await LeadCampaign.findOne({
     where: { phoneNumberId },
-    select: { id: true, name: true },
-  })
+    attributes: ['id', 'name'],
+    raw: true,
+  }) as any
   if (existingClaim) {
     return NextResponse.json(
       { error: `Phone number already claimed by campaign "${existingClaim.name}"` },
@@ -90,45 +106,43 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const created = await prisma.$transaction(async (tx) => {
-      const campaign = await (tx as any).leadCampaign.create({
-        data: {
-          name,
-          type,
-          phoneNumberId,
-          leadSourceId: leadSourceId ?? null,
-          callFlowName: callFlowName ?? null,
-          assignmentMethod: assignmentMethod ?? 'ROUND_ROBIN',
-        },
-      })
+    const created = await sequelize.transaction(async (tx) => {
+      const campaign = await LeadCampaign.create({
+        name,
+        type,
+        phoneNumberId,
+        leadSourceId: leadSourceId ?? null,
+        callFlowName: callFlowName ?? null,
+        assignmentMethod: assignmentMethod ?? 'ROUND_ROBIN',
+      } as any, { transaction: tx })
 
       if (roleToggles && roleToggles.length > 0) {
-        await (tx as any).leadCampaignRoleToggle.createMany({
-          data: roleToggles.map((t) => ({
+        await LeadCampaignRoleToggle.bulkCreate(
+          roleToggles.map((t) => ({
             leadCampaignId: campaign.id,
             roleId: t.roleId,
             enabled: t.enabled,
-          })),
-          skipDuplicates: true,
-        })
+          })) as any[],
+          { transaction: tx, ignoreDuplicates: true },
+        )
       }
 
       if (assignedUserIds && assignedUserIds.length > 0) {
-        await (tx as any).leadCampaignUser.createMany({
-          data: assignedUserIds.map((uid) => ({
+        await LeadCampaignUser.bulkCreate(
+          assignedUserIds.map((uid) => ({
             leadCampaignId: campaign.id,
             userId: uid,
-          })),
-          skipDuplicates: true,
-        })
+          })) as any[],
+          { transaction: tx, ignoreDuplicates: true },
+        )
       }
 
       return campaign
     })
 
-    return NextResponse.json({ data: created }, { status: 201 })
+    return NextResponse.json({ data: created.get({ plain: true }) }, { status: 201 })
   } catch (err: any) {
-    if (err?.code === 'P2002') {
+    if (err?.name === 'SequelizeUniqueConstraintError' || err?.parent?.code === '23505') {
       return NextResponse.json(
         { error: 'Duplicate phone number or campaign constraint' },
         { status: 409 },

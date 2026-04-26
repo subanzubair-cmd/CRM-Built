@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
-import { TwilioNumber } from '@crm/database'
+import {
+  LeadCampaign,
+  LeadCampaignRoleToggle,
+  LeadCampaignUser,
+  TwilioNumber,
+  LeadSource,
+  Property,
+  Role,
+  User,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -27,10 +37,6 @@ const UpdateLeadCampaignSchema = z.object({
   assignedUserIds: z.array(z.string().min(1)).optional(),
 })
 
-/**
- * GET /api/lead-campaigns/:id
- * Full lead campaign detail including role toggles and phone number.
- */
 export async function GET(_req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'settings.view')
@@ -38,29 +44,34 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const campaign = await (prisma as any).leadCampaign.findUnique({
-    where: { id },
-    include: {
-      phoneNumber: true,
-      leadSource: true,
-      roleToggles: { include: { role: { select: { id: true, name: true } } } },
-      assignedUsers: { include: { user: { select: { id: true, name: true, email: true } } } },
-      _count: { select: { properties: true } },
-    },
+  const campaign = await LeadCampaign.findByPk(id, {
+    include: [
+      { model: TwilioNumber, as: 'phoneNumber' },
+      { model: LeadSource, as: 'leadSource' },
+      {
+        model: LeadCampaignRoleToggle,
+        as: 'roleToggles',
+        include: [{ model: Role, as: 'role', attributes: ['id', 'name'] }],
+      },
+      {
+        model: LeadCampaignUser,
+        as: 'assignedUsers',
+        include: [{ model: User, as: 'user', attributes: ['id', 'name', 'email'] }],
+      },
+    ],
   })
 
   if (!campaign) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  return NextResponse.json({ data: campaign })
+  const plain = campaign.get({ plain: true }) as any
+  const propertiesCount = await Property.count({ where: { leadCampaignId: id } })
+  plain._count = { properties: propertiesCount }
+
+  return NextResponse.json({ data: plain })
 }
 
-/**
- * PATCH /api/lead-campaigns/:id
- * Updates fields on the campaign; when roleToggles is provided, replaces the
- * entire toggle list.
- */
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'settings.manage')
@@ -74,25 +85,25 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const existing = await (prisma as any).leadCampaign.findUnique({
-    where: { id },
-    include: {
-      phoneNumber: { select: { number: true } },
-      leadSource: { select: { name: true } },
-    },
+  const existingRow = await LeadCampaign.findByPk(id, {
+    include: [
+      { model: TwilioNumber, as: 'phoneNumber', attributes: ['number'] },
+      { model: LeadSource, as: 'leadSource', attributes: ['name'] },
+    ],
   })
-  if (!existing) {
+  if (!existingRow) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
+  const existing = existingRow.get({ plain: true }) as any
 
   const { roleToggles, assignedUserIds, ...rest } = parsed.data
 
-  // Guard: if swapping phone numbers, ensure the new one isn't already claimed
   if (rest.phoneNumberId && rest.phoneNumberId !== existing.phoneNumberId) {
-    const conflict = await (prisma as any).leadCampaign.findUnique({
+    const conflict = await LeadCampaign.findOne({
       where: { phoneNumberId: rest.phoneNumberId },
-      select: { id: true, name: true },
-    })
+      attributes: ['id', 'name'],
+      raw: true,
+    }) as any
     if (conflict && conflict.id !== id) {
       return NextResponse.json(
         { error: `Phone number already claimed by campaign "${conflict.name}"` },
@@ -101,61 +112,52 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
   }
 
-  // Compute the OLD values we need for safe propagation diffs
   const oldPhoneNumber = existing.phoneNumber?.number ?? null
   const oldLeadSourceName = existing.leadSource?.name ?? null
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const campaign = await (tx as any).leadCampaign.update({
-        where: { id },
-        data: rest,
-      })
+    const updated = await sequelize.transaction(async (tx) => {
+      await LeadCampaign.update(rest as any, { where: { id }, transaction: tx })
 
       if (roleToggles) {
-        // Replace the toggle list
-        await (tx as any).leadCampaignRoleToggle.deleteMany({
+        await LeadCampaignRoleToggle.destroy({
           where: { leadCampaignId: id },
+          transaction: tx,
         })
         if (roleToggles.length > 0) {
-          await (tx as any).leadCampaignRoleToggle.createMany({
-            data: roleToggles.map((t) => ({
+          await LeadCampaignRoleToggle.bulkCreate(
+            roleToggles.map((t) => ({
               leadCampaignId: id,
               roleId: t.roleId,
               enabled: t.enabled,
-            })),
-            skipDuplicates: true,
-          })
+            })) as any[],
+            { transaction: tx, ignoreDuplicates: true },
+          )
         }
       }
 
       if (assignedUserIds) {
-        // Replace the direct-user assignment list (used for BUYER/VENDOR campaigns)
-        await (tx as any).leadCampaignUser.deleteMany({
+        await LeadCampaignUser.destroy({
           where: { leadCampaignId: id },
+          transaction: tx,
         })
         if (assignedUserIds.length > 0) {
-          await (tx as any).leadCampaignUser.createMany({
-            data: assignedUserIds.map((uid) => ({
+          await LeadCampaignUser.bulkCreate(
+            assignedUserIds.map((uid) => ({
               leadCampaignId: id,
               userId: uid,
-            })),
-            skipDuplicates: true,
-          })
+            })) as any[],
+            { transaction: tx, ignoreDuplicates: true },
+          )
         }
       }
 
-      return campaign
+      const fresh = await LeadCampaign.findByPk(id, { transaction: tx })
+      return fresh?.get({ plain: true })
     })
 
-    // ─── PROPAGATION: flow campaign changes into existing leads ───
-    // Only propagate when the field actually changed; never overwrite
-    // user-customized values on individual leads (we match on the OLD value).
     void (async () => {
       try {
-        // 1. Phone number propagation — update Property.defaultOutboundNumber
-        //    only on properties where it currently equals the OLD campaign number
-        //    (i.e. they haven't been manually overridden since lead creation).
         if (rest.phoneNumberId !== undefined && rest.phoneNumberId !== existing.phoneNumberId) {
           const newNumberRow = rest.phoneNumberId
             ? await TwilioNumber.findByPk(rest.phoneNumberId, {
@@ -165,34 +167,36 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           const newNumber = newNumberRow?.number ?? null
 
           if (newNumber !== oldPhoneNumber) {
-            await prisma.property.updateMany({
-              where: {
-                leadCampaignId: id,
-                defaultOutboundNumber: oldPhoneNumber,
+            await Property.update(
+              { defaultOutboundNumber: newNumber },
+              {
+                where: {
+                  leadCampaignId: id,
+                  defaultOutboundNumber: oldPhoneNumber,
+                },
               },
-              data: { defaultOutboundNumber: newNumber },
-            })
+            )
           }
         }
 
-        // 2. Lead source propagation — update Property.source on properties
-        //    where source matches the OLD campaign source.
         if (rest.leadSourceId !== undefined) {
           const newSourceName = rest.leadSourceId
-            ? (await (prisma as any).leadSource.findUnique({
-                where: { id: rest.leadSourceId },
-                select: { name: true },
-              }))?.name ?? null
+            ? ((await LeadSource.findByPk(rest.leadSourceId, {
+                attributes: ['name'],
+                raw: true,
+              })) as any)?.name ?? null
             : null
 
           if (newSourceName !== oldLeadSourceName) {
-            await prisma.property.updateMany({
-              where: {
-                leadCampaignId: id,
-                source: oldLeadSourceName,
+            await Property.update(
+              { source: newSourceName },
+              {
+                where: {
+                  leadCampaignId: id,
+                  source: oldLeadSourceName,
+                },
               },
-              data: { source: newSourceName },
-            })
+            )
           }
         }
       } catch (e) {
@@ -202,7 +206,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     return NextResponse.json({ data: updated })
   } catch (err: any) {
-    if (err?.code === 'P2002') {
+    if (err?.name === 'SequelizeUniqueConstraintError' || err?.parent?.code === '23505') {
       return NextResponse.json(
         { error: 'Duplicate phone number or campaign constraint' },
         { status: 409 },
@@ -216,11 +220,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 }
 
-/**
- * DELETE /api/lead-campaigns/:id
- * Removes the campaign (cascades LeadCampaignRoleToggle). The optional
- * TwilioNumber <-> LeadCampaign relation becomes unclaimed automatically.
- */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'settings.manage')
@@ -228,13 +227,13 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const existing = await (prisma as any).leadCampaign.findUnique({ where: { id } })
+  const existing = await LeadCampaign.findByPk(id, { raw: true })
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
   try {
-    await (prisma as any).leadCampaign.delete({ where: { id } })
+    await LeadCampaign.destroy({ where: { id } })
   } catch (err: any) {
     console.error('[lead-campaigns] delete failed:', err)
     return NextResponse.json(

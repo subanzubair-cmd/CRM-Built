@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { CommProviderConfig, Op } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { encrypt, maskSecret, maskId } from '@/lib/crypto'
 import { refreshCommConfig, type CommProvider } from '@/lib/comm-provider'
@@ -16,25 +16,19 @@ const AVAILABLE_PROVIDERS = [
   { name: 'signalhouse', label: 'Signal House' },
 ]
 
-/**
- * GET /api/settings/comm-provider
- * Returns all provider configs with secrets masked.
- */
 export async function GET() {
   const session = await auth()
   const deny = requirePermission(session, 'settings.view')
   if (deny) return deny
 
-  // Ensure all three rows exist (idempotent upsert)
   for (const name of PROVIDERS) {
-    await (prisma as any).commProviderConfig.upsert({
+    await CommProviderConfig.findOrCreate({
       where: { providerName: name },
-      create: { providerName: name, isActive: false },
-      update: {},
+      defaults: { providerName: name, isActive: false } as any,
     })
   }
 
-  const rows = await (prisma as any).commProviderConfig.findMany()
+  const rows = await CommProviderConfig.findAll({ raw: true }) as any[]
 
   const providers = rows.map((row: any) => {
     const cfg = (row.configJson ?? {}) as Record<string, string | undefined>
@@ -89,10 +83,6 @@ const PutBodySchema = z.discriminatedUnion('providerName', [
   z.object({ providerName: z.literal('signalhouse'), defaultNumber: z.string().optional(), config: SignalHouseCfg }),
 ])
 
-/**
- * PUT /api/settings/comm-provider
- * Saves the provided provider config and marks it as active.
- */
 export async function PUT(req: NextRequest) {
   const limited = rateLimitMutation(req, { bucket: 'settings.comm-provider', limit: 10 })
   if (limited) return limited
@@ -109,13 +99,12 @@ export async function PUT(req: NextRequest) {
   const { providerName, defaultNumber } = parsed.data
   const newCfg = parsed.data.config as Record<string, string | undefined>
 
-  // Load existing row to preserve encrypted values when mask placeholder is sent
-  const existing = await (prisma as any).commProviderConfig.findUnique({
+  const existing = await CommProviderConfig.findOne({
     where: { providerName },
-  })
+    raw: true,
+  }) as any
   const existingCfg = (existing?.configJson ?? {}) as Record<string, string | undefined>
 
-  // For each secret field, encrypt the new value OR keep existing if masked
   const secretFields: Record<string, string[]> = {
     twilio: ['authToken'],
     telnyx: ['apiKey'],
@@ -127,7 +116,6 @@ export async function PUT(req: NextRequest) {
   for (const [key, value] of Object.entries(newCfg)) {
     if (value === undefined || value === '') continue
     if (secretFields[providerName]?.includes(key)) {
-      // Keep existing encrypted value if the masked placeholder is sent
       if (value === MASK_PLACEHOLDER) {
         mergedCfg[key] = existingCfg[key]
       } else {
@@ -138,29 +126,28 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  // Upsert target row as active
-  await (prisma as any).commProviderConfig.upsert({
+  const [row, created] = await CommProviderConfig.findOrCreate({
     where: { providerName },
-    create: {
+    defaults: {
       providerName,
       isActive: true,
       defaultNumber: defaultNumber ?? null,
       configJson: mergedCfg,
-    },
-    update: {
+    } as any,
+  })
+  if (!created) {
+    await row.update({
       isActive: true,
       defaultNumber: defaultNumber ?? null,
       configJson: mergedCfg,
-    },
-  })
+    })
+  }
 
-  // Deactivate all others
-  await (prisma as any).commProviderConfig.updateMany({
-    where: { providerName: { not: providerName } },
-    data: { isActive: false },
-  })
+  await CommProviderConfig.update(
+    { isActive: false },
+    { where: { providerName: { [Op.ne]: providerName } } },
+  )
 
-  // Bust resolver cache
   refreshCommConfig()
 
   return NextResponse.json({ success: true })

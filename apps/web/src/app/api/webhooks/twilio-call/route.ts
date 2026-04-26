@@ -1,17 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
-import { prisma } from '@/lib/prisma'
+import { ActiveCall, Op } from '@crm/database'
 
-/**
- * POST /api/webhooks/twilio-call
- *
- * Receives Twilio call status callbacks.
- * Twilio sends form-encoded body with fields like:
- *   CallSid, CallStatus, ConferenceSid, To, From, Direction
- *
- * No auth required — Twilio posts directly.
- * In production, validate X-Twilio-Signature (same pattern as webhooks/twilio).
- */
 export async function POST(req: NextRequest) {
   let params: Record<string, string>
 
@@ -19,7 +9,6 @@ export async function POST(req: NextRequest) {
   if (contentType.includes('application/json')) {
     params = await req.json()
   } else {
-    // Twilio sends application/x-www-form-urlencoded
     const text = await req.text()
     params = Object.fromEntries(new URLSearchParams(text))
   }
@@ -34,19 +23,17 @@ export async function POST(req: NextRequest) {
       return new NextResponse('Forbidden', { status: 403 })
     }
   }
-  // (skip validation in dev/mock mode when TWILIO_AUTH_TOKEN is absent)
 
   const { CallSid, CallStatus, ConferenceSid } = params
 
   if (!CallSid) {
-    return NextResponse.json({ ok: true }) // ignore malformed
+    return NextResponse.json({ ok: true })
   }
 
   try {
-    // Find the ActiveCall matching this call SID (agent or customer leg)
-    const activeCall = await (prisma as any).activeCall.findFirst({
+    const activeCall = await ActiveCall.findOne({
       where: {
-        OR: [
+        [Op.or]: [
           { agentCallSid: CallSid },
           { customerCallSid: CallSid },
           { supervisorCallSid: CallSid },
@@ -55,42 +42,35 @@ export async function POST(req: NextRequest) {
     })
 
     if (!activeCall) {
-      // Unknown call — ignore
       return NextResponse.json({ ok: true })
     }
+    const call = activeCall.get({ plain: true }) as any
 
     const updates: Record<string, unknown> = { updatedAt: new Date() }
 
-    // Populate conference SID when first known
-    if (ConferenceSid && !activeCall.conferenceId) {
+    if (ConferenceSid && !call.conferenceId) {
       updates.conferenceId = ConferenceSid
     }
 
-    // Update call status
-    if (CallStatus === 'ringing' && activeCall.status === 'INITIATING') {
+    if (CallStatus === 'ringing' && call.status === 'INITIATING') {
       updates.status = 'RINGING'
     }
 
-    if (CallStatus === 'in-progress' && activeCall.status !== 'ACTIVE') {
+    if (CallStatus === 'in-progress' && call.status !== 'ACTIVE') {
       updates.status = 'ACTIVE'
     }
 
     if (CallStatus === 'completed') {
-      // Only mark COMPLETED when the agent leg ends
-      if (CallSid === activeCall.agentCallSid) {
+      if (CallSid === call.agentCallSid) {
         updates.status = 'COMPLETED'
         updates.endedAt = new Date()
       }
     }
 
-    await (prisma as any).activeCall.update({
-      where: { id: activeCall.id },
-      data: updates,
-    })
+    await activeCall.update(updates)
   } catch (err) {
     console.error('[webhook/twilio-call]', err)
   }
 
-  // Always return 200 to Twilio
   return NextResponse.json({ ok: true })
 }

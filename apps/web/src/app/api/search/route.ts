@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  Contact,
+  PropertyContact,
+  Message,
+  Note,
+  Task,
+  PropertyFile,
+  Op,
+} from '@crm/database'
 
 export async function GET(req: NextRequest) {
   const session = await auth()
@@ -8,126 +17,80 @@ export async function GET(req: NextRequest) {
 
   const q = req.nextUrl.searchParams.get('q')?.trim()
   if (!q || q.length < 2) return NextResponse.json({ results: [] })
+  const like = `%${q}%`
 
   const [properties, contacts, messages, notes, tasks, files] = await Promise.all([
-    // Properties — address fields
-    prisma.property.findMany({
+    Property.findAll({
       where: {
-        OR: [
-          { streetAddress: { contains: q, mode: 'insensitive' } },
-          { normalizedAddress: { contains: q, mode: 'insensitive' } },
-          { city: { contains: q, mode: 'insensitive' } },
+        [Op.or]: [
+          { streetAddress: { [Op.iLike]: like } },
+          { normalizedAddress: { [Op.iLike]: like } },
+          { city: { [Op.iLike]: like } },
         ],
       },
-      select: {
-        id: true,
-        streetAddress: true,
-        city: true,
-        state: true,
-        zip: true,
-        propertyStatus: true,
-        leadType: true,
-      },
-      take: 5,
+      attributes: ['id', 'streetAddress', 'city', 'state', 'zip', 'propertyStatus', 'leadType'],
+      limit: 5,
+      raw: true,
     }),
-
-    // Contacts — name, phone, email
-    prisma.contact.findMany({
+    Contact.findAll({
       where: {
-        OR: [
-          { firstName: { contains: q, mode: 'insensitive' } },
-          { lastName: { contains: q, mode: 'insensitive' } },
-          { phone: { contains: q, mode: 'insensitive' } },
-          { email: { contains: q, mode: 'insensitive' } },
+        [Op.or]: [
+          { firstName: { [Op.iLike]: like } },
+          { lastName: { [Op.iLike]: like } },
+          { phone: { [Op.iLike]: like } },
+          { email: { [Op.iLike]: like } },
         ],
       },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        email: true,
-        properties: {
-          select: {
-            property: {
-              select: { id: true, streetAddress: true, propertyStatus: true, leadType: true },
-            },
-          },
-          take: 1,
+      attributes: ['id', 'firstName', 'lastName', 'phone', 'email'],
+      include: [
+        {
+          model: PropertyContact,
+          as: 'properties',
+          separate: true,
+          limit: 1,
+          include: [
+            { model: Property, as: 'property', attributes: ['id', 'streetAddress', 'propertyStatus', 'leadType'] },
+          ],
         },
-      },
-      take: 5,
+      ],
+      limit: 5,
     }),
-
-    // Messages — body
-    prisma.message.findMany({
-      where: { body: { contains: q, mode: 'insensitive' } },
-      select: {
-        id: true,
-        body: true,
-        channel: true,
-        createdAt: true,
-        property: {
-          select: { id: true, streetAddress: true, propertyStatus: true, leadType: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 3,
+    Message.findAll({
+      where: { body: { [Op.iLike]: like } },
+      attributes: ['id', 'body', 'channel', 'createdAt'],
+      include: [{ model: Property, as: 'property', attributes: ['id', 'streetAddress', 'propertyStatus', 'leadType'] }],
+      order: [['createdAt', 'DESC']],
+      limit: 3,
     }),
-
-    // Notes — body
-    prisma.note.findMany({
-      where: { body: { contains: q, mode: 'insensitive' } },
-      select: {
-        id: true,
-        body: true,
-        createdAt: true,
-        property: {
-          select: { id: true, streetAddress: true, propertyStatus: true, leadType: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 3,
+    Note.findAll({
+      where: { body: { [Op.iLike]: like } },
+      attributes: ['id', 'body', 'createdAt'],
+      include: [{ model: Property, as: 'property', attributes: ['id', 'streetAddress', 'propertyStatus', 'leadType'] }],
+      order: [['createdAt', 'DESC']],
+      limit: 3,
     }),
-
-    // Tasks — title
-    prisma.task.findMany({
-      where: { title: { contains: q, mode: 'insensitive' } },
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        dueAt: true,
-        property: {
-          select: { id: true, streetAddress: true, propertyStatus: true, leadType: true },
-        },
-      },
-      take: 3,
+    Task.findAll({
+      where: { title: { [Op.iLike]: like } },
+      attributes: ['id', 'title', 'status', 'dueAt'],
+      include: [{ model: Property, as: 'property', attributes: ['id', 'streetAddress', 'propertyStatus', 'leadType'] }],
+      limit: 3,
     }),
-
-    // PropertyFiles — name
-    prisma.propertyFile.findMany({
-      where: { name: { contains: q, mode: 'insensitive' } },
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        property: {
-          select: { id: true, streetAddress: true, propertyStatus: true, leadType: true },
-        },
-      },
-      take: 3,
+    PropertyFile.findAll({
+      where: { name: { [Op.iLike]: like } },
+      attributes: ['id', 'name', 'type'],
+      include: [{ model: Property, as: 'property', attributes: ['id', 'streetAddress', 'propertyStatus', 'leadType'] }],
+      limit: 3,
     }),
   ])
 
   return NextResponse.json({
     results: {
       properties,
-      contacts,
-      messages,
-      notes,
-      tasks,
-      files,
+      contacts: contacts.map((c) => c.get({ plain: true })),
+      messages: messages.map((m) => m.get({ plain: true })),
+      notes: notes.map((n) => n.get({ plain: true })),
+      tasks: tasks.map((t) => t.get({ plain: true })),
+      files: files.map((f) => f.get({ plain: true })),
     },
   })
 }

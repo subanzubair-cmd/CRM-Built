@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Contact, Vendor, ActivityLog, sequelize } from '@crm/database'
 import { z } from 'zod'
 
 const ConvertToVendorSchema = z.object({
@@ -22,44 +22,40 @@ export async function POST(req: NextRequest) {
 
   const { contactId, propertyId, category } = parsed.data
 
-  // Check contact exists
-  const contact = await prisma.contact.findUnique({ where: { id: contactId } })
+  const contact = await Contact.findByPk(contactId)
   if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
 
-  // Check if already a vendor
-  const existing = await prisma.vendor.findUnique({ where: { contactId } })
+  const existing = await Vendor.findOne({ where: { contactId } })
   if (existing) return NextResponse.json({ error: 'Already a vendor' }, { status: 409 })
 
-  // Create vendor record linked to existing contact
-  const vendor = await prisma.vendor.create({
-    data: {
+  const result = await sequelize.transaction(async (tx) => {
+    const vendor = await Vendor.create({
       contactId,
       category,
       isActive: true,
-    },
-    include: { contact: true },
-  })
+    } as any, { transaction: tx })
 
-  // Update contact type to VENDOR if not already
-  await prisma.contact.update({
-    where: { id: contactId },
-    data: { type: 'VENDOR' },
-  })
+    await contact.update({ type: 'VENDOR' }, { transaction: tx })
 
-  // Create activity log on the property
-  await prisma.activityLog.create({
-    data: {
+    const cPlain = contact.get({ plain: true }) as any
+    await ActivityLog.create({
       propertyId,
       userId,
       userName,
       action: 'CONTACT_CONVERTED',
       detail: {
-        description: `Converted ${contact.firstName} ${contact.lastName ?? ''} to Vendor (${category})`.trim(),
+        description: `Converted ${cPlain.firstName} ${cPlain.lastName ?? ''} to Vendor (${category})`.trim(),
         vendorId: vendor.id,
         contactId,
       },
-    },
+    } as any, { transaction: tx })
+
+    const fresh = await Vendor.findByPk(vendor.id, {
+      include: [{ model: Contact, as: 'contact' }],
+      transaction: tx,
+    })
+    return fresh?.get({ plain: true })
   })
 
-  return NextResponse.json({ success: true, data: vendor }, { status: 201 })
+  return NextResponse.json({ success: true, data: result }, { status: 201 })
 }
