@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Phone,
   PhoneOff,
@@ -113,6 +113,10 @@ export function CallPanel({
   const [inCall, setInCall] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  // Guard so the remote-hangup useEffect doesn't fire the disposition
+  // modal twice when the user clicked End (which itself causes the
+  // SDK state to transition to 'ended').
+  const endCallFiredRef = useRef(false)
 
   // Drive the local UI state machine from the WebRTC hook's state.
   // We treat any non-idle/ended/error state as "in call" so the End
@@ -272,8 +276,14 @@ export function CallPanel({
     }
   }
 
-  function handleEndCall() {
+  function handleEndCall(reason: 'user' | 'remote' = 'user') {
+    if (endCallFiredRef.current) return
+    endCallFiredRef.current = true
     // Tell WebRTC + server to terminate. Recorder flushes + MinIO finalizes.
+    // tx.hangup is idempotent — when reason='remote' the SDK already
+    // ended the call, so the SDK call's own .hangup() is a no-op but
+    // the server-side POST /api/calls/[id]/hangup still marks the row
+    // COMPLETED so it drops off the Live Calls panel.
     tx.hangup().catch(() => {})
     onEndCall({
       callId,
@@ -288,6 +298,21 @@ export function CallPanel({
     setCallStartedAt(null)
     setElapsed(0)
   }
+
+  // When the OTHER party hangs up — the SDK fires the 'ended' state
+  // (via call.hangup notification) without us calling tx.hangup().
+  // Auto-fire the same teardown so the timer stops, the server marks
+  // the row COMPLETED, and the call disposition modal opens for the
+  // agent to log the outcome.
+  useEffect(() => {
+    if (tx.state === 'ended' && inCall && !endCallFiredRef.current) {
+      handleEndCall('remote')
+    }
+    // Reset the guard when the next call starts.
+    if (tx.state === 'connecting' || tx.state === 'idle') {
+      endCallFiredRef.current = false
+    }
+  }, [tx.state, inCall]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function dispatchAction(action: string) {
     window.dispatchEvent(
@@ -321,7 +346,7 @@ export function CallPanel({
               Expand
             </button>
             <button
-              onClick={handleEndCall}
+              onClick={() => handleEndCall('user')}
               className="flex items-center gap-1 text-xs font-medium bg-white text-green-700 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
             >
               End & Log
@@ -521,7 +546,7 @@ export function CallPanel({
               </button>
             ) : (
               <button
-                onClick={handleEndCall}
+                onClick={() => handleEndCall('user')}
                 className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors active:scale-[0.98]"
               >
                 <PhoneOff className="w-4 h-4" />

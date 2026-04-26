@@ -117,6 +117,23 @@ export function useTelnyxCall(): UseTelnyxCallApi {
 
         const newCall = await client.newCall(toNumber, callerNumber || fromNumber || '')
         setRawCall(newCall)
+
+        // Link the Telnyx call_control_id (= newCall.id) back to our
+        // ActiveCall row so when call.hangup fires from the Telnyx
+        // webhook, our handler can match by conferenceName and mark
+        // the row COMPLETED. Without this, outbound rows started with
+        // a 'webrtc-{ts}-{random}' placeholder never match a webhook
+        // and stick around in the Live Calls panel.
+        const controlId = (newCall as any)?.id ?? null
+        if (controlId) {
+          fetch(`/api/calls/${id}/link-control-id`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ controlId }),
+          }).catch((err) => {
+            console.warn('[useTelnyxCall] link-control-id failed:', err)
+          })
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Call failed'
         setError(msg)

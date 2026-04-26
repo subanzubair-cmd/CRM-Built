@@ -152,7 +152,18 @@ export async function GET(_req: NextRequest) {
   try {
     const calls = await ActiveCall.findAll({
       where: {
-        status: { [Op.ne]: 'COMPLETED' },
+        // Live Calls panel only shows truly live calls. Excludes every
+        // terminal state we know about (and is forward-compatible with
+        // any new terminal status added later — whitelist live states
+        // instead of blacklisting one).
+        status: { [Op.in]: ['INITIATING', 'RINGING', 'ACTIVE'] },
+        // Auto-prune anything that's been "live" for more than 30 minutes
+        // — at that point either Telnyx already terminated the call and
+        // we missed the webhook, or something is genuinely stuck. Either
+        // way it shouldn't show as live. The /sweep endpoint below
+        // marks these COMPLETED on a schedule; this filter is a belt
+        // so the panel hides them even before the sweep runs.
+        startedAt: { [Op.gte]: new Date(Date.now() - 30 * 60 * 1000) },
       },
       include: [
         { model: User, as: 'agent', attributes: ['id', 'name', 'phone'] },
