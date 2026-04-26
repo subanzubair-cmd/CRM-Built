@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma'
+import { Task } from '@crm/database'
 
 /**
  * When a repeating task is completed, spawn the next instance based on
@@ -16,24 +16,23 @@ import { prisma } from '@/lib/prisma'
  */
 export async function scheduleNextRepeat(taskId: string): Promise<void> {
   try {
-    const task = await prisma.task.findUnique({
-      where: { id: taskId },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        type: true,
-        priority: true,
-        dueAt: true,
-        dueTime: true,
-        assignedToId: true,
-        createdById: true,
-        propertyId: true,
-        repeatType: true,
-        repeatConfigJson: true,
-        templateId: true,
-        sourceType: true,
-      },
+    const task = await Task.findByPk(taskId, {
+      attributes: [
+        'id',
+        'title',
+        'description',
+        'type',
+        'priority',
+        'dueAt',
+        'dueTime',
+        'assignedToId',
+        'createdById',
+        'propertyId',
+        'repeatType',
+        'repeatConfigJson',
+        'templateId',
+        'sourceType',
+      ],
     })
     if (!task) return
     if (!task.repeatType || task.repeatType === 'none') return
@@ -42,23 +41,21 @@ export async function scheduleNextRepeat(taskId: string): Promise<void> {
     const nextDue = computeNextDueAt(task.dueAt, task.repeatType, task.repeatConfigJson)
     if (!nextDue) return
 
-    await prisma.task.create({
-      data: {
-        title: task.title,
-        description: task.description ?? undefined,
-        type: task.type,
-        priority: task.priority,
-        dueAt: nextDue,
-        dueTime: task.dueTime ?? undefined,
-        assignedToId: task.assignedToId ?? undefined,
-        createdById: task.createdById ?? undefined,
-        propertyId: task.propertyId ?? undefined,
-        repeatType: task.repeatType,
-        repeatConfigJson: (task.repeatConfigJson ?? undefined) as any,
-        templateId: task.templateId ?? undefined,
-        sourceType: 'repeat',
-        status: 'PENDING',
-      },
+    await Task.create({
+      title: task.title,
+      description: task.description ?? null,
+      type: task.type,
+      priority: task.priority,
+      dueAt: nextDue,
+      dueTime: task.dueTime ?? null,
+      assignedToId: task.assignedToId ?? null,
+      createdById: task.createdById ?? null,
+      propertyId: task.propertyId ?? null,
+      repeatType: task.repeatType,
+      repeatConfigJson: task.repeatConfigJson ?? null,
+      templateId: task.templateId ?? null,
+      sourceType: 'repeat',
+      status: 'PENDING',
     })
   } catch (err) {
     console.error('[task-repeat] scheduleNextRepeat failed:', err)

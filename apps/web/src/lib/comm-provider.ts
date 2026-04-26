@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma'
+import { CommProviderConfig } from '@crm/database'
 import { decrypt } from '@/lib/crypto'
 
 export type CommProvider = 'twilio' | 'telnyx' | 'signalhouse'
@@ -42,8 +42,9 @@ export async function getActiveCommConfig(): Promise<ActiveCommConfig | null> {
   let config: ActiveCommConfig | null = null
 
   try {
-    const row = await (prisma as any).commProviderConfig.findFirst({
+    const row = await CommProviderConfig.findOne({
       where: { isActive: true },
+      raw: true,
     })
 
     if (row) {
