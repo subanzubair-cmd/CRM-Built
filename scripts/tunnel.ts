@@ -80,7 +80,7 @@ async function main() {
   console.log(sep)
   console.log(`   Public URL:  ${httpsUrl}`)
   console.log(`   Forwarding:  http://localhost:${PORT}`)
-  console.log(`   Inspector:   http://localhost:4040  (live request log)`)
+  console.log(`   Live log:    https://dashboard.ngrok.com/observability/traffic-inspector`)
   console.log(sep)
   console.log(`\n📥 Paste these into your provider dashboards:\n`)
   console.log(`   Twilio (Phone Numbers → Number → Messaging Webhook):`)
@@ -94,7 +94,7 @@ async function main() {
   console.log(sep)
   console.log(`\n💡 Tips:`)
   console.log(`   • Open ${httpsUrl} in a browser to confirm the CRM is reachable`)
-  console.log(`   • Watch http://localhost:4040 to see every inbound webhook hit live`)
+  console.log(`   • Watch live traffic at https://dashboard.ngrok.com/observability/traffic-inspector`)
   console.log(`   • Press Ctrl+C to close the tunnel cleanly`)
   if (!DOMAIN) {
     console.log(`\n⚠  This URL changes every restart (free tier).`)
@@ -103,8 +103,8 @@ async function main() {
   }
   console.log()
 
-  // Keep the process alive. ngrok's listener already holds the connection
-  // open, but we add an explicit handler so Ctrl+C disconnects cleanly.
+  // Keep the process alive — ngrok's listener doesn't pin the event loop
+  // on its own. Without these anchors, Node exits and the tunnel dies.
   process.on('SIGINT', async () => {
     console.log('\n🛑 Closing tunnel…')
     await listener.close().catch(() => {})
@@ -114,6 +114,16 @@ async function main() {
     await listener.close().catch(() => {})
     process.exit(0)
   })
+
+  // Belt-and-suspenders event-loop anchor:
+  //   1. setInterval — a refed timer is the canonical way to pin the loop
+  //   2. stdin.resume() — also refs the loop, survives some shell oddities
+  //   3. unresolved Promise — paranoia, doesn't hurt
+  setInterval(() => {}, 1 << 30)
+  if (process.stdin.isTTY || !process.stdin.destroyed) {
+    process.stdin.resume()
+  }
+  await new Promise<void>(() => {})
 }
 
 main().catch((err) => {

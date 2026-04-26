@@ -11,7 +11,12 @@ export default auth((req) => {
   const isAuthRoute = req.nextUrl.pathname.startsWith('/login')
   const isApiAuth = req.nextUrl.pathname.startsWith('/api/auth')
 
-  if (isApiAuth) return NextResponse.next()
+  // Webhooks (Twilio, Telnyx, etc.) authenticate via signed payloads
+  // verified inside the route handler — they must NOT require a session.
+  // Without this bypass, every provider POST gets redirected to /login.
+  const isWebhook = req.nextUrl.pathname.startsWith('/api/webhooks')
+
+  if (isApiAuth || isWebhook) return NextResponse.next()
   if (!isLoggedIn && !isAuthRoute) {
     return NextResponse.redirect(new URL('/login', req.nextUrl))
   }
