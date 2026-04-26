@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, Copy, Check, Webhook } from 'lucide-react'
 import { toast } from 'sonner'
 
 type ProviderName = 'twilio' | 'telnyx' | 'signalhouse'
@@ -18,6 +18,49 @@ interface ProviderConfigRow {
   config: Record<string, string>
 }
 
+const PROVIDER_LABELS: Record<ProviderName, string> = {
+  twilio: 'Twilio',
+  telnyx: 'Telnyx',
+  signalhouse: 'Signal House',
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * What each provider's UNIFIED webhook actually needs from this form.
+ * The webhook handler reads these fields from CommProviderConfig at request
+ * time to verify signatures + attribute messages. Anything marked "required
+ * for webhooks" must be filled in before production traffic flows.
+ * ─────────────────────────────────────────────────────────────────────── */
+const WEBHOOK_NEEDS: Record<ProviderName, { paste: string[]; need: string[] }> = {
+  twilio: {
+    paste: [
+      'Phone Numbers → <number> → Messaging Webhook',
+      'Phone Numbers → <number> → Voice Webhook',
+    ],
+    need: [
+      'Auth Token (HMAC-SHA1 signs every request — required to verify)',
+      'Public Webhook Host (Twilio signs the URL it called — must match)',
+    ],
+  },
+  telnyx: {
+    paste: [
+      'Messaging → Messaging Profile → Inbound Webhook URL',
+      'Voice → Voice API & Apps → <app> → Webhook URL',
+    ],
+    need: [
+      'Public Key (ed25519 — required to verify inbound webhook signatures)',
+      'Messaging Profile ID (used to attribute outbound SMS to the right campaign)',
+    ],
+  },
+  signalhouse: {
+    paste: [
+      'Messaging Settings → Inbound Webhook URL',
+    ],
+    need: [
+      'Webhook Secret (HMAC — required to verify inbound webhooks)',
+    ],
+  },
+}
+
 export function CommProviderForm() {
   const [availableProviders, setAvailableProviders] = useState<ProviderAvailable[]>([])
   const [providers, setProviders] = useState<ProviderConfigRow[]>([])
@@ -27,6 +70,11 @@ export function CommProviderForm() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [origin, setOrigin] = useState('')
+
+  useEffect(() => {
+    setOrigin(typeof window !== 'undefined' ? window.location.origin : '')
+  }, [])
 
   // Load all providers on mount
   useEffect(() => {
@@ -53,7 +101,6 @@ export function CommProviderForm() {
     }
   }, [])
 
-  // Switching provider — load that row's fields
   function handleProviderSwitch(newName: ProviderName) {
     setSelected(newName)
     const row = providers.find((r) => r.providerName === newName)
@@ -82,7 +129,6 @@ export function CommProviderForm() {
         throw new Error(json.error ?? 'Save failed')
       }
       toast.success('Provider configuration saved')
-      // Reload to show masked values
       const reload = await fetch('/api/settings/comm-provider').then((r) => r.json())
       setProviders(reload.providers ?? [])
       const active = (reload.providers ?? []).find((r: ProviderConfigRow) => r.isActive)
@@ -121,16 +167,17 @@ export function CommProviderForm() {
   }
 
   const activeName = providers.find((r) => r.isActive)?.providerName
+  const webhookUrl = origin ? `${origin}/api/webhooks/${selected}` : ''
 
   return (
-    <div className="max-w-xl">
+    <div className="max-w-2xl space-y-4">
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         {/* Active badge */}
         {activeName && (
           <div className="flex items-center gap-2 mb-4">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded">
               <CheckCircle2 className="w-3 h-3" />
-              Active: {availableProviders.find((p) => p.name === activeName)?.label ?? activeName}
+              Active: {PROVIDER_LABELS[activeName]}
             </span>
           </div>
         )}
@@ -166,27 +213,81 @@ export function CommProviderForm() {
           <p className="text-[11px] text-gray-400 mt-1">E.164 format — used as the default sender for calls, SMS, and drips.</p>
         </div>
 
-        {/* Provider-specific fields */}
+        {/* Provider-specific credential fields */}
         {selected === 'twilio' && (
           <>
-            <FieldRow label="Account SID *" value={fields.accountSid ?? ''} onChange={(v) => setField('accountSid', v)} mono />
-            <FieldRow label="Auth Token *" value={fields.authToken ?? ''} onChange={(v) => setField('authToken', v)} type="password" hint="Clear to enter a new token — leave masked dots to keep existing." />
-            <FieldRow label="TwiML Host" value={fields.twimlHost ?? ''} onChange={(v) => setField('twimlHost', v)} placeholder="https://your-domain.com" />
+            <FieldRow
+              label="Account SID *"
+              value={fields.accountSid ?? ''}
+              onChange={(v) => setField('accountSid', v)}
+              mono
+              hint="Found in Twilio Console → Account Info."
+            />
+            <FieldRow
+              label="Auth Token *"
+              value={fields.authToken ?? ''}
+              onChange={(v) => setField('authToken', v)}
+              type="password"
+              hint="Used for outbound API auth AND inbound webhook signature verification (HMAC-SHA1). Clear to enter a new token; leave masked dots to keep existing."
+            />
+            <FieldRow
+              label="Public Webhook Host *"
+              value={fields.twimlHost ?? ''}
+              onChange={(v) => setField('twimlHost', v)}
+              placeholder={origin || 'https://your-domain.com'}
+              hint="The public URL where this CRM is reachable. Twilio signs the URL it called and we verify against this — they MUST match. For local dev, paste your ngrok URL (e.g. https://abc.ngrok-free.dev)."
+            />
           </>
         )}
 
         {selected === 'telnyx' && (
           <>
-            <FieldRow label="API Key *" value={fields.apiKey ?? ''} onChange={(v) => setField('apiKey', v)} type="password" hint="V2 API key — clear to enter a new one." />
-            <FieldRow label="Messaging Profile ID" value={fields.messagingProfileId ?? ''} onChange={(v) => setField('messagingProfileId', v)} mono />
-            <FieldRow label="Public Key" value={fields.publicKey ?? ''} onChange={(v) => setField('publicKey', v)} mono hint="Optional — used for webhook signature verification." />
+            <FieldRow
+              label="API Key *"
+              value={fields.apiKey ?? ''}
+              onChange={(v) => setField('apiKey', v)}
+              type="password"
+              hint="V2 API key from Telnyx Mission Control → API Keys. Used for outbound API calls. Clear to enter a new one."
+            />
+            <FieldRow
+              label="Messaging Profile ID *"
+              value={fields.messagingProfileId ?? ''}
+              onChange={(v) => setField('messagingProfileId', v)}
+              mono
+              hint="UUID of your Messaging Profile (Telnyx → Messaging → Messaging Profiles). Required for outbound SMS routing through your 10DLC campaign."
+            />
+            <FieldRow
+              label="Public Key *"
+              value={fields.publicKey ?? ''}
+              onChange={(v) => setField('publicKey', v)}
+              mono
+              hint="Required for production. Telnyx signs every inbound webhook with ed25519 — without this key, signatures cannot be verified. Copy from Telnyx → Account → Public Key (base64)."
+            />
           </>
         )}
 
         {selected === 'signalhouse' && (
           <>
-            <FieldRow label="API Token *" value={fields.apiToken ?? ''} onChange={(v) => setField('apiToken', v)} type="password" hint="Clear to enter a new token." />
-            <FieldRow label="Account ID *" value={fields.accountId ?? ''} onChange={(v) => setField('accountId', v)} mono />
+            <FieldRow
+              label="API Token *"
+              value={fields.apiToken ?? ''}
+              onChange={(v) => setField('apiToken', v)}
+              type="password"
+              hint="Clear to enter a new token."
+            />
+            <FieldRow
+              label="Account ID *"
+              value={fields.accountId ?? ''}
+              onChange={(v) => setField('accountId', v)}
+              mono
+            />
+            <FieldRow
+              label="Webhook Secret"
+              value={fields.webhookSecret ?? ''}
+              onChange={(v) => setField('webhookSecret', v)}
+              type="password"
+              hint="Optional today — Signal House inbound webhook handler is not yet implemented. Will be required once HMAC verification is wired up."
+            />
           </>
         )}
 
@@ -214,10 +315,108 @@ export function CommProviderForm() {
         {activeName && activeName !== selected && (
           <div className="flex items-start gap-1.5 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-            Saving will switch the active provider from <strong>{availableProviders.find((p) => p.name === activeName)?.label}</strong> to <strong>{availableProviders.find((p) => p.name === selected)?.label}</strong>.
+            Saving will switch the active provider from{' '}
+            <strong>{PROVIDER_LABELS[activeName]}</strong> to{' '}
+            <strong>{PROVIDER_LABELS[selected]}</strong>.
           </div>
         )}
       </div>
+
+      {/* ─── Webhook URL panel ───────────────────────────────────────── */}
+      <WebhookPanel providerName={selected} webhookUrl={webhookUrl} />
+    </div>
+  )
+}
+
+function WebhookPanel({
+  providerName,
+  webhookUrl,
+}: {
+  providerName: ProviderName
+  webhookUrl: string
+}) {
+  const [copied, setCopied] = useState(false)
+  const needs = WEBHOOK_NEEDS[providerName]
+
+  async function copy() {
+    if (!webhookUrl) return
+    try {
+      await navigator.clipboard.writeText(webhookUrl)
+      setCopied(true)
+      toast.success('Webhook URL copied')
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error('Copy failed — select the URL manually')
+    }
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Webhook className="w-4 h-4 text-blue-600" />
+        <h3 className="text-sm font-semibold text-gray-800">
+          Unified Webhook URL — {PROVIDER_LABELS[providerName]}
+        </h3>
+      </div>
+
+      <p className="text-xs text-gray-500 mb-3">
+        One URL handles both SMS and Voice. Paste this into both webhook fields in your{' '}
+        {PROVIDER_LABELS[providerName]} dashboard.
+      </p>
+
+      {/* The URL with copy button */}
+      <div className="flex items-center gap-2 mb-4">
+        <code className="flex-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-gray-800 break-all">
+          {webhookUrl || 'Loading…'}
+        </code>
+        <button
+          onClick={copy}
+          disabled={!webhookUrl}
+          className="flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+
+      {/* Where to paste it */}
+      <div className="mb-4">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+          Paste in {PROVIDER_LABELS[providerName]}:
+        </p>
+        <ul className="text-xs text-gray-700 space-y-1">
+          {needs.paste.map((spot) => (
+            <li key={spot} className="flex items-start gap-1.5">
+              <span className="text-gray-400">•</span>
+              <span>{spot}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* What this webhook needs from us */}
+      <div>
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+          Required for inbound webhooks to work:
+        </p>
+        <ul className="text-xs text-gray-700 space-y-1">
+          {needs.need.map((req) => (
+            <li key={req} className="flex items-start gap-1.5">
+              <span className="text-gray-400">•</span>
+              <span>{req}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {webhookUrl && webhookUrl.startsWith('http://') && (
+        <div className="flex items-start gap-1.5 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <span>
+            Twilio + Telnyx require <strong>HTTPS</strong>. Use the <code className="px-1 bg-amber-100 rounded">pnpm tunnel</code> command to get a public HTTPS URL for local testing.
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -249,7 +448,7 @@ function FieldRow({
         placeholder={placeholder}
         className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${mono ? 'font-mono' : ''}`}
       />
-      {hint && <p className="text-[11px] text-gray-400 mt-1">{hint}</p>}
+      {hint && <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">{hint}</p>}
     </div>
   )
 }

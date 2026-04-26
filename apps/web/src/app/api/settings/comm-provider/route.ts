@@ -46,6 +46,7 @@ export async function GET() {
     } else if (name === 'signalhouse') {
       masked.apiToken = maskSecret(cfg.apiToken)
       masked.accountId = cfg.accountId ?? ''
+      masked.webhookSecret = maskSecret(cfg.webhookSecret)
     }
 
     return {
@@ -75,6 +76,7 @@ const TelnyxCfg = z.object({
 const SignalHouseCfg = z.object({
   apiToken: z.string().optional(),
   accountId: z.string().optional(),
+  webhookSecret: z.string().optional(),
 })
 
 const PutBodySchema = z.discriminatedUnion('providerName', [
@@ -108,7 +110,7 @@ export async function PUT(req: NextRequest) {
   const secretFields: Record<string, string[]> = {
     twilio: ['authToken'],
     telnyx: ['apiKey'],
-    signalhouse: ['apiToken'],
+    signalhouse: ['apiToken', 'webhookSecret'],
   }
 
   const mergedCfg: Record<string, string | undefined> = {}
