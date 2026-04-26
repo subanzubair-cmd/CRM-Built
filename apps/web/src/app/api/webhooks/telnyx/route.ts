@@ -689,6 +689,9 @@ async function autoCreateInboundLead(args: {
   const leadType = isDta ? 'DIRECT_TO_AGENT' : 'DIRECT_TO_SELLER'
   const contactType = isDta ? 'AGENT' : 'SELLER'
 
+  console.log(
+    `[webhook/telnyx] autoCreateInboundLead START fromPhone=${fromPhone} leadCampaignId=${leadCampaignId ?? '(null)'} leadCampaignType=${leadCampaignType ?? '(null)'} existingContactId=${existingContactId ?? '(null)'} → leadType=${leadType} (isOthers=${!leadCampaignId})`,
+  )
   try {
     const result = await sequelize.transaction(async (tx) => {
       // When no campaign owns the dialed number, mark the lead so
@@ -698,54 +701,83 @@ async function autoCreateInboundLead(args: {
       // and skip the leadCampaignId FK so Sequelize doesn't try
       // to insert null into a NOT NULL column.
       const isOthers = !leadCampaignId
-      const property = await Property.create(
-        {
-          leadType,
-          leadStatus: 'ACTIVE',
-          propertyStatus: 'LEAD',
-          activeLeadStage: 'NEW_LEAD',
-          source: isOthers ? 'Others' : 'Inbound Call',
-          tags: isOthers ? ['others'] : [],
-          ...(leadCampaignId ? { leadCampaignId } : {}),
-        } as any,
-        { transaction: tx },
-      )
-
-      let contactId = existingContactId
-      if (!contactId) {
-        const contact = await Contact.create(
+      let property: any
+      try {
+        property = await Property.create(
           {
-            firstName: 'Unknown',
-            lastName: 'Caller',
-            phone: fromPhone,
-            type: contactType,
+            leadType,
+            leadStatus: 'ACTIVE',
+            propertyStatus: 'LEAD',
+            activeLeadStage: 'NEW_LEAD',
+            source: isOthers ? 'Others' : 'Inbound Call',
+            tags: isOthers ? ['others'] : [],
+            ...(leadCampaignId ? { leadCampaignId } : {}),
           } as any,
           { transaction: tx },
         )
-        contactId = contact.id
+        console.log(`[webhook/telnyx] Property.create OK id=${property.id}`)
+      } catch (err: any) {
+        console.error(
+          `[webhook/telnyx] Property.create FAILED: ${err?.name} ${err?.message}`,
+          err?.errors ? JSON.stringify(err.errors) : '',
+        )
+        throw err
       }
 
-      await PropertyContact.create(
-        {
-          propertyId: property.id,
-          contactId,
-          isPrimary: true,
-        } as any,
-        { transaction: tx },
-      )
+      let contactId = existingContactId
+      if (!contactId) {
+        try {
+          const contact = await Contact.create(
+            {
+              firstName: 'Unknown',
+              lastName: 'Caller',
+              phone: fromPhone,
+              type: contactType,
+            } as any,
+            { transaction: tx },
+          )
+          contactId = contact.id
+          console.log(`[webhook/telnyx] Contact.create OK id=${contactId}`)
+        } catch (err: any) {
+          console.error(
+            `[webhook/telnyx] Contact.create FAILED: ${err?.name} ${err?.message}`,
+            err?.errors ? JSON.stringify(err.errors) : '',
+          )
+          throw err
+        }
+      }
+
+      try {
+        await PropertyContact.create(
+          {
+            propertyId: property.id,
+            contactId,
+            isPrimary: true,
+          } as any,
+          { transaction: tx },
+        )
+        console.log(`[webhook/telnyx] PropertyContact.create OK property=${property.id} contact=${contactId}`)
+      } catch (err: any) {
+        console.error(
+          `[webhook/telnyx] PropertyContact.create FAILED: ${err?.name} ${err?.message}`,
+          err?.errors ? JSON.stringify(err.errors) : '',
+        )
+        throw err
+      }
 
       return property.id
     })
     console.log(
-      '[webhook/telnyx] auto-created inbound lead',
-      result,
-      'from',
-      fromPhone,
-      existingContactId ? '(reused contact)' : '(new contact)',
+      `[webhook/telnyx] autoCreateInboundLead SUCCESS property=${result} from=${fromPhone} ${existingContactId ? '(reused contact)' : '(new contact)'}`,
     )
     return result
-  } catch (err) {
-    console.error('[webhook/telnyx] autoCreateInboundLead failed:', err)
+  } catch (err: any) {
+    console.error(
+      `[webhook/telnyx] autoCreateInboundLead FAILED at top level for ${fromPhone}:`,
+      err?.name,
+      err?.message,
+      err?.stack,
+    )
     return null
   }
 }

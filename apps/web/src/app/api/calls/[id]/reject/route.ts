@@ -7,6 +7,7 @@ import {
   Op,
 } from '@crm/database'
 import { requirePermission, hasPermission } from '@/lib/auth-utils'
+import { getActiveCommConfig } from '@/lib/comm-provider'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   const body = await req.json().catch(() => ({}))
 
   const call = await ActiveCall.findByPk(id, {
-    attributes: ['id', 'status', 'agentUserId', 'propertyId'],
+    attributes: ['id', 'status', 'agentUserId', 'propertyId', 'conferenceName'],
   })
   if (!call) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 })
@@ -69,6 +70,41 @@ export async function POST(req: NextRequest, { params }: Params) {
       { error: 'Call is no longer available to reject.' },
       { status: 409 },
     )
+  }
+
+  // Tell the provider to actually hang up. Without this, the caller's
+  // phone keeps ringing for the full Telnyx timeout (~30s) even though
+  // we marked the call REJECTED in our DB. We use the conferenceName
+  // column — for Telnyx that's the call_control_id; for Twilio that's
+  // the conference SID. Fire-and-forget so the API call doesn't block
+  // the rejection response.
+  const conferenceName = (call as any).conferenceName as string | null
+  if (conferenceName) {
+    const config = await getActiveCommConfig()
+    if (config?.providerName === 'telnyx' && config.apiKey) {
+      void fetch(
+        `https://api.telnyx.com/v2/calls/${encodeURIComponent(conferenceName)}/actions/hangup`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        },
+      )
+        .then(async (res) => {
+          if (!res.ok) {
+            const txt = await res.text().catch(() => '')
+            console.warn(
+              `[calls/reject] Telnyx hangup ${res.status} for ${conferenceName}: ${txt.slice(0, 200)}`,
+            )
+          }
+        })
+        .catch((err) => console.warn('[calls/reject] Telnyx hangup failed:', err))
+    }
+    // Twilio: handled via TwiML response on the original webhook,
+    // which is a separate flow. No-op here.
   }
 
   const refreshed = await ActiveCall.findByPk(id)
