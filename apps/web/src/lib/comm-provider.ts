@@ -6,6 +6,8 @@ export type CommProvider = 'twilio' | 'telnyx' | 'signalhouse'
 export interface ActiveCommConfig {
   providerName: CommProvider
   defaultNumber: string | null
+  /** Toggle from CommProviderConfig.enableCallCost — gates per-call cost capture. */
+  enableCallCost: boolean
   // Twilio
   accountSid?: string
   authToken?: string
@@ -17,6 +19,7 @@ export interface ActiveCommConfig {
   // Signal House
   apiToken?: string
   accountId?: string
+  webhookSecret?: string
 }
 
 const CACHE_TTL_MS = 30_000
@@ -53,6 +56,7 @@ export async function getActiveCommConfig(): Promise<ActiveCommConfig | null> {
       config = {
         providerName,
         defaultNumber: row.defaultNumber ?? null,
+        enableCallCost: !!(row as any).enableCallCost,
       }
 
       if (providerName === 'twilio') {
@@ -66,6 +70,7 @@ export async function getActiveCommConfig(): Promise<ActiveCommConfig | null> {
       } else if (providerName === 'signalhouse') {
         config.apiToken = cfg.apiToken ? decrypt(cfg.apiToken) : undefined
         config.accountId = cfg.accountId
+        config.webhookSecret = cfg.webhookSecret ? decrypt(cfg.webhookSecret) : undefined
       }
     }
   } catch (err) {
@@ -78,6 +83,7 @@ export async function getActiveCommConfig(): Promise<ActiveCommConfig | null> {
       config = {
         providerName: 'twilio',
         defaultNumber: process.env.TWILIO_DEFAULT_NUMBER ?? null,
+        enableCallCost: false,
         accountSid: process.env.TWILIO_ACCOUNT_SID,
         authToken: process.env.TWILIO_AUTH_TOKEN,
         twimlHost: process.env.TWILIO_TWIML_HOST ?? 'http://localhost:3000',

@@ -53,6 +53,7 @@ export async function GET() {
       providerName: row.providerName,
       isActive: row.isActive,
       defaultNumber: row.defaultNumber ?? '',
+      enableCallCost: !!row.enableCallCost,
       config: masked,
     }
   })
@@ -80,9 +81,9 @@ const SignalHouseCfg = z.object({
 })
 
 const PutBodySchema = z.discriminatedUnion('providerName', [
-  z.object({ providerName: z.literal('twilio'), defaultNumber: z.string().optional(), config: TwilioCfg }),
-  z.object({ providerName: z.literal('telnyx'), defaultNumber: z.string().optional(), config: TelnyxCfg }),
-  z.object({ providerName: z.literal('signalhouse'), defaultNumber: z.string().optional(), config: SignalHouseCfg }),
+  z.object({ providerName: z.literal('twilio'), defaultNumber: z.string().optional(), enableCallCost: z.boolean().optional(), config: TwilioCfg }),
+  z.object({ providerName: z.literal('telnyx'), defaultNumber: z.string().optional(), enableCallCost: z.boolean().optional(), config: TelnyxCfg }),
+  z.object({ providerName: z.literal('signalhouse'), defaultNumber: z.string().optional(), enableCallCost: z.boolean().optional(), config: SignalHouseCfg }),
 ])
 
 export async function PUT(req: NextRequest) {
@@ -98,7 +99,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const { providerName, defaultNumber } = parsed.data
+  const { providerName, defaultNumber, enableCallCost } = parsed.data
   const newCfg = parsed.data.config as Record<string, string | undefined>
 
   const existing = await CommProviderConfig.findOne({
@@ -135,6 +136,7 @@ export async function PUT(req: NextRequest) {
       isActive: true,
       defaultNumber: defaultNumber ?? null,
       configJson: mergedCfg,
+      enableCallCost: enableCallCost ?? false,
     } as any,
   })
   if (!created) {
@@ -142,6 +144,7 @@ export async function PUT(req: NextRequest) {
       isActive: true,
       defaultNumber: defaultNumber ?? null,
       configJson: mergedCfg,
+      ...(enableCallCost !== undefined ? { enableCallCost } : {}),
     })
   }
 

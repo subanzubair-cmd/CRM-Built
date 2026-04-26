@@ -43,6 +43,17 @@ export class CommProviderConfig extends Model<
   @Column(DataType.JSONB)
   declare configJson: Record<string, unknown>
 
+  /**
+   * Toggle that gates per-call cost capture on inbound provider webhooks.
+   * When true and the active provider supports it (currently Telnyx via
+   * call.hangup payload + CDR fallback), the webhook handler writes
+   * ActiveCall.cost / costCurrency. Surfaced in the call activity feed.
+   */
+  @AllowNull(false)
+  @Default(false)
+  @Column(DataType.BOOLEAN)
+  declare enableCallCost: boolean
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -60,6 +71,7 @@ export interface CommProviderConfigAttributes {
   isActive: boolean
   defaultNumber: string | null
   configJson: Record<string, unknown>
+  enableCallCost: boolean
   createdAt: Date
   updatedAt: Date
 }

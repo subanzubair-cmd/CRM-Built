@@ -15,6 +15,7 @@ interface ProviderConfigRow {
   providerName: ProviderName
   isActive: boolean
   defaultNumber: string
+  enableCallCost: boolean
   config: Record<string, string>
 }
 
@@ -66,6 +67,7 @@ export function CommProviderForm() {
   const [providers, setProviders] = useState<ProviderConfigRow[]>([])
   const [selected, setSelected] = useState<ProviderName>('twilio')
   const [defaultNumber, setDefaultNumber] = useState('')
+  const [enableCallCost, setEnableCallCost] = useState(false)
   const [fields, setFields] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -91,6 +93,7 @@ export function CommProviderForm() {
         if (active) {
           setSelected(active.providerName)
           setDefaultNumber(active.defaultNumber ?? '')
+          setEnableCallCost(!!active.enableCallCost)
           setFields({ ...active.config })
         }
       })
@@ -105,6 +108,7 @@ export function CommProviderForm() {
     setSelected(newName)
     const row = providers.find((r) => r.providerName === newName)
     setDefaultNumber(row?.defaultNumber ?? '')
+    setEnableCallCost(!!row?.enableCallCost)
     setFields({ ...(row?.config ?? {}) })
   }
 
@@ -121,6 +125,7 @@ export function CommProviderForm() {
         body: JSON.stringify({
           providerName: selected,
           defaultNumber,
+          enableCallCost,
           config: fields,
         }),
       })
@@ -132,7 +137,10 @@ export function CommProviderForm() {
       const reload = await fetch('/api/settings/comm-provider').then((r) => r.json())
       setProviders(reload.providers ?? [])
       const active = (reload.providers ?? []).find((r: ProviderConfigRow) => r.isActive)
-      if (active) setFields({ ...active.config })
+      if (active) {
+        setFields({ ...active.config })
+        setEnableCallCost(!!active.enableCallCost)
+      }
     } catch (err: any) {
       toast.error(err.message ?? 'Save failed')
     } finally {
@@ -211,6 +219,33 @@ export function CommProviderForm() {
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <p className="text-[11px] text-gray-400 mt-1">E.164 format — used as the default sender for calls, SMS, and drips.</p>
+        </div>
+
+        {/* Enable Call Cost toggle */}
+        <div className="mb-4">
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={enableCallCost}
+              onChange={(e) => setEnableCallCost(e.target.checked)}
+              className="w-4 h-4 accent-emerald-600"
+            />
+            <span className="text-sm font-medium text-gray-800">Enable Call Cost</span>
+            <span
+              title="When on, the per-call cost reported by the provider (Telnyx via call.hangup payload + CDR fallback) is captured on every ActiveCall and surfaced in the call activity feed."
+              className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-300 text-gray-400 text-[10px] font-bold cursor-help"
+            >
+              ?
+            </span>
+          </label>
+          <p className="text-[11px] text-gray-400 mt-1">
+            Capture per-call cost from {PROVIDER_LABELS[selected]} on hangup and show it in the call activity feed.
+            {selected !== 'telnyx' && (
+              <span className="text-amber-600 ml-1">
+                ({PROVIDER_LABELS[selected]} cost capture is not yet wired — currently only Telnyx is supported.)
+              </span>
+            )}
+          </p>
         </div>
 
         {/* Provider-specific credential fields */}

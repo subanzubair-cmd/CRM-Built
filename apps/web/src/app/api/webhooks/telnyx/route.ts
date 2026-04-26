@@ -171,6 +171,60 @@ async function handleSmsEvent(eventType: string, payload: any) {
 
 // ─── Call events ───────────────────────────────────────────────────────
 
+/**
+ * Pull cost off the hangup payload. Telnyx ships it in one of these shapes
+ * depending on the Voice API Application config:
+ *   payload.cost = "0.0040"   + payload.cost_currency = "USD"
+ *   payload.cost = { amount: "0.0040", currency: "USD" }
+ *   payload.billing.cost      + payload.billing.currency
+ * Returns null if cost wasn't pushed inline (CDR fetch fallback handles that).
+ */
+function extractCost(payload: any): { amount: number; currency: string | null } | null {
+  if (!payload) return null
+  const direct = payload.cost
+  if (typeof direct === 'object' && direct !== null && direct.amount !== undefined) {
+    const n = Number(direct.amount)
+    if (Number.isFinite(n)) return { amount: n, currency: direct.currency ?? payload.cost_currency ?? null }
+  }
+  if (direct !== undefined && direct !== null && typeof direct !== 'object') {
+    const n = Number(direct)
+    if (Number.isFinite(n)) return { amount: n, currency: payload.cost_currency ?? null }
+  }
+  if (payload.billing?.cost !== undefined) {
+    const n = Number(payload.billing.cost)
+    if (Number.isFinite(n)) return { amount: n, currency: payload.billing.currency ?? null }
+  }
+  return null
+}
+
+/**
+ * Background fetch of the per-call cost from Telnyx's CDR endpoint.
+ * Cost isn't always present on the hangup webhook — it lands in the CDR a
+ * few seconds after hangup. We delay 8s and then update ActiveCall.
+ * Fire-and-forget; failure is logged and ignored.
+ */
+function scheduleCdrCostFetch(callControlId: string, apiKey: string): void {
+  const DELAY_MS = 8_000
+  setTimeout(async () => {
+    try {
+      const res = await fetch(
+        `https://api.telnyx.com/v2/calls/${encodeURIComponent(callControlId)}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      )
+      if (!res.ok) return
+      const json = (await res.json()) as any
+      const cost = extractCost(json?.data)
+      if (!cost) return
+      await ActiveCall.update(
+        { cost: cost.amount, costCurrency: cost.currency ?? 'USD' } as any,
+        { where: { conferenceName: callControlId } },
+      )
+    } catch (err) {
+      console.warn('[webhook/telnyx] CDR cost fetch failed for', callControlId, err)
+    }
+  }, DELAY_MS)
+}
+
 async function handleCallEvent(eventType: string, payload: any) {
   const callControlId = payload?.call_control_id as string | undefined
   const direction = payload?.direction as 'incoming' | 'outgoing' | undefined
@@ -250,6 +304,19 @@ async function handleCallEvent(eventType: string, payload: any) {
     if (eventType === 'call.hangup') {
       updates.status = 'COMPLETED'
       updates.endedAt = new Date()
+
+      // Capture cost when CommProviderConfig.enableCallCost is true.
+      // Try inline payload first; if not present, schedule a CDR fetch.
+      const config = await getActiveCommConfig()
+      if (config?.providerName === 'telnyx' && config.enableCallCost) {
+        const inlineCost = extractCost(payload)
+        if (inlineCost) {
+          updates.cost = inlineCost.amount
+          updates.costCurrency = inlineCost.currency ?? 'USD'
+        } else if (config.apiKey) {
+          scheduleCdrCostFetch(callControlId, config.apiKey)
+        }
+      }
     }
 
     if (Object.keys(updates).length > 1) {

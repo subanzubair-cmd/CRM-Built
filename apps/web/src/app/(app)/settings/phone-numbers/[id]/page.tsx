@@ -306,6 +306,14 @@ export default async function PhoneNumberDetailPage({ params }: Params) {
                     }`}>
                       {c.status}
                     </span>
+                    {c.cost != null && (
+                      <span className="text-emerald-700 font-mono font-semibold tabular-nums" title="Per-call cost reported by provider">
+                        ${Number(c.cost).toFixed(4)}
+                        {c.costCurrency && c.costCurrency !== 'USD' && (
+                          <span className="text-gray-500 font-normal ml-0.5">{c.costCurrency}</span>
+                        )}
+                      </span>
+                    )}
                     {c.property && (
                       <Link
                         href={`/leads/dts/${c.property.id}`}

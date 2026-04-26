@@ -24,6 +24,10 @@ import {
   up as deadReasonsUp,
   down as deadReasonsDown,
 } from './20260425200000-add-dead-reasons'
+import {
+  up as callCostUp,
+  down as callCostDown,
+} from './20260426010000-add-call-cost'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -49,6 +53,13 @@ const migrations = [
       deadReasonsUp({ name: '20260425200000-add-dead-reasons', context }),
     down: ({ context }: { context: any }) =>
       deadReasonsDown({ name: '20260425200000-add-dead-reasons', context }),
+  },
+  {
+    name: '20260426010000-add-call-cost',
+    up: ({ context }: { context: any }) =>
+      callCostUp({ name: '20260426010000-add-call-cost', context }),
+    down: ({ context }: { context: any }) =>
+      callCostDown({ name: '20260426010000-add-call-cost', context }),
   },
 ]
 
