@@ -102,28 +102,11 @@ async function handleSmsEvent(eventType: string, payload: any) {
   }
 
   try {
-    // Drop the isPrimary filter so a sender who's the secondary
-    // contact on an existing lead is still treated as "known".
-    const contactRow = await Contact.findOne({
-      where: { [Op.or]: [{ phone: fromPhone }, { phone2: fromPhone }] },
-      include: [
-        {
-          model: PropertyContact,
-          as: 'properties',
-          required: false,
-          separate: true,
-          limit: 1,
-          order: [
-            ['isPrimary', 'DESC'],
-            ['createdAt', 'DESC'],
-          ],
-          include: [{ model: Property, as: 'property', attributes: ['id'] }],
-        },
-      ],
-    })
-    const contact = contactRow?.get({ plain: true }) as any
-    let propertyId: string | null = contact?.properties?.[0]?.property?.id ?? null
-    const existingContactId: string | null = contact?.id ?? null
+    // Find ALL leads attached to this phone number — a single phone
+    // may legitimately appear on multiple Contacts (data import dupes)
+    // or on multiple Properties (one Contact, many leads), and the
+    // operator wants the inbound message to land on every one of them.
+    const matches = await findAllLeadsForPhone(fromPhone)
 
     let leadCampaignId: string | null = null
     let leadCampaignType: string | null = null
@@ -141,89 +124,157 @@ async function handleSmsEvent(eventType: string, payload: any) {
     }
 
     // Unknown sender + no existing lead → auto-create one under the
-    // receiving number's campaign so the message lands in the inbox
-    // attached to a real lead the agent can reply from.
-    let createdContactId: string | null = null
-    if (!propertyId && leadCampaignId) {
+    // receiving number's campaign so the message lands in the inbox.
+    if (matches.length === 0 && leadCampaignId) {
       const created = await autoCreateInboundLead({
         fromPhone,
         leadCampaignId,
         leadCampaignType,
-        existingContactId,
+        existingContactId: null,
       })
-      propertyId = created
-      // After auto-create, re-resolve the contactId so the
-      // conversation links to the right Contact row (the helper
-      // either created a fresh one or reused existingContactId).
-      if (propertyId) {
+      if (created) {
         const pc = await PropertyContact.findOne({
-          where: { propertyId, isPrimary: true },
+          where: { propertyId: created, isPrimary: true },
           attributes: ['contactId'],
           raw: true,
         }) as any
-        createdContactId = pc?.contactId ?? null
+        matches.push({ propertyId: created, contactId: pc?.contactId ?? null })
       }
     }
 
-    const finalContactId = existingContactId ?? createdContactId
-
-    let conversation: any = null
-    if (propertyId) {
-      const where = finalContactId
-        ? { propertyId, contactId: finalContactId }
-        : { propertyId, contactId: null }
-      conversation = await Conversation.findOne({ where })
-      if (!conversation) {
-        conversation = await Conversation.create({
-          propertyId,
-          contactId: finalContactId,
-          contactPhone: fromPhone,
-          isRead: false,
-          lastMessageAt: new Date(),
-        } as any)
-      } else {
-        await conversation.update({ isRead: false, lastMessageAt: new Date() })
-      }
+    // Fan out: write Message + Conversation + ActivityLog per matched
+    // lead so each one surfaces the inbound SMS independently.
+    for (const m of matches) {
+      await persistInboundSms({
+        propertyId: m.propertyId,
+        contactId: m.contactId,
+        leadCampaignId,
+        text,
+        fromPhone,
+        toPhone: toPhone ?? null,
+        telnyxId: telnyxId ?? null,
+      })
     }
 
-    await Message.create({
-      ...(propertyId ? { propertyId } : {}),
-      ...(conversation?.id ? { conversationId: conversation.id } : {}),
-      ...(finalContactId ? { contactId: finalContactId } : {}),
-      ...(leadCampaignId ? { leadCampaignId } : {}),
-      channel: 'SMS',
-      direction: 'INBOUND',
-      body: text,
-      from: fromPhone,
-      to: toPhone,
-      twilioSid: telnyxId,
-    } as any)
-
-    // Activity log so the message appears in the lead's Activity tab
-    // and the global /activity feed with From/To surfaced.
-    if (propertyId) {
-      try {
-        await ActivityLog.create({
-          propertyId,
-          userId: null,
-          action: 'MESSAGE_LOGGED',
-          detail: {
-            description: `SMS received: ${text.length > 80 ? text.slice(0, 80) + '…' : text}`,
-            channel: 'SMS',
-            direction: 'INBOUND',
-            from: fromPhone,
-            to: toPhone,
-          },
-        } as any)
-      } catch (err) {
-        console.warn('[webhook/telnyx sms] failed to log activity:', err)
-      }
+    // No campaign + no leads found → still log a Message orphaned to
+    // contactId so it shows up in unattributed-message reports.
+    if (matches.length === 0) {
+      await Message.create({
+        ...(leadCampaignId ? { leadCampaignId } : {}),
+        channel: 'SMS',
+        direction: 'INBOUND',
+        body: text,
+        from: fromPhone,
+        to: toPhone,
+        twilioSid: telnyxId,
+      } as any)
     }
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, fannedOut: matches.length })
   } catch (err) {
     console.error('[webhook/telnyx sms]', err)
     return NextResponse.json({ ok: true, error: 'logged' })
+  }
+}
+
+/**
+ * Find every lead (Property) the caller's phone is attached to, across
+ * all Contacts and all PropertyContact joins. Returns one entry per
+ * Property — even when the same phone is on multiple Contacts that all
+ * point at the same Property, the result is deduped.
+ *
+ * Used by both the SMS and Call paths so multi-lead callers see the
+ * inbound activity on every attached lead.
+ */
+async function findAllLeadsForPhone(
+  phone: string,
+): Promise<Array<{ propertyId: string; contactId: string }>> {
+  const rows = await Contact.findAll({
+    where: { [Op.or]: [{ phone }, { phone2: phone }] },
+    attributes: ['id'],
+    include: [
+      {
+        model: PropertyContact,
+        as: 'properties',
+        required: false,
+        separate: true,
+        attributes: ['propertyId', 'contactId', 'isPrimary'],
+        order: [['isPrimary', 'DESC']],
+      },
+    ],
+  })
+  const seen = new Set<string>()
+  const out: Array<{ propertyId: string; contactId: string }> = []
+  for (const row of rows) {
+    const plain = row.get({ plain: true }) as any
+    const props = (plain.properties ?? []) as Array<{ propertyId: string; contactId: string }>
+    for (const pc of props) {
+      if (!pc.propertyId || seen.has(pc.propertyId)) continue
+      seen.add(pc.propertyId)
+      out.push({ propertyId: pc.propertyId, contactId: pc.contactId })
+    }
+  }
+  return out
+}
+
+/**
+ * Persist a single inbound SMS to ONE property: Conversation upsert,
+ * Message insert, ActivityLog insert. Pulled out so the fan-out loop
+ * stays readable.
+ */
+async function persistInboundSms(args: {
+  propertyId: string
+  contactId: string | null
+  leadCampaignId: string | null
+  text: string
+  fromPhone: string
+  toPhone: string | null
+  telnyxId: string | null
+}): Promise<void> {
+  const { propertyId, contactId, leadCampaignId, text, fromPhone, toPhone, telnyxId } = args
+
+  const where = contactId ? { propertyId, contactId } : { propertyId, contactId: null }
+  let conversation: any = await Conversation.findOne({ where })
+  if (!conversation) {
+    conversation = await Conversation.create({
+      propertyId,
+      contactId,
+      contactPhone: fromPhone,
+      isRead: false,
+      lastMessageAt: new Date(),
+    } as any)
+  } else {
+    await conversation.update({ isRead: false, lastMessageAt: new Date() })
+  }
+
+  await Message.create({
+    propertyId,
+    conversationId: conversation.id,
+    ...(contactId ? { contactId } : {}),
+    ...(leadCampaignId ? { leadCampaignId } : {}),
+    channel: 'SMS',
+    direction: 'INBOUND',
+    body: text,
+    from: fromPhone,
+    to: toPhone,
+    twilioSid: telnyxId,
+  } as any)
+
+  try {
+    await ActivityLog.create({
+      propertyId,
+      userId: null,
+      action: 'MESSAGE_LOGGED',
+      detail: {
+        description: `SMS received: ${text.length > 80 ? text.slice(0, 80) + '…' : text}`,
+        channel: 'SMS',
+        direction: 'INBOUND',
+        from: fromPhone,
+        to: toPhone,
+      },
+    } as any)
+  } catch (err) {
+    console.warn('[webhook/telnyx sms] failed to log activity:', err)
   }
 }
 
