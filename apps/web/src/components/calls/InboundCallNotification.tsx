@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Phone, PhoneOff, X, Minimize2, Maximize2, ExternalLink } from 'lucide-react'
+import { useCallCleanup } from '@/components/calls/useCallCleanup'
 
 interface ActiveCall {
   id: string
@@ -48,6 +49,10 @@ export function InboundCallNotification() {
   const [lookup, setLookup] = useState<CallerLookup | null>(null)
   const [minimized, setMinimized] = useState(false)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+
+  // If the page unloads / loses connection while a call is RINGING here,
+  // sendBeacon a hangup so we don't leave a dangling call on the provider.
+  useCallCleanup(activeCall?.id ?? null)
 
   // Poll for inbound ringing calls
   useEffect(() => {

@@ -16,6 +16,7 @@ import {
   Pencil,
   CheckCircle2,
 } from 'lucide-react'
+import { useCallCleanup } from '@/components/calls/useCallCleanup'
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -95,6 +96,10 @@ export function CallPanel({
   // Call state
   const [callId, setCallId] = useState<string | null>(null)
   const [callStartedAt, setCallStartedAt] = useState<Date | null>(null)
+
+  // Hangup the active call if the page unloads / loses connection. Posts
+  // to /api/calls/[id]/hangup via navigator.sendBeacon — provider-agnostic.
+  useCallCleanup(callId)
   const [calling, setCalling] = useState(false)
   const [inCall, setInCall] = useState(false)
   const [elapsed, setElapsed] = useState(0)
