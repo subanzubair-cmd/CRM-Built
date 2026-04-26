@@ -176,25 +176,48 @@ export function InboundCallNotification() {
   async function handleAnswer() {
     if (!activeCall) return
     const callId = activeCall.id
-    // Mark this tab as the claimer FIRST, so the broadcast that
-    // comes back through useCrossTabCallSync is a no-op here.
+
+    // 1) Claim the call across all tabs FIRST so other tabs dismiss
+    //    their popups instantly (no 3s polling delay).
     setAnsweredHere(callId)
     sync.broadcastClaim(callId)
 
-    // If we have the WebRTC SDK call instance, accept via the peer
-    // connection so the audio flows through this browser (and the
-    // recorder hook attached inside useTelnyxCall starts capturing).
-    // Otherwise fall back to the legacy server-side answer endpoint.
-    if (incomingWebrtcCall) {
-      await tx.answer(incomingWebrtcCall)
-    } else {
-      await fetch(`/api/calls/${callId}/answer`, { method: 'POST' })
+    // 2) Hand off to the persistent ActiveCallBar via BroadcastChannel.
+    //    The bar listens for 'this-tab-answered' and writes the callId
+    //    to localStorage so it survives client-side navigation in this
+    //    same tab.
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const ch = new BroadcastChannel('crm-call-events')
+        ch.postMessage({ type: 'this-tab-answered', callId })
+        ch.close()
+      }
+      window.localStorage.setItem('crm.activeCall.id', callId)
+    } catch {
+      // BroadcastChannel/localStorage may be unavailable in private
+      // mode — bar simply won't show. Hangup still works via the
+      // existing CallPanel UI on the lead page.
     }
-    // Navigate to the first matching property if any
+
+    // 3) Tell Telnyx (and the WebRTC SDK if we have an INVITE) to
+    //    accept. We do this BEFORE navigation so the call is live by
+    //    the time the lead detail page renders.
+    try {
+      if (incomingWebrtcCall) {
+        await tx.answer(incomingWebrtcCall)
+      } else {
+        await fetch(`/api/calls/${callId}/answer`, { method: 'POST' })
+      }
+    } catch (err) {
+      console.error('[inbound] answer failed:', err)
+    }
+
+    // 4) Client-side navigation to the lead detail. router.push is
+    //    in-app navigation — does NOT trigger pagehide/beforeunload
+    //    so the WebRTC peer connection survives.
     const firstLead = lookup?.leadProperties[0]
     if (firstLead) {
-      const pipeline =
-        firstLead.leadType === 'DIRECT_TO_SELLER' ? 'dts' : 'dta'
+      const pipeline = firstLead.leadType === 'DIRECT_TO_SELLER' ? 'dts' : 'dta'
       const base =
         firstLead.propertyStatus === 'IN_TM'
           ? '/tm'
@@ -205,9 +228,8 @@ export function InboundCallNotification() {
           : `/leads/${pipeline}`
       router.push(`${base}/${firstLead.id}`)
     }
-    // Pop the popup down — title indicator stays 🟢 because
-    // answeredHere is set; polling clears it once the server reports
-    // the call as no longer ACTIVE.
+
+    // 5) Tear down the popup — ActiveCallBar takes over from here.
     setActiveCall(null)
     setLookup(null)
   }

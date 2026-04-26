@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { GlobalHeader } from '@/components/layout/GlobalHeader'
 import { InboundCallNotification } from '@/components/calls/InboundCallNotification'
+import { ActiveCallBar } from '@/components/calls/ActiveCallBar'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth()
@@ -16,6 +17,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // suppressHydrationWarning is still set on the wrapper as a belt
     // for any other extension-driven attribute mismatches.
     <div className="flex flex-col h-screen bg-slate-50" suppressHydrationWarning>
+      {/* Persistent on-call header — only renders for the tab that
+          claimed the active call. Survives all client-side nav. */}
+      <ActiveCallBar />
       <GlobalHeader />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
