@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Phone, PhoneOff, X, Minimize2, Maximize2, ExternalLink } from 'lucide-react'
 import { useCallCleanup } from '@/components/calls/useCallCleanup'
+import { useTelnyxCall } from '@/components/calls/useTelnyxCall'
+import { getTelnyxClient } from '@/lib/webrtc/telnyx-client'
 
 interface ActiveCall {
   id: string
@@ -49,6 +51,31 @@ export function InboundCallNotification() {
   const [lookup, setLookup] = useState<CallerLookup | null>(null)
   const [minimized, setMinimized] = useState(false)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  // Holds the WebRTC SDK Call instance for in-flight inbound calls so
+  // Answer/Reject can act on the right peer connection.
+  const [incomingWebrtcCall, setIncomingWebrtcCall] = useState<any | null>(null)
+
+  // Subscribe to WebRTC inbound INVITE events so the popup also fires
+  // for browser-routed calls (in addition to the polling fallback for
+  // the legacy conference flow).
+  useEffect(() => {
+    const client = getTelnyxClient()
+    // Eagerly connect so the SDK is registered when the first inbound
+    // call rings the SIP user. Failure here is OK — the polling fallback
+    // still surfaces the call once the webhook creates the row.
+    client.ensureReady().catch((err) => console.warn('[inbound] WebRTC connect skipped:', err))
+
+    const offInvite = client.on('invite', (sdkCall: any) => {
+      setIncomingWebrtcCall(sdkCall)
+    })
+    return () => {
+      offInvite()
+    }
+  }, [])
+
+  // Hook the WebRTC softphone for answer/reject so we use the SDK peer
+  // connection (and start MediaRecorder) on accept.
+  const tx = useTelnyxCall()
 
   // If the page unloads / loses connection while a call is RINGING here,
   // sendBeacon a hangup so we don't leave a dangling call on the provider.
@@ -105,7 +132,15 @@ export function InboundCallNotification() {
 
   async function handleAnswer() {
     if (!activeCall) return
-    await fetch(`/api/calls/${activeCall.id}/answer`, { method: 'POST' })
+    // If we have the WebRTC SDK call instance, accept via the peer
+    // connection so the audio flows through this browser (and the
+    // recorder hook attached inside useTelnyxCall starts capturing).
+    // Otherwise fall back to the legacy server-side answer endpoint.
+    if (incomingWebrtcCall) {
+      await tx.answer(incomingWebrtcCall)
+    } else {
+      await fetch(`/api/calls/${activeCall.id}/answer`, { method: 'POST' })
+    }
     // Navigate to the first matching property if any
     const firstLead = lookup?.leadProperties[0]
     if (firstLead) {
@@ -127,6 +162,9 @@ export function InboundCallNotification() {
 
   async function handleReject() {
     if (!activeCall) return
+    if (incomingWebrtcCall) {
+      await tx.reject(incomingWebrtcCall)
+    }
     await fetch(`/api/calls/${activeCall.id}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,6 +173,7 @@ export function InboundCallNotification() {
     setDismissed((prev) => new Set(prev).add(activeCall.id))
     setActiveCall(null)
     setLookup(null)
+    setIncomingWebrtcCall(null)
   }
 
   function handleClose() {

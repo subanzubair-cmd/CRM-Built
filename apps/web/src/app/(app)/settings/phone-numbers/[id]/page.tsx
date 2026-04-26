@@ -14,6 +14,7 @@ import {
   LeadCampaign,
   Op,
 } from '@crm/database'
+import { CallRecordingPlayer } from '@/components/calls/CallRecordingPlayer'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -314,6 +315,7 @@ export default async function PhoneNumberDetailPage({ params }: Params) {
                         )}
                       </span>
                     )}
+                    {c.recordingStorageKey && <CallRecordingPlayer callId={c.id} />}
                     {c.property && (
                       <Link
                         href={`/leads/dts/${c.property.id}`}

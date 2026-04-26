@@ -17,6 +17,7 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import { useCallCleanup } from '@/components/calls/useCallCleanup'
+import { useTelnyxCall } from '@/components/calls/useTelnyxCall'
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -97,13 +98,39 @@ export function CallPanel({
   const [callId, setCallId] = useState<string | null>(null)
   const [callStartedAt, setCallStartedAt] = useState<Date | null>(null)
 
+  // WebRTC softphone — primary call path (provider-agnostic at the API
+  // layer; today only Telnyx is wired). Replaces the legacy
+  // /api/calls conference flow. Local call state mirrors hook state so
+  // the existing UI (timer, buttons, minimize) keeps working unchanged.
+  const tx = useTelnyxCall()
+
   // Hangup the active call if the page unloads / loses connection. Posts
   // to /api/calls/[id]/hangup via navigator.sendBeacon — provider-agnostic.
-  useCallCleanup(callId)
+  useCallCleanup(tx.callId ?? callId)
+
   const [calling, setCalling] = useState(false)
   const [inCall, setInCall] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
+
+  // Drive the local UI state machine from the WebRTC hook's state.
+  useEffect(() => {
+    if (tx.callId && tx.callId !== callId) {
+      setCallId(tx.callId)
+    }
+    if (tx.state === 'active' && !inCall) {
+      setInCall(true)
+      setCallStartedAt((prev) => prev ?? new Date())
+    }
+    if (tx.state === 'error') {
+      setError(tx.error ?? 'Call failed')
+      setCalling(false)
+    }
+    if (tx.state === 'ended' && inCall) {
+      // Let handleEndCall drive teardown; here we just stop showing the spinner.
+      setCalling(false)
+    }
+  }, [tx.callId, tx.state, tx.error, callId, inCall])
 
   // Tasks
   const [tasks, setTasks] = useState<Task[]>([])
@@ -201,28 +228,25 @@ export function CallPanel({
     setCalling(true)
     setError(null)
     try {
-      const res = await fetch('/api/calls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerPhone: contact.phone,
-          propertyId,
-          fromNumber: selectedNumber || undefined,
-        }),
+      // WebRTC dialer: the browser registers as a SIP endpoint via Telnyx
+      // and the audio flows through the agent's headset/mic. The hook
+      // server-creates the ActiveCall row, then SDK.newCall() initiates.
+      // useCallRecorder (mounted inside useTelnyxCall) starts capturing
+      // audio + uploading chunks to MinIO once the call goes ACTIVE.
+      await tx.call({
+        toNumber: contact.phone,
+        propertyId,
+        fromNumber: selectedNumber || undefined,
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Failed to start call')
-      setCallId(json.data?.id ?? null)
-      setCallStartedAt(new Date())
-      setInCall(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error starting call')
-    } finally {
       setCalling(false)
     }
   }
 
   function handleEndCall() {
+    // Tell WebRTC + server to terminate. Recorder flushes + MinIO finalizes.
+    tx.hangup().catch(() => {})
     onEndCall({
       callId,
       callStartedAt: callStartedAt ?? new Date(),
