@@ -9,7 +9,9 @@ import {
   Conversation,
   Message,
   ActiveCall,
+  ActivityLog,
   Op,
+  sequelize,
 } from '@crm/database'
 import { getActiveCommConfig } from '@/lib/comm-provider'
 
@@ -241,34 +243,58 @@ async function handleCallEvent(eventType: string, payload: any) {
         where: { conferenceName: callControlId },
       }).catch(() => null)
       if (!existing) {
+        // 1) Resolve which CRM number was called → which campaign owns it.
         let leadCampaignId: string | null = null
-        let propertyId: string | null = null
-        const tn = await TwilioNumber.findOne({ where: { number: toPhone }, attributes: ['id'] })
+        let leadCampaignType: string | null = null
+        const tn = await TwilioNumber.findOne({ where: { number: toPhone }, attributes: ['id'] }) as any
         if (tn) {
           const lc = await LeadCampaign.findOne({
             where: { phoneNumberId: tn.id },
-            attributes: ['id'],
+            attributes: ['id', 'type'],
             raw: true,
           }) as any
           leadCampaignId = lc?.id ?? null
+          leadCampaignType = lc?.type ?? null
         }
+
+        // 2) Look up the caller. If they're tied to ANY existing
+        //    property — under any campaign — attribute the call there
+        //    (no duplicate lead). Otherwise auto-create a lead under
+        //    the dialed number's campaign so the agent has somewhere
+        //    to log notes and the call doesn't vanish.
+        //
+        //    "Any" property means we drop the `isPrimary` filter on
+        //    purpose: a caller who is the secondary contact on a
+        //    flip is still an existing lead, not a new one.
         const contactRow = await Contact.findOne({
           where: { [Op.or]: [{ phone: fromPhone }, { phone2: fromPhone }] },
           include: [
             {
               model: PropertyContact,
               as: 'properties',
-              where: { isPrimary: true },
               required: false,
               separate: true,
               limit: 1,
-              order: [['createdAt', 'DESC']],
+              order: [
+                ['isPrimary', 'DESC'],
+                ['createdAt', 'DESC'],
+              ],
               include: [{ model: Property, as: 'property', attributes: ['id'] }],
             },
           ],
         })
         const cp = contactRow?.get({ plain: true }) as any
-        propertyId = cp?.properties?.[0]?.property?.id ?? null
+        const existingContactId = cp?.id ?? null
+        let propertyId = cp?.properties?.[0]?.property?.id ?? null
+
+        if (!propertyId && leadCampaignId) {
+          propertyId = await autoCreateInboundLead({
+            fromPhone,
+            leadCampaignId,
+            leadCampaignType,
+            existingContactId,
+          })
+        }
 
         await ActiveCall.create({
           conferenceName: callControlId,
@@ -278,6 +304,24 @@ async function handleCallEvent(eventType: string, payload: any) {
           ...(propertyId ? { propertyId } : {}),
           ...(leadCampaignId ? { leadCampaignId } : {}),
         } as any)
+
+        // 3) Tell Telnyx to ANSWER the call so the customer hears
+        //    silence/hold instead of the call timing out at ~30s. The
+        //    agent then picks up via the InboundCallNotification popup.
+        const config = await getActiveCommConfig()
+        if (config?.providerName === 'telnyx' && config.apiKey) {
+          void fetch(
+            `https://api.telnyx.com/v2/calls/${encodeURIComponent(callControlId)}/actions/answer`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${config.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({}),
+            },
+          ).catch((err) => console.warn('[webhook/telnyx] answer command failed:', err))
+        }
       }
       return NextResponse.json({ ok: true })
     }
@@ -317,6 +361,69 @@ async function handleCallEvent(eventType: string, payload: any) {
           scheduleCdrCostFetch(callControlId, config.apiKey)
         }
       }
+
+      // Persist a Message row for the call so it shows up in the
+      // comms thread + activity timeline alongside SMS/Email/Notes.
+      // We do this on hangup (not initiated) so we have the duration
+      // and outcome locked in.
+      try {
+        const startedAt = activeCall.startedAt ? new Date(activeCall.startedAt as any) : null
+        const durationSec = startedAt ? Math.max(0, Math.round((Date.now() - startedAt.getTime()) / 1000)) : null
+        const wasAnswered = activeCall.status === 'ACTIVE'
+        const minutes = durationSec ? Math.floor(durationSec / 60) : 0
+        const seconds = durationSec ? durationSec % 60 : 0
+        const durStr = durationSec ? `${minutes}:${seconds.toString().padStart(2, '0')}` : null
+        const summary =
+          activeCall.direction === 'INBOUND'
+            ? wasAnswered
+              ? `Inbound call · ${durStr ?? 'completed'}`
+              : 'Inbound call · Not Answered'
+            : wasAnswered
+              ? `Outbound call · ${durStr ?? 'completed'}`
+              : 'Outbound call · Not Answered'
+
+        // Telnyx populates `from` + `to` consistently across directions:
+        //   inbound  → from = caller, to = CRM number
+        //   outbound → from = CRM number, to = customer
+        // So we can pass the payload values straight through.
+        const callFrom = fromPhone ?? (activeCall.direction === 'INBOUND' ? (activeCall.customerPhone as string | null) : null)
+        const callTo = toPhone ?? (activeCall.direction === 'OUTBOUND' ? (activeCall.customerPhone as string | null) : null)
+
+        await Message.create({
+          ...(activeCall.propertyId ? { propertyId: activeCall.propertyId } : {}),
+          ...(activeCall.leadCampaignId ? { leadCampaignId: activeCall.leadCampaignId } : {}),
+          channel: 'CALL',
+          direction: activeCall.direction === 'INBOUND' ? 'INBOUND' : 'OUTBOUND',
+          body: summary,
+          from: callFrom,
+          to: callTo,
+          twilioSid: callControlId,
+        } as any)
+
+        // Also drop an ActivityLog so the call shows up on the
+        // Activity tab + global /activity feed with from/to surfaced.
+        if (activeCall.propertyId) {
+          try {
+            await ActivityLog.create({
+              propertyId: activeCall.propertyId,
+              userId: null,
+              action: 'MESSAGE_LOGGED',
+              detail: {
+                description: summary,
+                channel: 'CALL',
+                direction: activeCall.direction,
+                from: callFrom,
+                to: callTo,
+                durationSec,
+              },
+            } as any)
+          } catch (err) {
+            console.warn('[webhook/telnyx] failed to log call activity:', err)
+          }
+        }
+      } catch (err) {
+        console.warn('[webhook/telnyx] failed to persist CALL Message row:', err)
+      }
     }
 
     if (Object.keys(updates).length > 1) {
@@ -326,5 +433,90 @@ async function handleCallEvent(eventType: string, payload: any) {
   } catch (err) {
     console.error('[webhook/telnyx call]', err)
     return NextResponse.json({ ok: true, error: 'logged' })
+  }
+}
+
+/**
+ * Auto-create a Lead (Property + Contact + PropertyContact) for an
+ * inbound call. Caller's phone is NOT already on any property — the
+ * lookup in handleCallEvent already verified that.
+ *
+ * Wired off the Lead Campaign that owns the dialed number — leadType +
+ * contact type follow campaign type (DTA → AGENT, anything else →
+ * SELLER as default).
+ *
+ * Reuses an existing Contact (matched on phone) when the caller is in
+ * our Contacts table but had no Property attached — common for cold
+ * imports. Only inserts a fresh Contact when one doesn't exist.
+ *
+ * Address fields are blank — the agent fills them in during/after the
+ * call. Lead is marked NEW_LEAD with source = "Inbound Call" so it
+ * shows up in the active pipeline immediately.
+ *
+ * Returns the new Property.id, or null on failure (the call still
+ * lands in the inbox; just without a Property attribution).
+ */
+async function autoCreateInboundLead(args: {
+  fromPhone: string
+  leadCampaignId: string
+  leadCampaignType: string | null
+  existingContactId: string | null
+}): Promise<string | null> {
+  const { fromPhone, leadCampaignId, leadCampaignType, existingContactId } = args
+
+  const isDta = leadCampaignType === 'DTA'
+  const leadType = isDta ? 'DIRECT_TO_AGENT' : 'DIRECT_TO_SELLER'
+  const contactType = isDta ? 'AGENT' : 'SELLER'
+
+  try {
+    const result = await sequelize.transaction(async (tx) => {
+      const property = await Property.create(
+        {
+          leadType,
+          leadStatus: 'ACTIVE',
+          propertyStatus: 'LEAD',
+          activeLeadStage: 'NEW_LEAD',
+          source: 'Inbound Call',
+          leadCampaignId,
+        } as any,
+        { transaction: tx },
+      )
+
+      let contactId = existingContactId
+      if (!contactId) {
+        const contact = await Contact.create(
+          {
+            firstName: 'Unknown',
+            lastName: 'Caller',
+            phone: fromPhone,
+            type: contactType,
+          } as any,
+          { transaction: tx },
+        )
+        contactId = contact.id
+      }
+
+      await PropertyContact.create(
+        {
+          propertyId: property.id,
+          contactId,
+          isPrimary: true,
+        } as any,
+        { transaction: tx },
+      )
+
+      return property.id
+    })
+    console.log(
+      '[webhook/telnyx] auto-created inbound lead',
+      result,
+      'from',
+      fromPhone,
+      existingContactId ? '(reused contact)' : '(new contact)',
+    )
+    return result
+  } catch (err) {
+    console.error('[webhook/telnyx] autoCreateInboundLead failed:', err)
+    return null
   }
 }

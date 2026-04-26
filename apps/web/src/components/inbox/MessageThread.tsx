@@ -29,8 +29,22 @@ interface Message {
   direction: string
   body: string | null
   subject: string | null
+  from?: string | null
+  to?: string | null
   createdAt: Date
   sentBy: { name: string } | null
+}
+
+function formatPhone(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const digits = raw.replace(/[^\d]/g, '')
+  if (raw.startsWith('+1') && digits.length === 11) {
+    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  return raw
 }
 
 interface Props {
@@ -145,6 +159,24 @@ export function MessageThread({ messages: initialMessages }: Props) {
                       </span>
                       <span className="text-[10px] text-gray-400">{msg.sentBy?.name ?? 'System'}</span>
                     </div>
+                    {/* From/To phone numbers — surfaces which CRM
+                        number was dialed and which caller hit it. */}
+                    {(msg.from || msg.to) && msg.channel !== 'NOTE' && (
+                      <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-mono text-gray-500 ${isOutbound ? 'justify-end' : 'justify-start'}`}>
+                        {msg.from && (
+                          <span>
+                            <span className="text-gray-400 font-sans uppercase tracking-wide mr-0.5">From</span>
+                            {formatPhone(msg.from)}
+                          </span>
+                        )}
+                        {msg.to && (
+                          <span>
+                            <span className="text-gray-400 font-sans uppercase tracking-wide mr-0.5">To</span>
+                            {formatPhone(msg.to)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {msg.subject && (
                       <p className="text-[11px] font-semibold text-gray-700">{msg.subject}</p>
                     )}

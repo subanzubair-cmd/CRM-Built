@@ -5,6 +5,18 @@ import { formatDistanceToNow } from 'date-fns'
 
 export const metadata = { title: 'Activity' }
 
+function formatPhone(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const digits = raw.replace(/[^\d]/g, '')
+  if (raw.startsWith('+1') && digits.length === 11) {
+    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+  }
+  return raw
+}
+
 export default async function ActivityPage() {
   const session = await auth()
   if (!session?.user) redirect('/login')
@@ -25,6 +37,8 @@ export default async function ActivityPage() {
           {logs.map((log) => {
             const detail = log.detail as Record<string, unknown>
             const description = typeof detail?.description === 'string' ? detail.description : log.action
+            const from = typeof detail?.from === 'string' ? detail.from : null
+            const to = typeof detail?.to === 'string' ? detail.to : null
             return (
               <div key={log.id} className="px-5 py-3 flex items-start gap-3">
                 <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -34,6 +48,23 @@ export default async function ActivityPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-800">{description}</p>
+                  {(from || to) && (
+                    <p className="text-[11px] font-mono text-gray-500 mt-0.5">
+                      {from && (
+                        <>
+                          <span className="font-sans uppercase tracking-wide text-gray-400 mr-0.5">From</span>
+                          {formatPhone(from)}
+                        </>
+                      )}
+                      {from && to && <span className="mx-1.5 text-gray-300">·</span>}
+                      {to && (
+                        <>
+                          <span className="font-sans uppercase tracking-wide text-gray-400 mr-0.5">To</span>
+                          {formatPhone(to)}
+                        </>
+                      )}
+                    </p>
+                  )}
                   <p className="text-[11px] text-gray-400 mt-0.5">
                     {log.user?.name ?? 'System'}
                     {log.property && (

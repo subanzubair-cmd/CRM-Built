@@ -121,23 +121,42 @@ export function LeadDetailRightPanel({
 
   // Merge activity logs and stage history
   const timelineItems = [
-    ...activityLogs.map((a) => ({
-      type: 'activity' as const,
-      id: a.id,
-      label: ACTION_LABELS[a.action] ?? a.action,
-      detail: typeof a.detail === 'object' ? a.detail?.description : a.detail,
-      user: a.user?.name,
-      createdAt: new Date(a.createdAt),
-    })),
+    ...activityLogs.map((a) => {
+      const d = typeof a.detail === 'object' && a.detail !== null ? (a.detail as any) : null
+      return {
+        type: 'activity' as const,
+        id: a.id,
+        label: ACTION_LABELS[a.action] ?? a.action,
+        detail: d?.description ?? (typeof a.detail === 'string' ? a.detail : null),
+        from: typeof d?.from === 'string' ? d.from : null,
+        to: typeof d?.to === 'string' ? d.to : null,
+        user: a.user?.name,
+        createdAt: new Date(a.createdAt),
+      }
+    }),
     ...stageHistory.map((s) => ({
       type: 'stage' as const,
       id: s.id,
       label: `${s.fromStage ?? '—'} → ${s.toStage}`,
       detail: s.reason,
+      from: null as string | null,
+      to: null as string | null,
       user: s.changedByName,
       createdAt: new Date(s.createdAt),
     })),
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+
+  function formatPhone(raw: string | null): string | null {
+    if (!raw) return null
+    const digits = raw.replace(/[^\d]/g, '')
+    if (raw.startsWith('+1') && digits.length === 11) {
+      return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`
+    }
+    if (digits.length === 10) {
+      return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+    }
+    return raw
+  }
 
   async function handleSend() {
     const text = composeBody.replace(/<[^>]*>/g, '').trim()
@@ -251,6 +270,23 @@ export function LeadDetailRightPanel({
                         <p className="text-xs font-medium text-gray-800">{item.label}</p>
                         {item.detail && (
                           <p className="text-[11px] text-gray-500 mt-0.5 truncate">{item.detail}</p>
+                        )}
+                        {(item.from || item.to) && (
+                          <p className="text-[10px] font-mono text-gray-500 mt-0.5">
+                            {item.from && (
+                              <>
+                                <span className="font-sans uppercase tracking-wide text-gray-400 mr-0.5">From</span>
+                                {formatPhone(item.from)}
+                              </>
+                            )}
+                            {item.from && item.to && <span className="mx-1.5 text-gray-300">·</span>}
+                            {item.to && (
+                              <>
+                                <span className="font-sans uppercase tracking-wide text-gray-400 mr-0.5">To</span>
+                                {formatPhone(item.to)}
+                              </>
+                            )}
+                          </p>
                         )}
                         <p className="text-[10px] text-gray-400 mt-0.5">
                           {item.user && <span>{item.user} · </span>}

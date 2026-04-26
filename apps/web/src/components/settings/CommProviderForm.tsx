@@ -373,6 +373,130 @@ export function CommProviderForm() {
 
       {/* ─── Webhook URL panel ───────────────────────────────────────── */}
       <WebhookPanel providerName={selected} webhookUrl={webhookUrl} />
+
+      {/* ─── Inbound diagnostic (Telnyx-only for now) ─────────────────── */}
+      {selected === 'telnyx' && (
+        <TelnyxInboundDiagnostic webhookUrl={webhookUrl} />
+      )}
+    </div>
+  )
+}
+
+/**
+ * "Verify Telnyx Setup" panel.
+ *
+ * One-click hits /api/diagnostics/telnyx-inbound and renders the three
+ * checks the inbound-call path depends on:
+ *   • Voice API Application exists in the saved Telnyx account
+ *   • Webhook URL on that App matches our current tunnel/host
+ *   • Each phone number is assigned to the App via connection_id
+ *
+ * Most "the call rang my cell phone but never hit the CRM" issues are
+ * one of these three — surfacing them as a checklist gives the operator
+ * a clear next step without digging through Mission Control.
+ */
+function TelnyxInboundDiagnostic({ webhookUrl }: { webhookUrl: string }) {
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<any | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function run() {
+    setRunning(true)
+    setError(null)
+    setResult(null)
+    try {
+      const url = webhookUrl
+        ? `/api/diagnostics/telnyx-inbound?expectedWebhook=${encodeURIComponent(webhookUrl)}`
+        : '/api/diagnostics/telnyx-inbound'
+      const res = await fetch(url)
+      const json = await res.json()
+      if (!res.ok) {
+        setError(json?.error ?? `Diagnostic failed (${res.status})`)
+      } else {
+        setResult(json)
+      }
+    } catch (err: any) {
+      setError(err?.message ?? 'Diagnostic failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-800">Verify Telnyx Inbound Setup</h3>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Pings Telnyx to confirm your Voice App, webhook URL, and number assignments
+            — fixes the &ldquo;call didn&apos;t reach the CRM&rdquo; case.
+          </p>
+        </div>
+        <button
+          onClick={run}
+          disabled={running}
+          className="flex items-center gap-1.5 border border-gray-200 text-gray-700 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+        >
+          {running && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          Run Verification
+        </button>
+      </div>
+
+      {error && (
+        <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      {result?.checks && (
+        <ul className="space-y-2">
+          {(['appExists', 'webhookMatch', 'numbersAssigned'] as const).map((key) => {
+            const c = result.checks[key] as { ok: boolean; message: string; numbers?: any[] }
+            const labels: Record<string, string> = {
+              appExists: 'Voice Application',
+              webhookMatch: 'Webhook URL',
+              numbersAssigned: 'Phone Number Assignment',
+            }
+            return (
+              <li
+                key={key}
+                className={`flex items-start gap-2 px-3 py-2 rounded-lg border ${
+                  c.ok ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
+                }`}
+              >
+                <span
+                  className={`text-base leading-none mt-0.5 ${
+                    c.ok ? 'text-emerald-600' : 'text-amber-600'
+                  }`}
+                >
+                  {c.ok ? '✓' : '!'}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-gray-800">{labels[key]}</p>
+                  <p className="text-[11px] text-gray-700 mt-0.5">{c.message}</p>
+                  {key === 'numbersAssigned' && c.numbers && c.numbers.length > 0 && (
+                    <div className="mt-1.5 space-y-0.5">
+                      {c.numbers.map((n: any) => (
+                        <div key={n.number} className="text-[11px] font-mono flex items-center gap-2">
+                          <span className={n.assigned ? 'text-emerald-700' : 'text-amber-700'}>
+                            {n.assigned ? '✓' : '✗'}
+                          </span>
+                          <span className="text-gray-700">{n.number}</span>
+                          {!n.assigned && (
+                            <span className="text-[10px] text-gray-500">
+                              (currently on {n.connectionId ?? 'no'} connection)
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </div>
   )
 }

@@ -51,6 +51,9 @@ export function InboundCallNotification() {
   const [lookup, setLookup] = useState<CallerLookup | null>(null)
   const [minimized, setMinimized] = useState(false)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  // Collapse multi-lead lists. Show 2 by default, "Show N more" reveals
+  // the rest. Reset whenever a new call arrives.
+  const [showAllLeads, setShowAllLeads] = useState(false)
   // Holds the WebRTC SDK Call instance for in-flight inbound calls so
   // Answer/Reject can act on the right peer connection.
   const [incomingWebrtcCall, setIncomingWebrtcCall] = useState<any | null>(null)
@@ -119,6 +122,7 @@ export function InboundCallNotification() {
   useEffect(() => {
     if (!activeCall) return
     let cancelled = false
+    setShowAllLeads(false)
     fetch(`/api/calls/inbound/lookup?phone=${encodeURIComponent(activeCall.customerPhone)}`)
       .then((r) => r.json())
       .then((data) => {
@@ -278,47 +282,74 @@ export function InboundCallNotification() {
           </p>
         )}
 
-        {/* Lead Properties */}
-        {lookup && lookup.leadProperties.length > 0 && (
-          <div className="mb-3">
-            <p className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1.5">
-              Lead Properties ({lookup.leadProperties.length})
-            </p>
-            <div className="space-y-1.5">
-              {lookup.leadProperties.map((p) => {
-                const addr = [p.streetAddress, p.city, p.state].filter(Boolean).join(', ')
-                const pipeline = p.leadType === 'DIRECT_TO_SELLER' ? 'dts' : 'dta'
-                const base =
-                  p.propertyStatus === 'IN_TM'
-                    ? '/tm'
-                    : p.propertyStatus === 'IN_INVENTORY'
-                    ? '/inventory'
-                    : p.propertyStatus === 'IN_DISPO'
-                    ? '/dispo'
-                    : p.propertyStatus === 'SOLD'
-                    ? '/sold'
-                    : `/leads/${pipeline}`
-                return (
-                  <a
-                    key={p.id}
-                    href={`${base}/${p.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center justify-between gap-2 p-2 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-blue-700 truncate">{addr}</p>
-                      <p className="text-[10px] text-gray-500">
-                        {(p.activeLeadStage ?? p.propertyStatus).replace(/_/g, ' ')}
-                      </p>
-                    </div>
-                    <ExternalLink className="w-3 h-3 text-gray-400 flex-shrink-0" />
-                  </a>
-                )
-              })}
+        {/* Lead Properties — collapse to first 2 when there are more */}
+        {lookup && lookup.leadProperties.length > 0 && (() => {
+          const COLLAPSED_COUNT = 2
+          const visible = showAllLeads
+            ? lookup.leadProperties
+            : lookup.leadProperties.slice(0, COLLAPSED_COUNT)
+          const hiddenCount = lookup.leadProperties.length - visible.length
+          return (
+            <div className="mb-3">
+              <p className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1.5">
+                Lead Properties ({lookup.leadProperties.length})
+              </p>
+              <div className="space-y-1.5">
+                {visible.map((p) => {
+                  const addr = [p.streetAddress, p.city, p.state].filter(Boolean).join(', ')
+                  const pipeline = p.leadType === 'DIRECT_TO_SELLER' ? 'dts' : 'dta'
+                  const base =
+                    p.propertyStatus === 'IN_TM'
+                      ? '/tm'
+                      : p.propertyStatus === 'IN_INVENTORY'
+                      ? '/inventory'
+                      : p.propertyStatus === 'IN_DISPO'
+                      ? '/dispo'
+                      : p.propertyStatus === 'SOLD'
+                      ? '/sold'
+                      : `/leads/${pipeline}`
+                  return (
+                    <a
+                      key={p.id}
+                      href={`${base}/${p.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center justify-between gap-2 p-2 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-blue-700 truncate">
+                          {addr || '(no address yet)'}
+                        </p>
+                        <p className="text-[10px] text-gray-500">
+                          {(p.activeLeadStage ?? p.propertyStatus).replace(/_/g, ' ')}
+                        </p>
+                      </div>
+                      <ExternalLink className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                    </a>
+                  )
+                })}
+              </div>
+              {hiddenCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllLeads(true)}
+                  className="mt-2 w-full text-xs font-medium text-blue-700 hover:text-blue-900 hover:bg-blue-50 py-1.5 rounded transition-colors"
+                >
+                  Review {hiddenCount} more {hiddenCount === 1 ? 'address' : 'addresses'}
+                </button>
+              )}
+              {showAllLeads && lookup.leadProperties.length > COLLAPSED_COUNT && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllLeads(false)}
+                  className="mt-2 w-full text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 py-1.5 rounded transition-colors"
+                >
+                  Show less
+                </button>
+              )}
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* List Stacking Properties */}
         {lookup && lookup.listStacking.length > 0 && (
