@@ -168,9 +168,11 @@ export function ActiveCallsPanel() {
                     {call.customerPhone ?? '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">
-                    {call.property
+                    {call.property?.streetAddress
                       ? `${call.property.streetAddress}${call.property.city ? `, ${call.property.city}` : ''}`
-                      : '—'}
+                      : call.property
+                        ? <span className="text-gray-400 italic">No address</span>
+                        : '—'}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusBadge(call.status)}`}>

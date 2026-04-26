@@ -149,21 +149,64 @@ export async function GET(_req: NextRequest) {
   const deny = requirePermission(session, 'comms.view')
   if (deny) return deny
 
+  // Sweep stuck rows before serving. Without this, calls that fail
+  // mid-dial (SDK never transitions past INITIATING because the network
+  // dropped, the agent closed the tab before the call connected, the
+  // call_control_id was never linked so the call.hangup webhook
+  // couldn't match, etc.) sit in the Live Calls panel forever even
+  // though there's no actual call running.
+  //
+  // Aggressive thresholds — these are MAXIMUMS for what's still
+  // plausibly live; a healthy call never needs this long in any one
+  // phase. Anything past this is stuck and should be treated as ended.
+  //
+  //   INITIATING > 2 min  → FAILED  (network dropped, SDK never connected)
+  //   RINGING    > 5 min  → NO_ANSWER (Telnyx default ring is ~30s; 5min
+  //                                    means a webhook was missed)
+  //   ACTIVE     > 4 hours → COMPLETED (no real human call lasts that long)
+  const now = Date.now()
+  await Promise.all([
+    ActiveCall.update(
+      { status: 'FAILED', endedAt: new Date() } as any,
+      {
+        where: {
+          status: 'INITIATING',
+          startedAt: { [Op.lt]: new Date(now - 2 * 60 * 1000) },
+        },
+      },
+    ).catch((err) => console.warn('[GET /api/calls] sweep INITIATING failed:', err)),
+    ActiveCall.update(
+      { status: 'NO_ANSWER', endedAt: new Date() } as any,
+      {
+        where: {
+          status: 'RINGING',
+          startedAt: { [Op.lt]: new Date(now - 5 * 60 * 1000) },
+        },
+      },
+    ).catch((err) => console.warn('[GET /api/calls] sweep RINGING failed:', err)),
+    ActiveCall.update(
+      { status: 'COMPLETED', endedAt: new Date() } as any,
+      {
+        where: {
+          status: 'ACTIVE',
+          startedAt: { [Op.lt]: new Date(now - 4 * 60 * 60 * 1000) },
+        },
+      },
+    ).catch((err) => console.warn('[GET /api/calls] sweep ACTIVE failed:', err)),
+  ])
+
   try {
     const calls = await ActiveCall.findAll({
       where: {
-        // Live Calls panel only shows truly live calls. Excludes every
-        // terminal state we know about (and is forward-compatible with
-        // any new terminal status added later — whitelist live states
-        // instead of blacklisting one).
+        // Live Calls panel only shows truly live calls. Whitelist of
+        // currently-active states; the sweep above pre-emptively
+        // converts stuck rows so they're already excluded by the time
+        // we read.
         status: { [Op.in]: ['INITIATING', 'RINGING', 'ACTIVE'] },
-        // Auto-prune anything that's been "live" for more than 30 minutes
-        // — at that point either Telnyx already terminated the call and
-        // we missed the webhook, or something is genuinely stuck. Either
-        // way it shouldn't show as live. The /sweep endpoint below
-        // marks these COMPLETED on a schedule; this filter is a belt
-        // so the panel hides them even before the sweep runs.
-        startedAt: { [Op.gte]: new Date(Date.now() - 30 * 60 * 1000) },
+        // Hard ceiling: a healthy call shouldn't be older than 30 min;
+        // anything older hides from the panel even if the sweep above
+        // missed (e.g., DB error rolled back).
+        startedAt: { [Op.gte]: new Date(now - 30 * 60 * 1000) },
       },
       include: [
         { model: User, as: 'agent', attributes: ['id', 'name', 'phone'] },
