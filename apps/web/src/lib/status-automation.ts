@@ -1,4 +1,10 @@
-import { prisma } from '@/lib/prisma'
+import {
+  StatusAutomation,
+  CampaignEnrollment,
+  Property,
+  Task,
+  Template,
+} from '@crm/database'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 
 /**
@@ -15,16 +21,17 @@ export async function runStatusAutomations(
   actorUserId?: string,
 ): Promise<void> {
   try {
-    const automations = await (prisma as any).statusAutomation.findMany({
+    const automations = (await StatusAutomation.findAll({
       where: { workspaceType, stageCode, isActive: true },
-      select: {
-        id: true,
-        dripCampaignId: true,
-        taskTemplateId: true,
-        taskTitle: true,
-        taskAssigneeId: true,
-      },
-    }) as Array<{
+      attributes: [
+        'id',
+        'dripCampaignId',
+        'taskTemplateId',
+        'taskTitle',
+        'taskAssigneeId',
+      ],
+      raw: true,
+    })) as Array<{
       id: string
       dripCampaignId: string | null
       taskTemplateId: string | null
@@ -34,64 +41,63 @@ export async function runStatusAutomations(
 
     if (automations.length === 0) return
 
-    const property = await prisma.property.findUnique({
-      where: { id: propertyId },
-      select: { id: true, assignedToId: true },
+    const property = await Property.findByPk(propertyId, {
+      attributes: ['id', 'assignedToId'],
     })
     if (!property) return
 
     for (const a of automations) {
-      // 1. Enroll in drip campaign (upsert — don't re-enroll if already)
+      // 1. Enroll in drip campaign (composite-unique upsert via findOrCreate)
       if (a.dripCampaignId) {
-        await prisma.campaignEnrollment
-          .upsert({
-            where: {
-              campaignId_propertyId: { campaignId: a.dripCampaignId, propertyId },
+        try {
+          await CampaignEnrollment.findOrCreate({
+            where: { campaignId: a.dripCampaignId, propertyId },
+            defaults: {
+              campaignId: a.dripCampaignId,
+              propertyId,
+              currentStep: 0,
             },
-            create: { campaignId: a.dripCampaignId, propertyId, currentStep: 0 },
-            update: {},
           })
-          .catch((err) => console.error('[status-automation] enroll failed:', err))
+        } catch (err) {
+          console.error('[status-automation] enroll failed:', err)
+        }
       }
 
-      // 2. Create task
+      // 2. Create task (with optional template lookup)
       const assignee = a.taskAssigneeId ?? property.assignedToId ?? null
       if (a.taskTemplateId) {
-        const template = await prisma.template
-          .findUnique({
-            where: { id: a.taskTemplateId },
-            select: { name: true, bodyContent: true },
-          })
-          .catch(() => null)
+        const template = await Template.findByPk(a.taskTemplateId, {
+          attributes: ['name', 'bodyContent'],
+        }).catch(() => null)
         if (template) {
-          await prisma.task
-            .create({
-              data: {
-                propertyId,
-                title: template.name ?? a.taskTitle ?? 'Follow up',
-                description: template.bodyContent || undefined,
-                type: 'FOLLOW_UP',
-                status: 'PENDING',
-                assignedToId: assignee ?? undefined,
-                sourceType: 'automation',
-                templateId: a.taskTemplateId,
-              },
-            })
-            .catch((err) => console.error('[status-automation] task create failed:', err))
-        }
-      } else if (a.taskTitle) {
-        await prisma.task
-          .create({
-            data: {
+          try {
+            await Task.create({
               propertyId,
-              title: a.taskTitle,
+              title: template.name ?? a.taskTitle ?? 'Follow up',
+              description: template.bodyContent || undefined,
               type: 'FOLLOW_UP',
               status: 'PENDING',
               assignedToId: assignee ?? undefined,
               sourceType: 'automation',
-            },
+              templateId: a.taskTemplateId,
+            })
+          } catch (err) {
+            console.error('[status-automation] task create failed:', err)
+          }
+        }
+      } else if (a.taskTitle) {
+        try {
+          await Task.create({
+            propertyId,
+            title: a.taskTitle,
+            type: 'FOLLOW_UP',
+            status: 'PENDING',
+            assignedToId: assignee ?? undefined,
+            sourceType: 'automation',
           })
-          .catch((err) => console.error('[status-automation] task create failed:', err))
+        } catch (err) {
+          console.error('[status-automation] task create failed:', err)
+        }
       }
 
       void emitEvent({

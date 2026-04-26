@@ -1,5 +1,5 @@
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import { Appointment, Property, Op } from '@crm/database'
+import type { WhereOptions } from '@crm/database'
 
 export interface AppointmentListFilter {
   propertyId?: string
@@ -14,34 +14,37 @@ export async function getAppointmentList(filter: AppointmentListFilter) {
 
   const now = new Date()
 
-  const where: Prisma.AppointmentWhereInput = {
-    startAt: {
-      gte: from ?? now,
-      ...(to && { lte: to }),
-    },
-    ...(propertyId && { propertyId }),
-  }
+  const startAtFilter: Record<symbol, Date> = {}
+  startAtFilter[Op.gte] = from ?? now
+  if (to) startAtFilter[Op.lte] = to
+
+  const where: WhereOptions = { startAt: startAtFilter as any }
+  if (propertyId) (where as any).propertyId = propertyId
 
   const [rows, total] = await Promise.all([
-    prisma.appointment.findMany({
+    Appointment.findAll({
       where,
-      include: {
-        property: {
-          select: {
-            id: true,
-            streetAddress: true,
-            city: true,
-            state: true,
-            leadType: true,
-            propertyStatus: true,
-          },
+      include: [
+        {
+          model: Property,
+          as: 'property',
+          attributes: [
+            'id',
+            'streetAddress',
+            'city',
+            'state',
+            'leadType',
+            'propertyStatus',
+          ],
         },
-      },
-      orderBy: { startAt: 'asc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ],
+      order: [['startAt', 'ASC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      raw: true,
+      nest: true,
     }),
-    prisma.appointment.count({ where }),
+    Appointment.count({ where }),
   ])
 
   return { rows, total, page, pageSize }

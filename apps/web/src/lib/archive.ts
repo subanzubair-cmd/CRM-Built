@@ -1,7 +1,25 @@
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import {
+  Property,
+  PropertyContact,
+  Contact,
+  User,
+  Op,
+} from '@crm/database'
+import type { WhereOptions } from '@crm/database'
 
-const DECIMAL_FIELDS = ['bathrooms', 'askingPrice', 'offerPrice', 'arv', 'repairEstimate', 'lotSize', 'contractPrice', 'expectedProfit', 'underContractPrice', 'estimatedValue', 'soldPrice'] as const
+const DECIMAL_FIELDS = [
+  'bathrooms',
+  'askingPrice',
+  'offerPrice',
+  'arv',
+  'repairEstimate',
+  'lotSize',
+  'contractPrice',
+  'expectedProfit',
+  'underContractPrice',
+  'estimatedValue',
+  'soldPrice',
+] as const
 
 function serializeRow<T extends Record<string, any>>(row: T): T {
   const out: any = { ...row }
@@ -19,67 +37,91 @@ export interface ArchiveFilter {
   marketScope?: string[] | null
 }
 
-const ARCHIVE_LIST_INCLUDE = {
-  contacts: {
+const ARCHIVE_INCLUDE = [
+  {
+    model: PropertyContact,
+    as: 'contacts',
     where: { isPrimary: true },
-    include: { contact: { select: { firstName: true, lastName: true, phone: true } } },
-    take: 1,
+    required: false,
+    limit: 1,
+    include: [
+      {
+        model: Contact,
+        as: 'contact',
+        attributes: ['firstName', 'lastName', 'phone'],
+      },
+    ],
   },
-  assignedTo: { select: { id: true, name: true } },
-} satisfies Prisma.PropertyInclude
+  {
+    model: User,
+    as: 'assignedTo',
+    attributes: ['id', 'name'],
+  },
+] as const
 
-function buildSearchOr(search: string): Prisma.PropertyWhereInput['OR'] {
+function buildSearchOr(search: string) {
   return [
-    { normalizedAddress: { contains: search, mode: 'insensitive' } },
-    { streetAddress: { contains: search, mode: 'insensitive' } },
-    { city: { contains: search, mode: 'insensitive' } },
+    { normalizedAddress: { [Op.iLike]: `%${search}%` } },
+    { streetAddress: { [Op.iLike]: `%${search}%` } },
+    { city: { [Op.iLike]: `%${search}%` } },
   ]
 }
 
 export async function getSoldList(filter: ArchiveFilter) {
   const { search, assignedToId, page = 1, pageSize = 50, marketScope } = filter
 
-  const where: Prisma.PropertyWhereInput = {
-    propertyStatus: 'SOLD',
-    ...(assignedToId && { assignedToId }),
-    ...(marketScope !== null && marketScope !== undefined && { marketId: { in: marketScope } }),
-    ...(search && { OR: buildSearchOr(search) }),
+  const where: WhereOptions = { propertyStatus: 'SOLD' }
+  if (assignedToId) (where as any).assignedToId = assignedToId
+  if (marketScope !== null && marketScope !== undefined) {
+    ;(where as any).marketId = { [Op.in]: marketScope }
+  }
+  if (search) {
+    ;(where as any)[Op.or] = buildSearchOr(search)
   }
 
   const [rows, total] = await Promise.all([
-    prisma.property.findMany({
+    Property.findAll({
       where,
-      include: ARCHIVE_LIST_INCLUDE,
-      orderBy: { soldAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      include: ARCHIVE_INCLUDE as any,
+      order: [['soldAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      // Subquery off + distinct on count needed because of include.where.
+      subQuery: false,
     }),
-    prisma.property.count({ where }),
+    Property.count({ where }),
   ])
 
-  return { rows: rows.map(serializeRow), total, page, pageSize }
+  // Run rows through plain conversion + decimal coercion. raw:true would
+  // also work but doesn't preserve nested include shapes the same way.
+  const plainRows = rows.map((r) => serializeRow(r.get({ plain: true })))
+  return { rows: plainRows, total, page, pageSize }
 }
 
 export async function getRentalList(filter: ArchiveFilter) {
   const { search, assignedToId, page = 1, pageSize = 50, marketScope } = filter
 
-  const where: Prisma.PropertyWhereInput = {
-    propertyStatus: 'RENTAL',
-    ...(assignedToId && { assignedToId }),
-    ...(marketScope !== null && marketScope !== undefined && { marketId: { in: marketScope } }),
-    ...(search && { OR: buildSearchOr(search) }),
+  const where: WhereOptions = { propertyStatus: 'RENTAL' }
+  if (assignedToId) (where as any).assignedToId = assignedToId
+  if (marketScope !== null && marketScope !== undefined) {
+    ;(where as any).marketId = { [Op.in]: marketScope }
+  }
+  if (search) {
+    ;(where as any)[Op.or] = buildSearchOr(search)
   }
 
   const [rows, total] = await Promise.all([
-    prisma.property.findMany({
+    Property.findAll({
       where,
-      include: ARCHIVE_LIST_INCLUDE,
-      orderBy: { updatedAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      include: ARCHIVE_INCLUDE as any,
+      order: [['updatedAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.property.count({ where }),
+    Property.count({ where }),
   ])
 
-  return { rows: rows.map(serializeRow), total, page, pageSize }
+  const plainRows = rows.map((r) => serializeRow(r.get({ plain: true })))
+  return { rows: plainRows, total, page, pageSize }
 }

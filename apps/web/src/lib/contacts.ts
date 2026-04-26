@@ -1,5 +1,4 @@
-import { prisma } from '@/lib/prisma'
-import { Contact, Op } from '@crm/database'
+import { Contact, PropertyContact, Op } from '@crm/database'
 
 export interface AddContactInput {
   firstName: string
@@ -31,12 +30,13 @@ export async function addContactToProperty(
 ) {
   const { firstName, lastName, phone, email, contactType = 'SELLER', role, isPrimary = false, preferredChannel } = data
 
-  // PropertyContact still on Prisma until Phase 6.
+  // Only one PropertyContact per property is allowed to be primary —
+  // demote any existing primary first, then create the new pairing.
   if (isPrimary) {
-    await prisma.propertyContact.updateMany({
-      where: { propertyId, isPrimary: true },
-      data: { isPrimary: false },
-    })
+    await PropertyContact.update(
+      { isPrimary: false },
+      { where: { propertyId, isPrimary: true } },
+    )
   }
 
   const contact = await Contact.create({
@@ -48,13 +48,11 @@ export async function addContactToProperty(
     ...(preferredChannel != null && { preferredChannel }),
   })
 
-  const propertyContact = await prisma.propertyContact.create({
-    data: {
-      propertyId,
-      contactId: contact.id,
-      ...(role != null && { role }),
-      isPrimary,
-    },
+  const propertyContact = await PropertyContact.create({
+    propertyId,
+    contactId: contact.id,
+    ...(role != null && { role }),
+    isPrimary,
   })
 
   return { contact, propertyContact }
@@ -66,10 +64,16 @@ export async function updatePropertyContact(
   data: UpdateContactInput
 ) {
   if (data.isPrimary) {
-    await prisma.propertyContact.updateMany({
-      where: { propertyId, isPrimary: true, contactId: { not: contactId } },
-      data: { isPrimary: false },
-    })
+    await PropertyContact.update(
+      { isPrimary: false },
+      {
+        where: {
+          propertyId,
+          isPrimary: true,
+          contactId: { [Op.ne]: contactId },
+        },
+      },
+    )
   }
 
   const contactUpdates: Record<string, unknown> = {}
@@ -91,7 +95,7 @@ export async function updatePropertyContact(
       ? Contact.update(contactUpdates as any, { where: { id: contactId } })
       : Promise.resolve(),
     Object.keys(pcUpdates).length > 0
-      ? prisma.propertyContact.updateMany({ where: { propertyId, contactId }, data: pcUpdates })
+      ? PropertyContact.update(pcUpdates as any, { where: { propertyId, contactId } })
       : Promise.resolve(),
   ])
 }
@@ -100,7 +104,5 @@ export async function removeContactFromProperty(
   propertyId: string,
   contactId: string
 ) {
-  await prisma.propertyContact.deleteMany({
-    where: { propertyId, contactId },
-  })
+  await PropertyContact.destroy({ where: { propertyId, contactId } })
 }
