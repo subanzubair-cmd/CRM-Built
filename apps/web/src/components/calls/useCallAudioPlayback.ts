@@ -68,12 +68,39 @@ export function useCallAudioPlayback({ rawCall, active }: Args): void {
       return
     }
 
+    /**
+     * Resolve the actual RTCPeerConnection from the SDK call. Telnyx
+     * wraps the peer in their own object, so `call.peer` is NOT
+     * directly an RTCPeerConnection — getReceivers throws. The real
+     * one lives at one of:
+     *   call.peer.instance        (Telnyx WebRTC SDK 2.x)
+     *   call.peer.peerConnection  (older naming)
+     *   call.rtcPeer              (some alt builds)
+     */
+    function getRealPeer(): RTCPeerConnection | null {
+      const peer = rawCall.peer
+      if (peer) {
+        const candidates = [
+          peer.instance,
+          peer.peerConnection,
+          peer.pc,
+        ]
+        for (const c of candidates) {
+          if (c && typeof c.getReceivers === 'function') return c as RTCPeerConnection
+        }
+      }
+      const alt = rawCall.rtcPeer ?? rawCall.peerConnection
+      if (alt && typeof alt.getReceivers === 'function') return alt as RTCPeerConnection
+      return null
+    }
+
     /** Build a stream from the receivers and attach it. Idempotent. */
     function attachFromPeer(reason: string) {
       if (!audio) return
-      const peer: RTCPeerConnection | undefined = rawCall.peer
+      const peer = getRealPeer()
       if (!peer) {
-        console.warn('[call-audio] no peer on rawCall yet (' + reason + ')')
+        // Don't spam — most polls hit this until the SDK hooks up the
+        // peer instance. Silent return.
         return
       }
       try {
@@ -81,10 +108,7 @@ export function useCallAudioPlayback({ rawCall, active }: Args): void {
           .getReceivers()
           .map((r) => r.track)
           .filter((t): t is MediaStreamTrack => !!t && t.kind === 'audio' && t.readyState === 'live')
-        if (audioTracks.length === 0) {
-          console.log('[call-audio] no live audio tracks yet via ' + reason)
-          return
-        }
+        if (audioTracks.length === 0) return
         const stream = new MediaStream()
         audioTracks.forEach((t) => stream.addTrack(t))
         if (attachedStreamRef.current === stream) return
@@ -110,17 +134,14 @@ export function useCallAudioPlayback({ rawCall, active }: Args): void {
       attachFromPeer('initial getReceivers')
     }
 
-    // 2) Hook peer.ontrack so we attach the moment Telnyx delivers an
-    //    audio track. This is the canonical WebRTC event for inbound
-    //    media.
-    const peer: RTCPeerConnection | undefined = rawCall.peer
+    // 2) Hook peer.ontrack on the REAL RTCPeerConnection (not the
+    //    SDK wrapper) so we attach the moment Telnyx delivers media.
     let onTrack: ((e: RTCTrackEvent) => void) | null = null
-    if (peer && typeof peer.addEventListener === 'function') {
+    const realPeer = getRealPeer()
+    if (realPeer && typeof realPeer.addEventListener === 'function') {
       onTrack = (e: RTCTrackEvent) => {
         console.log('[call-audio] peer.ontrack fired: kind=' + e.track.kind + ' state=' + e.track.readyState)
         if (e.track.kind !== 'audio') return
-        // Use the first MediaStream the event provides if available,
-        // otherwise build from receivers (covers older Safari).
         const stream = e.streams?.[0] ?? null
         if (stream) {
           if (attachedStreamRef.current !== stream) {
@@ -134,7 +155,7 @@ export function useCallAudioPlayback({ rawCall, active }: Args): void {
           attachFromPeer('ontrack-getReceivers')
         }
       }
-      peer.addEventListener('track', onTrack)
+      realPeer.addEventListener('track', onTrack)
     }
 
     // 3) Belt: poll receivers for up to 10s in case neither remoteStream
@@ -157,9 +178,9 @@ export function useCallAudioPlayback({ rawCall, active }: Args): void {
 
     cleanupRef.current = () => {
       clearInterval(pollInterval)
-      if (peer && onTrack) {
+      if (realPeer && onTrack) {
         try {
-          peer.removeEventListener('track', onTrack)
+          realPeer.removeEventListener('track', onTrack)
         } catch {
           /* ignore */
         }
