@@ -45,6 +45,8 @@ export async function GET() {
       masked.publicKey = cfg.publicKey ?? ''
       masked.voiceApplicationId = cfg.voiceApplicationId ?? ''
       masked.voiceConnectionId = cfg.voiceConnectionId ?? ''
+      masked.sipUsername = cfg.sipUsername ?? ''
+      masked.sipPassword = maskSecret(cfg.sipPassword)
       masked.webhookUrl = cfg.webhookUrl ?? ''
     } else if (name === 'signalhouse') {
       masked.apiToken = maskSecret(cfg.apiToken)
@@ -81,6 +83,13 @@ const TelnyxCfg = z.object({
   // Credential / SIP Connection UUID — used by /api/calls/credentials to
   // mint short-lived JWT tokens for the WebRTC softphone in the browser.
   voiceConnectionId: z.string().optional(),
+  // Static SIP credentials. Operators who'd rather skip the
+  // /v2/telephony_credentials JWT-mint dance can paste the Username +
+  // Password from a Telnyx Credentials-type SIP Connection here. The
+  // browser softphone will register using these instead of a JWT.
+  // sipPassword is encrypted at rest (see secretFields below).
+  sipUsername: z.string().optional(),
+  sipPassword: z.string().optional(),
   // Public webhook URL the operator pasted into Telnyx (informational —
   // stored so operators can verify what they configured upstream).
   webhookUrl: z.string().optional(),
@@ -121,7 +130,7 @@ export async function PUT(req: NextRequest) {
 
   const secretFields: Record<string, string[]> = {
     twilio: ['authToken'],
-    telnyx: ['apiKey'],
+    telnyx: ['apiKey', 'sipPassword'],
     signalhouse: ['apiToken', 'webhookSecret'],
   }
 

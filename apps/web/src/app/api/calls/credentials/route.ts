@@ -46,17 +46,34 @@ export async function GET() {
       { status: 400 },
     )
   }
-  // A Voice API Application IS a Credential Connection in Telnyx — its
-  // ID serves both roles. We accept voiceConnectionId as an override for
-  // advanced setups (separate SIP Connection just for WebRTC) but default
-  // to voiceApplicationId when it isn't set, since most operators only
-  // have the Voice API Application ID.
+
+  // FAST PATH — when the operator pasted static SIP Username + Password
+  // from a Telnyx Credentials-type SIP Connection, return those
+  // directly. The browser softphone registers via username/password and
+  // skips the /v2/telephony_credentials JWT mint entirely. Simpler
+  // setup, no API round-trip per agent session, and no /v2/credentials
+  // 422 to debug.
+  if (config.sipUsername && config.sipPassword) {
+    return NextResponse.json({
+      provider: 'telnyx',
+      mode: 'static',
+      sipUsername: config.sipUsername,
+      sipPassword: config.sipPassword,
+      // No expiry — static credentials live until the operator rotates
+      // them in Telnyx + updates Settings.
+      expiresAt: null,
+    })
+  }
+
+  // SLOW PATH — mint a per-session JWT via /v2/telephony_credentials.
+  // Requires either a SIP Connection (Credentials type) or a Voice API
+  // App as connection_id.
   const connectionId = config.voiceConnectionId || config.voiceApplicationId
   if (!connectionId) {
     return NextResponse.json(
       {
         error:
-          'Voice Application ID is not configured. Open Settings → SMS & Phone Number Integration and paste your Telnyx Voice API Application ID.',
+          'No SIP credentials configured. Either paste SIP Username + Password from a Telnyx Credentials-type SIP Connection (recommended), or paste the Voice Connection ID so the CRM can mint a JWT for you.',
       },
       { status: 422 },
     )

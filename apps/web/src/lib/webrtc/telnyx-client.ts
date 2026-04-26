@@ -18,12 +18,21 @@ import { TelnyxRTC } from '@telnyx/webrtc'
 
 type Listener<T = any> = (data: T) => void
 
-interface CredentialsResponse {
+interface CredentialsResponseJwt {
   provider: 'telnyx'
+  mode?: 'jwt'
   loginToken: string
   credentialId: string
   expiresAt: string | null
 }
+interface CredentialsResponseStatic {
+  provider: 'telnyx'
+  mode: 'static'
+  sipUsername: string
+  sipPassword: string
+  expiresAt: null
+}
+type CredentialsResponse = CredentialsResponseJwt | CredentialsResponseStatic
 
 export type TelnyxCallState =
   | 'new'
@@ -93,9 +102,20 @@ class TelnyxClientImpl {
   private async connect(): Promise<void> {
     const credentials = await this.fetchCredentials()
 
-    const client = new TelnyxRTC({
-      login_token: credentials.loginToken,
-    })
+    // Two registration modes for the SDK:
+    //   - static: pass the SIP username + password directly (operator
+    //             pasted them from a Telnyx Credentials-type SIP
+    //             Connection — no JWT mint round-trip).
+    //   - jwt:    pass login_token; the SDK exchanges it for a session.
+    const client =
+      credentials.mode === 'static'
+        ? new TelnyxRTC({
+            login: credentials.sipUsername,
+            password: credentials.sipPassword,
+          })
+        : new TelnyxRTC({
+            login_token: credentials.loginToken,
+          })
 
     // Wire all SDK events through our pub/sub so consumers don't import
     // the Telnyx SDK directly.
@@ -121,7 +141,8 @@ class TelnyxClientImpl {
 
     // Schedule a refresh ~1 minute before the JWT expires so we never
     // disconnect mid-call. The credentials endpoint always returns a new
-    // login_token; we tear down + reconnect transparently.
+    // login_token; we tear down + reconnect transparently. Static
+    // credentials don't expire so this is skipped.
     if (credentials.expiresAt) {
       const expiresMs = new Date(credentials.expiresAt).getTime()
       this.tokenExpiresAt = expiresMs

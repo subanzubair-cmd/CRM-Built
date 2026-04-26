@@ -20,6 +20,12 @@ export interface ActiveCommConfig {
   voiceApplicationId?: string
   /** UUID of the Credential / SIP Connection — used to mint WebRTC tokens. */
   voiceConnectionId?: string
+  /** Static SIP user from a Telnyx Credentials-type SIP Connection.
+   *  When set, the browser softphone registers using this + sipPassword
+   *  instead of asking the server to mint a JWT. */
+  sipUsername?: string
+  /** Static SIP password — decrypted on read, encrypted at rest. */
+  sipPassword?: string
   // Signal House
   apiToken?: string
   accountId?: string
@@ -73,6 +79,8 @@ export async function getActiveCommConfig(): Promise<ActiveCommConfig | null> {
         config.publicKey = cfg.publicKey
         config.voiceApplicationId = cfg.voiceApplicationId
         config.voiceConnectionId = cfg.voiceConnectionId
+        config.sipUsername = cfg.sipUsername
+        config.sipPassword = cfg.sipPassword ? decrypt(cfg.sipPassword) : undefined
       } else if (providerName === 'signalhouse') {
         config.apiToken = cfg.apiToken ? decrypt(cfg.apiToken) : undefined
         config.accountId = cfg.accountId
