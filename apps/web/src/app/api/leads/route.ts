@@ -22,7 +22,10 @@ import { pickAssigneeForNewLead } from '@/lib/lead-assignment'
 import { autoPopulateTeam } from '@/lib/team-assignment'
 
 const CreateLeadSchema = z.object({
-  streetAddress: z.string().min(1),
+  // Optional — inbound calls/SMS create leads before the address is
+  // known, and the agent fills it in later. Manual leads can also
+  // start with name+phone only and have the address backfilled.
+  streetAddress: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   zip: z.string().optional(),

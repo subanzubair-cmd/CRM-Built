@@ -156,6 +156,59 @@ export async function POST(req: NextRequest) {
   return done(200, `ignored — ${eventType}`, { eventType, fromPhone: extractFrom, toPhone: extractTo }, { ok: true, ignored: eventType })
 }
 
+/**
+ * Resolve { leadCampaignId, leadCampaignType } for a dialed/sent-to
+ * phone number. Tolerates whatever format TwilioNumber.number is
+ * stored in: +E.164, bare E.164, last-10, with/without parens. We
+ * try the most-specific format first then fall back through
+ * progressively more permissive variants.
+ *
+ * Without this, Telnyx's `+14694850786` failed to match a TwilioNumber
+ * row stored as `14694850786` (or vice versa) and the webhook silently
+ * dropped the campaign attribution → no lead got auto-created.
+ */
+async function resolveCampaignByPhone(
+  rawPhone: string | undefined,
+): Promise<{ leadCampaignId: string | null; leadCampaignType: string | null }> {
+  if (!rawPhone) return { leadCampaignId: null, leadCampaignType: null }
+
+  // Build candidate formats from most-specific to fallback.
+  const trimmed = rawPhone.trim()
+  const digits = trimmed.replace(/\D/g, '')
+  const last10 = digits.slice(-10)
+  const candidates = Array.from(
+    new Set(
+      [
+        trimmed,                // exact original e.g. +14694850786
+        digits,                 // 14694850786
+        last10,                 // 4694850786
+        `+${digits}`,           // +14694850786 (re-add + if input had no +)
+        `+1${last10}`,          // +14694850786 (US prefix re-added)
+        `1${last10}`,           // 14694850786
+      ].filter(Boolean),
+    ),
+  )
+
+  for (const candidate of candidates) {
+    const tn = await TwilioNumber.findOne({ where: { number: candidate }, attributes: ['id'] }) as any
+    if (!tn) continue
+    const lc = await LeadCampaign.findOne({
+      where: { phoneNumberId: tn.id },
+      attributes: ['id', 'type'],
+      raw: true,
+    }) as any
+    console.log(
+      `[webhook/telnyx] resolveCampaignByPhone: matched TwilioNumber ${tn.id} via "${candidate}" → leadCampaign=${lc?.id ?? '(none)'}`,
+    )
+    return { leadCampaignId: lc?.id ?? null, leadCampaignType: lc?.type ?? null }
+  }
+
+  console.warn(
+    `[webhook/telnyx] resolveCampaignByPhone: no TwilioNumber matched any of [${candidates.join(', ')}] for raw phone "${rawPhone}". Lead will be auto-created without campaign attribution.`,
+  )
+  return { leadCampaignId: null, leadCampaignType: null }
+}
+
 // ─── SMS events ────────────────────────────────────────────────────────
 
 async function handleSmsEvent(eventType: string, payload: any) {
@@ -178,24 +231,17 @@ async function handleSmsEvent(eventType: string, payload: any) {
     // or on multiple Properties (one Contact, many leads), and the
     // operator wants the inbound message to land on every one of them.
     const matches = await findAllLeadsForPhone(fromPhone)
+    console.log(
+      `[webhook/telnyx sms] inbound from=${fromPhone} to=${toPhone} → ${matches.length} existing lead match(es)`,
+    )
 
-    let leadCampaignId: string | null = null
-    let leadCampaignType: string | null = null
-    if (toPhone) {
-      const tn = await TwilioNumber.findOne({ where: { number: toPhone }, attributes: ['id'] })
-      if (tn) {
-        const lc = await LeadCampaign.findOne({
-          where: { phoneNumberId: tn.id },
-          attributes: ['id', 'type'],
-          raw: true,
-        }) as any
-        leadCampaignId = lc?.id ?? null
-        leadCampaignType = lc?.type ?? null
-      }
-    }
+    const { leadCampaignId, leadCampaignType } = await resolveCampaignByPhone(toPhone)
 
-    // Unknown sender + no existing lead → auto-create one under the
-    // receiving number's campaign so the message lands in the inbox.
+    // Unknown sender + a campaign owns the receiving number → create
+    // a lead under THAT campaign. If the receiving number isn't tied
+    // to any campaign, we don't auto-create (no campaign attribution
+    // = no pipeline placement); the message still gets logged
+    // unattributed below so it's not silently dropped.
     if (matches.length === 0 && leadCampaignId) {
       const created = await autoCreateInboundLead({
         fromPhone,
@@ -210,7 +256,14 @@ async function handleSmsEvent(eventType: string, payload: any) {
           raw: true,
         }) as any
         matches.push({ propertyId: created, contactId: pc?.contactId ?? null })
+        console.log(`[webhook/telnyx sms] auto-created lead ${created} for ${fromPhone} under campaign ${leadCampaignId}`)
+      } else {
+        console.error(`[webhook/telnyx sms] autoCreateInboundLead returned null for ${fromPhone}`)
       }
+    } else if (matches.length === 0 && !leadCampaignId) {
+      console.warn(
+        `[webhook/telnyx sms] no campaign owns dialed number ${toPhone} — skipping auto-create. Assign this number to a Lead Campaign to enable auto-lead creation.`,
+      )
     }
 
     // Fan out: write Message + Conversation + ActivityLog per matched
@@ -416,34 +469,22 @@ async function handleCallEvent(eventType: string, payload: any) {
   }
 
   try {
-    if (eventType === 'call.initiated' && direction === 'incoming' && fromPhone && toPhone) {
+    // Telnyx sends direction='incoming' on call.initiated; older docs
+    // sometimes show 'inbound'. Accept both so the webhook works
+    // regardless of Voice App configuration.
+    const isInbound = direction === 'incoming' || (direction as any) === 'inbound'
+    if (eventType === 'call.initiated' && isInbound && fromPhone && toPhone) {
       const existing = await ActiveCall.findOne({
         where: { conferenceName: callControlId },
       }).catch(() => null)
       if (!existing) {
         // 1) Resolve which CRM number was called → which campaign owns it.
-        let leadCampaignId: string | null = null
-        let leadCampaignType: string | null = null
-        const tn = await TwilioNumber.findOne({ where: { number: toPhone }, attributes: ['id'] }) as any
-        if (tn) {
-          const lc = await LeadCampaign.findOne({
-            where: { phoneNumberId: tn.id },
-            attributes: ['id', 'type'],
-            raw: true,
-          }) as any
-          leadCampaignId = lc?.id ?? null
-          leadCampaignType = lc?.type ?? null
-        }
+        const { leadCampaignId, leadCampaignType } = await resolveCampaignByPhone(toPhone)
 
         // 2) Look up the caller. If they're tied to ANY existing
         //    property — under any campaign — attribute the call there
-        //    (no duplicate lead). Otherwise auto-create a lead under
-        //    the dialed number's campaign so the agent has somewhere
-        //    to log notes and the call doesn't vanish.
-        //
-        //    "Any" property means we drop the `isPrimary` filter on
-        //    purpose: a caller who is the secondary contact on a
-        //    flip is still an existing lead, not a new one.
+        //    (no duplicate lead). Otherwise auto-create a lead so the
+        //    call doesn't vanish.
         const contactRow = await Contact.findOne({
           where: { [Op.or]: [{ phone: fromPhone }, { phone2: fromPhone }] },
           include: [
@@ -465,6 +506,14 @@ async function handleCallEvent(eventType: string, payload: any) {
         const existingContactId = cp?.id ?? null
         let propertyId = cp?.properties?.[0]?.property?.id ?? null
 
+        console.log(
+          `[webhook/telnyx call.initiated] from=${fromPhone} to=${toPhone} existingContact=${existingContactId ?? '(none)'} attachedProperty=${propertyId ?? '(none)'} campaign=${leadCampaignId ?? '(none)'}`,
+        )
+
+        // Auto-create only when the dialed number is owned by a Lead
+        // Campaign — that's the campaign the new lead lands under.
+        // Without a campaign, we let the call still ring (popup polls
+        // ActiveCall directly) but skip lead creation.
         if (!propertyId && leadCampaignId) {
           propertyId = await autoCreateInboundLead({
             fromPhone,
@@ -472,6 +521,13 @@ async function handleCallEvent(eventType: string, payload: any) {
             leadCampaignType,
             existingContactId,
           })
+          console.log(
+            `[webhook/telnyx call.initiated] auto-created lead ${propertyId ?? '(failed)'} for ${fromPhone} under campaign ${leadCampaignId}`,
+          )
+        } else if (!propertyId) {
+          console.warn(
+            `[webhook/telnyx call.initiated] no campaign owns dialed number ${toPhone} — skipping auto-create. Assign this number to a Lead Campaign to enable auto-lead creation.`,
+          )
         }
 
         await ActiveCall.create({
@@ -483,23 +539,14 @@ async function handleCallEvent(eventType: string, payload: any) {
           ...(leadCampaignId ? { leadCampaignId } : {}),
         } as any)
 
-        // 3) Tell Telnyx to ANSWER the call so the customer hears
-        //    silence/hold instead of the call timing out at ~30s. The
-        //    agent then picks up via the InboundCallNotification popup.
-        const config = await getActiveCommConfig()
-        if (config?.providerName === 'telnyx' && config.apiKey) {
-          void fetch(
-            `https://api.telnyx.com/v2/calls/${encodeURIComponent(callControlId)}/actions/answer`,
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({}),
-            },
-          ).catch((err) => console.warn('[webhook/telnyx] answer command failed:', err))
-        }
+        // NOTE: previously we issued a Telnyx /actions/answer command
+        // here to prevent the call from timing out. That auto-answered
+        // within ~1s, flipping the ActiveCall from RINGING → ACTIVE
+        // before the polling popup (3s interval) could surface it.
+        // Removed — the call now stays RINGING until either the agent
+        // clicks Answer in the popup or Telnyx times out the call
+        // (~30s default). Once we wire up SIP-routed browser ringing
+        // via WebRTC TelephonyCredentials this becomes a non-issue.
       }
       return NextResponse.json({ ok: true })
     }
@@ -636,7 +683,7 @@ async function handleCallEvent(eventType: string, payload: any) {
  */
 async function autoCreateInboundLead(args: {
   fromPhone: string
-  leadCampaignId: string
+  leadCampaignId: string | null
   leadCampaignType: string | null
   existingContactId: string | null
 }): Promise<string | null> {
@@ -655,7 +702,9 @@ async function autoCreateInboundLead(args: {
           propertyStatus: 'LEAD',
           activeLeadStage: 'NEW_LEAD',
           source: 'Inbound Call',
-          leadCampaignId,
+          // Skip the FK when null so Sequelize doesn't try to insert null
+          // into a NOT NULL column on schemas that require it.
+          ...(leadCampaignId ? { leadCampaignId } : {}),
         } as any,
         { transaction: tx },
       )

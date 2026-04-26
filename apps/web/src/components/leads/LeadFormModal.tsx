@@ -107,7 +107,8 @@ export function LeadFormModal({ open, onClose, fixedLeadType, variant = 'standar
     e.preventDefault()
     setError(null)
 
-    if (!streetAddress.trim()) { setError('Street address is required'); return }
+    // Street address is now optional — inbound calls/SMS create leads
+    // before the address is known, and the agent fills it in later.
     if (!contactFirstName.trim()) { setError('Contact first name is required'); return }
     if (!contactPhone.trim()) { setError('Contact phone number is required'); return }
 
@@ -117,7 +118,7 @@ export function LeadFormModal({ open, onClose, fixedLeadType, variant = 'standar
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          streetAddress: streetAddress.trim(),
+          streetAddress: streetAddress.trim() || undefined,
           city: city.trim() || undefined,
           state: state.trim() || undefined,
           zip: zip.trim() || undefined,
@@ -179,8 +180,8 @@ export function LeadFormModal({ open, onClose, fixedLeadType, variant = 'standar
           <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Property</p>
 
           <div>
-            <label className="text-[11px] text-gray-500">Street Address *</label>
-            <input value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} placeholder="123 Main St" className={inputCls} autoFocus />
+            <label className="text-[11px] text-gray-500">Street Address</label>
+            <input value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} placeholder="123 Main St (optional)" className={inputCls} autoFocus />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div>
