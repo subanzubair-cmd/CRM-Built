@@ -456,12 +456,16 @@ function TelnyxInboundDiagnostic({ webhookUrl }: { webhookUrl: string }) {
 
       {result?.checks && (
         <ul className="space-y-2">
-          {(['appExists', 'webhookMatch', 'numbersAssigned'] as const).map((key) => {
-            const c = result.checks[key] as { ok: boolean; message: string; numbers?: any[] }
+          {(['appExists', 'webhookMatch', 'numbersAssigned', 'messagingProfile', 'reachability', 'signatureKey'] as const).map((key) => {
+            const c = result.checks[key] as { ok: boolean; message: string; numbers?: any[] } | undefined
+            if (!c) return null
             const labels: Record<string, string> = {
               appExists: 'Voice Application',
-              webhookMatch: 'Webhook URL',
+              webhookMatch: 'Voice Webhook URL',
               numbersAssigned: 'Phone Number Assignment',
+              messagingProfile: 'Messaging Profile (SMS)',
+              reachability: 'Webhook URL Reachability',
+              signatureKey: 'Signature Verification',
             }
             return (
               <li

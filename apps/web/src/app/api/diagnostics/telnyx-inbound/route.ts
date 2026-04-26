@@ -119,6 +119,123 @@ export async function GET(req: NextRequest) {
   const assignedCount = numbersChecked.filter((n) => n.assigned).length
   const totalCount = numbersChecked.length
 
+  // 4) Messaging Profile — SMS goes through here, NOT the Voice App.
+  //    A misconfigured Messaging Profile is the most common reason
+  //    voice works but SMS doesn't.
+  const messagingProfileId = config.messagingProfileId
+  let mpCheck: { ok: boolean; message: string; actual?: string | null; profileName?: string } = {
+    ok: false,
+    message: 'Messaging Profile ID is not configured. Paste it in Settings → Messaging Profile ID.',
+  }
+  if (messagingProfileId) {
+    try {
+      const mpRes = await fetch(
+        `https://api.telnyx.com/v2/messaging_profiles/${encodeURIComponent(messagingProfileId)}`,
+        { headers: { Authorization: `Bearer ${config.apiKey}` } },
+      )
+      if (mpRes.ok) {
+        const mpJson = (await mpRes.json().catch(() => null)) as any
+        const mp = mpJson?.data
+        // The inbound SMS webhook URL on a Messaging Profile is
+        // exposed as `webhook_url` (or sometimes nested under
+        // `webhook_failover_url` / `webhook_api_version`).
+        const mpWebhook = (mp?.webhook_url ?? '').trim()
+        const mpMatches =
+          expectedWebhook && mpWebhook
+            ? mpWebhook.replace(/\/$/, '') === expectedWebhook.replace(/\/$/, '')
+            : null
+        if (!mpWebhook) {
+          mpCheck = {
+            ok: false,
+            actual: null,
+            profileName: mp?.name,
+            message: `Messaging Profile "${mp?.name ?? messagingProfileId}" has no webhook URL set. Open Telnyx → Messaging → Messaging Profiles → ${mp?.name ?? 'your profile'} → Inbound Webhook URL, paste the URL below, then Save.`,
+          }
+        } else if (mpMatches === false) {
+          mpCheck = {
+            ok: false,
+            actual: mpWebhook,
+            profileName: mp?.name,
+            message: `Messaging Profile webhook is "${mpWebhook}", but the CRM expects "${expectedWebhook}". Update it in Telnyx Mission Control.`,
+          }
+        } else {
+          mpCheck = {
+            ok: true,
+            actual: mpWebhook,
+            profileName: mp?.name,
+            message: `Messaging Profile "${mp?.name ?? messagingProfileId}" webhook URL matches.`,
+          }
+        }
+      } else {
+        mpCheck = {
+          ok: false,
+          message: `Messaging Profile ${messagingProfileId} not found in your Telnyx account (HTTP ${mpRes.status}). Re-copy the ID from Mission Control → Messaging → Messaging Profiles.`,
+        }
+      }
+    } catch (err) {
+      mpCheck = {
+        ok: false,
+        message: err instanceof Error ? err.message : 'Failed to look up Messaging Profile.',
+      }
+    }
+  }
+
+  // 5) External reachability — hit the public webhook URL ourselves,
+  //    posting a tiny JSON body (no signature). The handler will reject
+  //    with 401 if signature verification is enforced — that's actually
+  //    GOOD because it confirms the URL is reachable AND the route is
+  //    live. A network error means Telnyx wouldn't reach us either.
+  let reachCheck: { ok: boolean; status: number | null; message: string } = {
+    ok: false,
+    status: null,
+    message: 'Skipped — no expected webhook URL provided.',
+  }
+  if (expectedWebhook) {
+    try {
+      const probeRes = await fetch(expectedWebhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ probe: 'diagnostic', ts: Date.now() }),
+        // Short timeout so a slow tunnel doesn't hang the diagnostic.
+        signal: AbortSignal.timeout(8_000),
+      })
+      const status = probeRes.status
+      // 401/403 = webhook URL is reachable + signature check is gating
+      //          (expected behavior when Public Key is set)
+      // 200    = webhook URL is reachable + handler accepted (Public
+      //          Key not set, or the body had no event_type so was
+      //          ignored — also fine)
+      // 4xx other = handler rejected the body shape (unusual but ok)
+      // 5xx    = handler crashed
+      // network error = URL not reachable from the public internet
+      const reachable = status > 0
+      const rejectedBySig = status === 401 || status === 403
+      reachCheck = {
+        ok: reachable,
+        status,
+        message: !reachable
+          ? `Could not reach ${expectedWebhook}. Check that ngrok is running and the URL still resolves.`
+          : rejectedBySig
+            ? `Reachable (HTTP ${status}) — signature verification rejected the probe, which is expected. The route is live and Telnyx's signed webhooks will pass.`
+            : status >= 500
+              ? `Reachable but the handler returned HTTP ${status}. Check the dev server console for stack traces.`
+              : `Reachable (HTTP ${status}). Handler accepted the probe.`,
+      }
+    } catch (err: any) {
+      const msg = err?.name === 'AbortError'
+        ? `Timed out reaching ${expectedWebhook} (>8s). The tunnel may be unreachable from this server.`
+        : err?.message ?? 'Network error reaching the webhook URL.'
+      reachCheck = { ok: false, status: null, message: msg }
+    }
+  }
+
+  // 6) Signature key configured? If Public Key is missing, signed
+  //    webhooks will pass (we skip verification in dev), but the
+  //    operator should set it before going to production.
+  const sigCheck = config.publicKey
+    ? { ok: true, message: 'Public Key is set — inbound webhooks will be ed25519-verified.' }
+    : { ok: true, message: 'Public Key is not set — webhooks will be accepted without verification (dev mode).' }
+
   const checks = {
     appExists: {
       ok: true,
@@ -156,9 +273,17 @@ export async function GET(req: NextRequest) {
               message: `${assignedCount} of ${totalCount} number${totalCount === 1 ? '' : 's'} assigned to this Voice Application.`,
               numbers: numbersChecked,
             },
+    messagingProfile: mpCheck,
+    reachability: reachCheck,
+    signatureKey: sigCheck,
   }
 
-  const ok = checks.appExists.ok && checks.webhookMatch.ok && checks.numbersAssigned.ok
+  const ok =
+    checks.appExists.ok &&
+    checks.webhookMatch.ok &&
+    checks.numbersAssigned.ok &&
+    checks.messagingProfile.ok &&
+    checks.reachability.ok
 
   return NextResponse.json({
     ok,
