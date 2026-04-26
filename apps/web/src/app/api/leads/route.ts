@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  PropertyContact,
+  Contact,
+  StageHistory,
+  ActivityLog,
+  LeadCampaign,
+  TwilioNumber,
+  LeadSource,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 import { normalizeAddress } from '@crm/shared'
 import { enqueueAutomation } from '@/lib/queue'
@@ -54,145 +65,130 @@ export async function POST(req: NextRequest) {
     propertyData.zip ?? null,
   )
 
-  // Duplicate detection — warn (not block) if an existing property has the same normalized address
-  let duplicateWarning: {
-    existingId: string
-    existingAddress: string
-    existingStatus: string
-    message: string
-  } | null = null
-
   if (!skipDuplicateCheck) {
-    const duplicate = await prisma.property.findFirst({
+    const duplicate = await Property.findOne({
       where: { normalizedAddress: normalized },
-      select: { id: true, propertyStatus: true, streetAddress: true },
+      attributes: ['id', 'propertyStatus', 'streetAddress'],
+      raw: true,
     })
     if (duplicate) {
-      // Block creation — return duplicate info so frontend can offer to view existing
       return NextResponse.json({
         success: false,
         duplicateWarning: {
-          existingId: duplicate.id,
-          existingAddress: duplicate.streetAddress ?? '',
-          existingStatus: duplicate.propertyStatus ?? 'ACTIVE',
+          existingId: (duplicate as any).id,
+          existingAddress: (duplicate as any).streetAddress ?? '',
+          existingStatus: (duplicate as any).propertyStatus ?? 'ACTIVE',
           message: 'A lead with this address already exists',
         },
       }, { status: 409 })
     }
   }
 
-  // If a Lead Campaign is referenced: validate type match, pull phone number,
-  // and derive source. Per user clarification: campaign number →
-  // property.defaultOutboundNumber at creation; user-set values stay on top later.
   let initialOutboundNumber: string | null = null
   let derivedSource: string | null | undefined = propertyData.source
   if (propertyData.leadCampaignId) {
-    const lc = await prisma.leadCampaign.findUnique({
-      where: { id: propertyData.leadCampaignId },
-      include: { phoneNumber: true, leadSource: true },
+    const lc = await LeadCampaign.findByPk(propertyData.leadCampaignId, {
+      include: [
+        { model: TwilioNumber, as: 'phoneNumber' },
+        { model: LeadSource, as: 'leadSource' },
+      ],
     })
     if (!lc) {
       return NextResponse.json({ error: 'Lead campaign not found' }, { status: 422 })
     }
+    const lcPlain = lc.get({ plain: true }) as any
     const expectedType = propertyData.leadType === 'DIRECT_TO_SELLER' ? 'DTS' : 'DTA'
-    if (lc.type && lc.type !== expectedType) {
+    if (lcPlain.type && lcPlain.type !== expectedType) {
       return NextResponse.json(
-        { error: `Campaign type ${lc.type} does not match lead type ${propertyData.leadType}` },
+        { error: `Campaign type ${lcPlain.type} does not match lead type ${propertyData.leadType}` },
         { status: 422 },
       )
     }
-    initialOutboundNumber = lc.phoneNumber?.number ?? null
-    if (!derivedSource && lc.leadSource?.name) derivedSource = lc.leadSource.name
+    initialOutboundNumber = lcPlain.phoneNumber?.number ?? null
+    if (!derivedSource && lcPlain.leadSource?.name) derivedSource = lcPlain.leadSource.name
   }
 
-  // User-supplied defaultOutboundNumber overrides the campaign-derived value.
   const finalOutboundNumber =
     propertyData.defaultOutboundNumber && propertyData.defaultOutboundNumber.trim()
       ? propertyData.defaultOutboundNumber.trim()
       : initialOutboundNumber
 
   try {
-    const property = await prisma.property.create({
-      data: {
+    const updatedProperty = await sequelize.transaction(async (tx) => {
+      const property = await Property.create({
         ...propertyData,
         source: derivedSource ?? null,
         ...(finalOutboundNumber ? { defaultOutboundNumber: finalOutboundNumber } : {}),
         normalizedAddress: normalized,
         createdById: userId,
         activeLeadStage: 'NEW_LEAD',
-        stageHistory: {
-          create: {
-            pipeline: 'leads',
-            toStage: 'NEW_LEAD',
-            changedById: userId,
-            changedByName: userName,
-          },
-        },
-        activityLogs: {
-          create: {
-            userId: userId,
-            action: 'LEAD_CREATED',
-            detail: { description: `Lead created from ${propertyData.source ?? 'manual entry'}` },
-          },
-        },
-        contacts: {
-          create: {
-            isPrimary: true,
-            contact: {
-              create: {
-                type: propertyData.leadType === 'DIRECT_TO_SELLER' ? 'SELLER' : 'AGENT',
-                firstName: contactFirstName,
-                lastName: contactLastName ?? '',
-                phone: contactPhone ?? null,
-                email: contactEmail ?? null,
-              },
-            },
-          },
-        },
-      },
+      } as any, { transaction: tx })
+
+      await StageHistory.create({
+        propertyId: property.id,
+        pipeline: 'leads',
+        toStage: 'NEW_LEAD',
+        changedById: userId,
+        changedByName: userName,
+      } as any, { transaction: tx })
+
+      await ActivityLog.create({
+        propertyId: property.id,
+        userId,
+        action: 'LEAD_CREATED',
+        detail: { description: `Lead created from ${propertyData.source ?? 'manual entry'}` },
+      } as any, { transaction: tx })
+
+      const contact = await Contact.create({
+        type: propertyData.leadType === 'DIRECT_TO_SELLER' ? 'SELLER' : 'AGENT',
+        firstName: contactFirstName,
+        lastName: contactLastName ?? '',
+        phone: contactPhone ?? null,
+        email: contactEmail ?? null,
+      } as any, { transaction: tx })
+
+      await PropertyContact.create({
+        propertyId: property.id,
+        contactId: contact.id,
+        isPrimary: true,
+      } as any, { transaction: tx })
+
+      const now = new Date()
+      const yyyy = now.getFullYear()
+      const mm = String(now.getMonth() + 1).padStart(2, '0')
+      const startOfMonth = new Date(yyyy, now.getMonth(), 1)
+      const countThisMonth = await Property.count({
+        where: { createdAt: { [Op.gte]: startOfMonth } },
+        transaction: tx,
+      })
+      const leadNumber = `HP-${yyyy}${mm}-${String(countThisMonth).padStart(4, '0')}`
+      await property.update({ leadNumber }, { transaction: tx })
+      return property
     })
 
-    // Generate lead number: HP-{YYYYMM}-{seq}
-    const now = new Date()
-    const yyyy = now.getFullYear()
-    const mm = String(now.getMonth() + 1).padStart(2, '0')
-    const startOfMonth = new Date(yyyy, now.getMonth(), 1)
-    const countThisMonth = await prisma.property.count({
-      where: { createdAt: { gte: startOfMonth } },
-    })
-    const leadNumber = `HP-${yyyy}${mm}-${String(countThisMonth).padStart(4, '0')}`
-    const updatedProperty = await prisma.property.update({
-      where: { id: property.id },
-      data: { leadNumber },
-    })
-
-    // Fire-and-forget: automation + domain event (don't block response)
-    enqueueAutomation({ trigger: 'LEAD_CREATED', propertyId: property.id })
+    enqueueAutomation({ trigger: 'LEAD_CREATED', propertyId: updatedProperty.id })
     void emitEvent({
       type: DomainEvents.LEAD_CREATED,
-      propertyId: property.id,
+      propertyId: updatedProperty.id,
       userId,
       actorType: 'user',
-      payload: { source: propertyData.source ?? 'manual', leadNumber },
+      payload: { source: propertyData.source ?? 'manual', leadNumber: (updatedProperty as any).leadNumber },
     })
 
-    // Fire-and-forget: round-robin primary assignment if not already assigned
     if (!propertyData.assignedToId && propertyData.leadCampaignId) {
       void (async () => {
         const assigneeId = await pickAssigneeForNewLead(propertyData.leadCampaignId!)
         if (assigneeId) {
-          await prisma.property.update({
-            where: { id: property.id },
-            data: { assignedToId: assigneeId },
-          }).catch((e) => console.error('[leads] auto-assign failed:', e))
+          await Property.update(
+            { assignedToId: assigneeId },
+            { where: { id: updatedProperty.id } },
+          ).catch((e) => console.error('[leads] auto-assign failed:', e))
         }
       })()
     }
 
-    // Fire-and-forget: auto-populate PropertyTeamAssignment for every
-    // enabled role on the campaign with at least one eligible user
     if (propertyData.leadCampaignId) {
-      void autoPopulateTeam(property.id, propertyData.leadCampaignId, userId)
+      void autoPopulateTeam(updatedProperty.id, propertyData.leadCampaignId, userId)
     }
 
     return NextResponse.json(

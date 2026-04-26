@@ -1,21 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  LeadCampaign,
+  LeadCampaignRoleToggle,
+  PropertyTeamAssignment,
+  Role,
+  User,
+} from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 
 type Params = { params: Promise<{ id: string }> }
 
-/**
- * GET /api/leads/[id]/change-campaign-preview?newCampaignId=X
- *
- * Returns the data needed by the Change Campaign modal:
- *   - currentCampaign: {id, name, type} — the lead's current leadCampaign
- *   - newCampaign: {id, name, type}     — the campaign the admin wants to switch to
- *   - currentTeam: [{roleId, roleName, userId, userName}]
- *       → who holds each role on this lead via PropertyTeamAssignment today
- *   - newCampaignRoles: [{roleId, roleName}]
- *       → every role enabled on the NEW campaign (the dropdown options)
- */
 export async function GET(req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'leads.edit')
@@ -27,51 +23,54 @@ export async function GET(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'newCampaignId required' }, { status: 422 })
   }
 
-  const [property, newCampaign] = await Promise.all([
-    prisma.property.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        leadCampaignId: true,
-        leadCampaign: { select: { id: true, name: true, type: true } },
-        teamAssignments: {
-          select: {
-            roleId: true,
-            userId: true,
-            role: { select: { name: true } },
-            user: { select: { name: true, email: true } },
-          },
+  const [propertyRow, newCampaignRow] = await Promise.all([
+    Property.findByPk(id, {
+      attributes: ['id', 'leadCampaignId'],
+      include: [
+        { model: LeadCampaign, as: 'leadCampaign', attributes: ['id', 'name', 'type'], required: false },
+        {
+          model: PropertyTeamAssignment,
+          as: 'teamAssignments',
+          attributes: ['roleId', 'userId'],
+          include: [
+            { model: Role, as: 'role', attributes: ['name'] },
+            { model: User, as: 'user', attributes: ['name', 'email'] },
+          ],
         },
-      },
+      ],
     }),
-    prisma.leadCampaign.findUnique({
-      where: { id: newCampaignId },
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        roleToggles: {
+    LeadCampaign.findByPk(newCampaignId, {
+      attributes: ['id', 'name', 'type'],
+      include: [
+        {
+          model: LeadCampaignRoleToggle,
+          as: 'roleToggles',
           where: { enabled: true },
-          select: { roleId: true, role: { select: { name: true } } },
+          required: false,
+          attributes: ['roleId'],
+          include: [{ model: Role, as: 'role', attributes: ['name'] }],
         },
-      },
+      ],
     }),
   ])
 
-  if (!property) return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-  if (!newCampaign) return NextResponse.json({ error: 'Target campaign not found' }, { status: 404 })
+  if (!propertyRow) return NextResponse.json({ error: 'Property not found' }, { status: 404 })
+  if (!newCampaignRow) return NextResponse.json({ error: 'Target campaign not found' }, { status: 404 })
 
-  const currentTeam = property.teamAssignments.map((a) => ({
+  const property = propertyRow.get({ plain: true }) as any
+  const newCampaign = newCampaignRow.get({ plain: true }) as any
+
+  const currentTeam = (property.teamAssignments ?? []).map((a: any) => ({
     roleId: a.roleId,
-    roleName: a.role.name,
+    roleName: a.role?.name ?? '',
     userId: a.userId,
     userName: a.user?.name ?? 'Unassigned',
     userEmail: a.user?.email ?? '',
   }))
 
-  const newCampaignRoles = newCampaign.roleToggles.map((t) => ({
+  const newCampaignRoles = (newCampaign.roleToggles ?? []).map((t: any) => ({
     roleId: t.roleId,
-    roleName: t.role.name,
+    roleName: t.role?.name ?? '',
   }))
 
   return NextResponse.json({

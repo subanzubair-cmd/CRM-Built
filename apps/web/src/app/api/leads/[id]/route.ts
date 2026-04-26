@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
 import {
   Property,
   ActivityLog,
   StageHistory,
+  Note,
+  Task,
+  Message,
+  PropertyContact,
+  PropertyFile,
+  BuyerMatch,
+  BuyerOffer,
+  CampaignEnrollment,
+  Conversation,
+  EsignDocument,
+  LeadCampaign,
   sequelize,
 } from '@crm/database'
 import { z } from 'zod'
@@ -76,25 +86,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const property = await prisma.property.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      contractPrice: true,
-      offerPrice: true,
-      askingPrice: true,
-      expectedProfit: true,
-      exitStrategy: true,
-      propertyStatus: true,
-      // Under-Contract modal fields (pre-fill when re-opening)
-      offerType: true,
-      offerDate: true,
-      expectedProfitDate: true,
-      contractDate: true,
-      scheduledClosingDate: true,
-      contingencies: true,
-    },
-  })
+  const property = await Property.findByPk(id, {
+    attributes: [
+      'id', 'contractPrice', 'offerPrice', 'askingPrice', 'expectedProfit',
+      'exitStrategy', 'propertyStatus', 'offerType', 'offerDate',
+      'expectedProfitDate', 'contractDate', 'scheduledClosingDate', 'contingencies',
+    ],
+    raw: true,
+  }) as any
   if (!property) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   return NextResponse.json({
@@ -104,10 +103,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
       offerPrice: property.offerPrice ? Number(property.offerPrice) : null,
       askingPrice: property.askingPrice ? Number(property.askingPrice) : null,
       expectedProfit: property.expectedProfit ? Number(property.expectedProfit) : null,
-      offerDate: property.offerDate ? property.offerDate.toISOString() : null,
-      expectedProfitDate: property.expectedProfitDate ? property.expectedProfitDate.toISOString() : null,
-      contractDate: property.contractDate ? property.contractDate.toISOString() : null,
-      scheduledClosingDate: property.scheduledClosingDate ? property.scheduledClosingDate.toISOString() : null,
+      offerDate: property.offerDate ? new Date(property.offerDate).toISOString() : null,
+      expectedProfitDate: property.expectedProfitDate ? new Date(property.expectedProfitDate).toISOString() : null,
+      contractDate: property.contractDate ? new Date(property.contractDate).toISOString() : null,
+      scheduledClosingDate: property.scheduledClosingDate ? new Date(property.scheduledClosingDate).toISOString() : null,
     },
   })
 }
@@ -127,23 +126,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateLeadSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const existing = await prisma.property.findUnique({
-    where: { id },
-    select: {
-      activeLeadStage: true,
-      leadStatus: true,
-      propertyStatus: true,
-      tmStage: true,
-      inventoryStage: true,
-      tags: true,
-      leadType: true,
-      leadCampaignId: true,
-      inDispo: true,
-      rentalAt: true,
-      deadAt: true,
-      exitStrategy: true,
-    },
-  })
+  const existing = await Property.findByPk(id, {
+    attributes: [
+      'activeLeadStage', 'leadStatus', 'propertyStatus', 'tmStage', 'inventoryStage',
+      'tags', 'leadType', 'leadCampaignId', 'inDispo', 'rentalAt', 'deadAt',
+      'exitStrategy',
+    ],
+    raw: true,
+  }) as any
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const data = parsed.data
@@ -178,10 +168,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   // the effective leadType after this update
   if (data.leadCampaignId) {
     const effectiveLeadType = data.leadType ?? existing.leadType
-    const lc = await prisma.leadCampaign.findUnique({
-      where: { id: data.leadCampaignId },
-      select: { type: true },
-    })
+    const lc = await LeadCampaign.findByPk(data.leadCampaignId, {
+      attributes: ['type'],
+      raw: true,
+    }) as any
     if (!lc) {
       return NextResponse.json({ error: 'Lead campaign not found' }, { status: 422 })
     }
@@ -283,8 +273,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     activityEntries.push({ action: 'STAGE_CHANGE', detail: `Inventory stage changed to ${data.inventoryStage}` })
   }
   if (data.tags !== undefined && existing) {
-    const added = data.tags.filter((t) => !existing.tags.includes(t))
-    const removed = existing.tags.filter((t) => !data.tags!.includes(t))
+    const added = data.tags.filter((t: string) => !(existing.tags as string[]).includes(t))
+    const removed = (existing.tags as string[]).filter((t: string) => !data.tags!.includes(t))
     if (added.length > 0) {
       activityEntries.push({ action: 'TAG_ADDED', detail: `Tags added: ${added.join(', ')}` })
     }
@@ -471,7 +461,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     void emitEvent({ type: DomainEvents.LEAD_UNDER_CONTRACT, propertyId: id, userId, actorType: 'user', payload: { exitStrategy: data.exitStrategy } })
   }
   if (data.tags !== undefined) {
-    const addedTags = data.tags.filter((t) => !existing.tags.includes(t))
+    const addedTags = data.tags.filter((t: string) => !(existing.tags as string[]).includes(t))
     if (addedTags.length > 0) {
       void emitEvent({ type: DomainEvents.TAG_ADDED, propertyId: id, userId, actorType: 'user', payload: { tags: addedTags } })
     }
@@ -506,7 +496,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
   // Tag-added trigger (already has domain event above — add automation enqueue)
   if (data.tags !== undefined) {
-    const addedTags = data.tags.filter((t) => !existing.tags.includes(t))
+    const addedTags = data.tags.filter((t: string) => !(existing.tags as string[]).includes(t))
     if (addedTags.length > 0) {
       void enqueueAutomation({ trigger: 'TAG_ADDED', propertyId: id, meta: { tags: addedTags } })
     }
@@ -587,22 +577,21 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  // Hard delete — permanently remove from database
-  await prisma.$transaction([
-    prisma.activityLog.deleteMany({ where: { propertyId: id } }),
-    prisma.stageHistory.deleteMany({ where: { propertyId: id } }),
-    prisma.note.deleteMany({ where: { propertyId: id } }),
-    prisma.task.deleteMany({ where: { propertyId: id } }),
-    prisma.message.deleteMany({ where: { propertyId: id } }),
-    prisma.propertyContact.deleteMany({ where: { propertyId: id } }),
-    prisma.propertyFile.deleteMany({ where: { propertyId: id } }),
-    prisma.buyerMatch.deleteMany({ where: { propertyId: id } }),
-    prisma.buyerOffer.deleteMany({ where: { propertyId: id } }),
-    prisma.campaignEnrollment.deleteMany({ where: { propertyId: id } }),
-    prisma.conversation.deleteMany({ where: { propertyId: id } }),
-    prisma.esignDocument.deleteMany({ where: { propertyId: id } }),
-    prisma.property.delete({ where: { id } }),
-  ])
+  await sequelize.transaction(async (tx) => {
+    await ActivityLog.destroy({ where: { propertyId: id }, transaction: tx })
+    await StageHistory.destroy({ where: { propertyId: id }, transaction: tx })
+    await Note.destroy({ where: { propertyId: id }, transaction: tx })
+    await Task.destroy({ where: { propertyId: id }, transaction: tx })
+    await Message.destroy({ where: { propertyId: id }, transaction: tx })
+    await PropertyContact.destroy({ where: { propertyId: id }, transaction: tx })
+    await PropertyFile.destroy({ where: { propertyId: id }, transaction: tx })
+    await BuyerMatch.destroy({ where: { propertyId: id }, transaction: tx })
+    await BuyerOffer.destroy({ where: { propertyId: id }, transaction: tx })
+    await CampaignEnrollment.destroy({ where: { propertyId: id }, transaction: tx })
+    await Conversation.destroy({ where: { propertyId: id }, transaction: tx })
+    await EsignDocument.destroy({ where: { propertyId: id }, transaction: tx })
+    await Property.destroy({ where: { id }, transaction: tx })
+  })
 
   return NextResponse.json({ success: true })
 }

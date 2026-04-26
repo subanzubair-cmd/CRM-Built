@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  ActivityLog,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 import { checkRateLimit } from '@/lib/rate-limit'
 
@@ -35,54 +40,51 @@ export async function PATCH(req: NextRequest) {
   const { ids, action, tags, assignedToId } = parsed.data
 
   if (action === 'addTags' && tags && tags.length > 0) {
-    const properties = await prisma.property.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, tags: true },
+    const properties = await Property.findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: ['id', 'tags'],
+      raw: true,
+    }) as unknown as Array<{ id: string; tags: string[] | null }>
+
+    await sequelize.transaction(async (tx) => {
+      for (const p of properties) {
+        const merged = Array.from(new Set([...(p.tags ?? []), ...tags]))
+        await Property.update({ tags: merged }, { where: { id: p.id }, transaction: tx })
+        await ActivityLog.create({
+          propertyId: p.id,
+          userId,
+          action: 'TAG_ADDED',
+          detail: { description: `Bulk added tags: ${tags.join(', ')}` },
+        } as any, { transaction: tx })
+      }
     })
-    await Promise.all(
-      properties.map((p) => {
-        const merged = [...new Set([...p.tags, ...tags])]
-        return prisma.property.update({
-          where: { id: p.id },
-          data: {
-            tags: merged,
-            activityLogs: {
-              create: { userId, action: 'TAG_ADDED', detail: { description: `Bulk added tags: ${tags.join(', ')}` } },
-            },
-          },
-        })
-      })
-    )
     return NextResponse.json({ success: true, updated: properties.length })
   }
 
   if (action === 'removeTags' && tags && tags.length > 0) {
-    const properties = await prisma.property.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, tags: true },
+    const properties = await Property.findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: ['id', 'tags'],
+      raw: true,
+    }) as unknown as Array<{ id: string; tags: string[] | null }>
+
+    await sequelize.transaction(async (tx) => {
+      for (const p of properties) {
+        const filtered = (p.tags ?? []).filter((t) => !tags.includes(t))
+        await Property.update({ tags: filtered }, { where: { id: p.id }, transaction: tx })
+        await ActivityLog.create({
+          propertyId: p.id,
+          userId,
+          action: 'TAG_REMOVED',
+          detail: { description: `Bulk removed tags: ${tags.join(', ')}` },
+        } as any, { transaction: tx })
+      }
     })
-    await Promise.all(
-      properties.map((p) => {
-        const filtered = p.tags.filter((t) => !tags.includes(t))
-        return prisma.property.update({
-          where: { id: p.id },
-          data: {
-            tags: filtered,
-            activityLogs: {
-              create: { userId, action: 'TAG_REMOVED', detail: { description: `Bulk removed tags: ${tags.join(', ')}` } },
-            },
-          },
-        })
-      })
-    )
     return NextResponse.json({ success: true, updated: properties.length })
   }
 
   if (action === 'assign' && assignedToId) {
-    await prisma.property.updateMany({
-      where: { id: { in: ids } },
-      data: { assignedToId },
-    })
+    await Property.update({ assignedToId }, { where: { id: { [Op.in]: ids } } })
     return NextResponse.json({ success: true, updated: ids.length })
   }
 
@@ -107,19 +109,18 @@ export async function DELETE(req: NextRequest) {
 
   const { ids } = parsed.data
 
-  await Promise.all(
-    ids.map((id) =>
-      prisma.property.update({
-        where: { id },
-        data: {
-          leadStatus: 'DEAD',
-          activityLogs: {
-            create: { userId, action: 'LEAD_DELETED', detail: { description: 'Bulk deleted (moved to Dead)' } },
-          },
-        },
-      })
+  await sequelize.transaction(async (tx) => {
+    await Property.update({ leadStatus: 'DEAD' }, { where: { id: { [Op.in]: ids } }, transaction: tx })
+    await ActivityLog.bulkCreate(
+      ids.map((id) => ({
+        propertyId: id,
+        userId,
+        action: 'LEAD_DELETED',
+        detail: { description: 'Bulk deleted (moved to Dead)' },
+      })) as any[],
+      { transaction: tx },
     )
-  )
+  })
 
   return NextResponse.json({ success: true, deleted: ids.length })
 }

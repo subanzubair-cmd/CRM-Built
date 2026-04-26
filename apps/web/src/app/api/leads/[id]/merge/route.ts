@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  PropertyContact,
+  Note,
+  Task,
+  Message,
+  ActivityLog,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 
 const MergeSchema = z.object({
@@ -30,80 +39,67 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   const [source, target] = await Promise.all([
-    prisma.property.findUnique({ where: { id: sourceId }, select: { id: true, streetAddress: true } }),
-    prisma.property.findUnique({ where: { id: targetId }, select: { id: true, streetAddress: true } }),
+    Property.findByPk(sourceId, { attributes: ['id', 'streetAddress'], raw: true }) as Promise<any>,
+    Property.findByPk(targetId, { attributes: ['id', 'streetAddress'], raw: true }) as Promise<any>,
   ])
 
   if (!source) return NextResponse.json({ error: 'Source lead not found' }, { status: 404 })
   if (!target) return NextResponse.json({ error: 'Target lead not found' }, { status: 404 })
 
-  // Move all related records from target to source in a transaction
-  await prisma.$transaction(async (tx) => {
-    // 1. Move PropertyContacts (skip duplicates via unique constraint)
-    const existingContacts = await tx.propertyContact.findMany({
+  await sequelize.transaction(async (tx) => {
+    const existingContacts = await PropertyContact.findAll({
       where: { propertyId: sourceId },
-      select: { contactId: true },
-    })
+      attributes: ['contactId'],
+      transaction: tx,
+      raw: true,
+    }) as unknown as Array<{ contactId: string }>
     const existingContactIds = new Set(existingContacts.map((c) => c.contactId))
 
-    const targetContacts = await tx.propertyContact.findMany({
+    const targetContacts = await PropertyContact.findAll({
       where: { propertyId: targetId },
+      transaction: tx,
     })
     for (const pc of targetContacts) {
-      if (existingContactIds.has(pc.contactId)) {
-        // Already linked to source — delete the duplicate join record
-        await tx.propertyContact.delete({ where: { id: pc.id } })
+      const plain = pc.get({ plain: true }) as any
+      if (existingContactIds.has(plain.contactId)) {
+        await pc.destroy({ transaction: tx })
       } else {
-        await tx.propertyContact.update({
-          where: { id: pc.id },
-          data: { propertyId: sourceId },
-        })
+        await pc.update({ propertyId: sourceId }, { transaction: tx })
       }
     }
 
-    // 2. Move Notes
-    await tx.note.updateMany({
-      where: { propertyId: targetId },
-      data: { propertyId: sourceId },
-    })
+    await Note.update(
+      { propertyId: sourceId },
+      { where: { propertyId: targetId }, transaction: tx },
+    )
+    await Task.update(
+      { propertyId: sourceId },
+      { where: { propertyId: targetId }, transaction: tx },
+    )
+    await Message.update(
+      { propertyId: sourceId },
+      { where: { propertyId: targetId }, transaction: tx },
+    )
+    await ActivityLog.update(
+      { propertyId: sourceId },
+      { where: { propertyId: targetId }, transaction: tx },
+    )
 
-    // 3. Move Tasks
-    await tx.task.updateMany({
-      where: { propertyId: targetId },
-      data: { propertyId: sourceId },
-    })
+    await Property.update(
+      { leadStatus: 'DEAD' },
+      { where: { id: targetId }, transaction: tx },
+    )
 
-    // 4. Move Messages
-    await tx.message.updateMany({
-      where: { propertyId: targetId },
-      data: { propertyId: sourceId },
-    })
-
-    // 5. Move ActivityLogs
-    await tx.activityLog.updateMany({
-      where: { propertyId: targetId },
-      data: { propertyId: sourceId },
-    })
-
-    // 6. Soft-delete target lead (set status = DEAD)
-    await tx.property.update({
-      where: { id: targetId },
-      data: { leadStatus: 'DEAD' },
-    })
-
-    // 7. Create activity log on source
-    await tx.activityLog.create({
-      data: {
-        propertyId: sourceId,
-        userId,
-        userName,
-        action: 'LEAD_MERGED',
-        detail: {
-          description: `Merged with ${target.streetAddress ?? 'Unknown Address'}`,
-          mergedLeadId: targetId,
-        },
+    await ActivityLog.create({
+      propertyId: sourceId,
+      userId,
+      userName,
+      action: 'LEAD_MERGED',
+      detail: {
+        description: `Merged with ${target.streetAddress ?? 'Unknown Address'}`,
+        mergedLeadId: targetId,
       },
-    })
+    } as any, { transaction: tx })
   })
 
   return NextResponse.json({ success: true }, { status: 200 })

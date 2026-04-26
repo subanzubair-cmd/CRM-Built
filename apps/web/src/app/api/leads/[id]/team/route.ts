@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  LeadCampaign,
+  LeadCampaignRoleToggle,
+  UserCampaignAssignment,
+  PropertyTeamAssignment,
+  UserRoleConfig,
+  Role,
+  User,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 
@@ -24,38 +35,45 @@ export async function GET(_req: NextRequest, { params }: Params) {
   try {
     const { id } = await params
 
-    // 1. Pull the property (with embedded campaign + roleToggles + userAssignments)
-    //    AND the current PropertyTeamAssignment rows in parallel. One round-trip
-    //    replaces the previous three sequential fetches.
-    const [property, currentAssignments] = await Promise.all([
-      prisma.property.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          leadCampaignId: true,
-          leadCampaign: {
-            select: {
-              id: true,
-              roleToggles: {
+    const [propertyRow, currentAssignments] = await Promise.all([
+      Property.findByPk(id, {
+        attributes: ['id', 'leadCampaignId'],
+        include: [
+          {
+            model: LeadCampaign,
+            as: 'leadCampaign',
+            attributes: ['id'],
+            required: false,
+            include: [
+              {
+                model: LeadCampaignRoleToggle,
+                as: 'roleToggles',
                 where: { enabled: true },
-                select: { roleId: true, role: { select: { id: true, name: true } } },
+                required: false,
+                attributes: ['roleId'],
+                include: [{ model: Role, as: 'role', attributes: ['id', 'name'] }],
               },
-              userAssignments: {
-                select: { userId: true, roleId: true },
+              {
+                model: UserCampaignAssignment,
+                as: 'userAssignments',
+                attributes: ['userId', 'roleId'],
+                required: false,
               },
-            },
+            ],
           },
-        },
+        ],
       }),
-      (prisma as any).propertyTeamAssignment.findMany({
+      PropertyTeamAssignment.findAll({
         where: { propertyId: id },
-        select: { roleId: true, userId: true },
+        attributes: ['roleId', 'userId'],
+        raw: true,
       }) as Promise<Array<{ roleId: string; userId: string }>>,
     ])
 
-    if (!property) {
+    if (!propertyRow) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
+    const property = propertyRow.get({ plain: true }) as any
     if (!property.leadCampaignId || !property.leadCampaign) {
       return NextResponse.json({ data: { rows: [] } })
     }
@@ -64,22 +82,20 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const assignedByRole = new Map<string, string>()
     for (const a of currentAssignments) assignedByRole.set(a.roleId, a.userId)
 
-    // 2. One query for UserRoleConfig.leadAccessEnabled across every (user, role)
-    //    pair from this campaign's assignments.
-    const candidatePairs = campaign.userAssignments
+    const candidatePairs: Array<{ userId: string; roleId: string }> = campaign.userAssignments ?? []
     const eligibleSet = new Set<string>()
     if (candidatePairs.length > 0) {
-      const roleConfigs = await (prisma as any).userRoleConfig.findMany({
+      const roleConfigs = await UserRoleConfig.findAll({
         where: {
-          OR: candidatePairs.map((p) => ({ userId: p.userId, roleId: p.roleId })),
+          [Op.or]: candidatePairs.map((p) => ({ userId: p.userId, roleId: p.roleId })),
           leadAccessEnabled: true,
         },
-        select: { userId: true, roleId: true },
-      }) as Array<{ userId: string; roleId: string }>
+        attributes: ['userId', 'roleId'],
+        raw: true,
+      }) as unknown as Array<{ userId: string; roleId: string }>
       for (const c of roleConfigs) eligibleSet.add(`${c.userId}:${c.roleId}`)
     }
 
-    // 3. Collect all eligible userIds across all roles, one User query.
     const eligibleUserIdsByRole = new Map<string, string[]>()
     for (const a of candidatePairs) {
       if (!eligibleSet.has(`${a.userId}:${a.roleId}`)) continue
@@ -91,26 +107,17 @@ export async function GET(_req: NextRequest, { params }: Params) {
       new Set(Array.from(eligibleUserIdsByRole.values()).flat()),
     )
     const users = allEligibleUserIds.length > 0
-      ? await prisma.user.findMany({
-          where: { id: { in: allEligibleUserIds }, status: 'ACTIVE' },
-          select: { id: true, name: true, email: true },
-          orderBy: { name: 'asc' },
-        })
+      ? await User.findAll({
+          where: { id: { [Op.in]: allEligibleUserIds }, status: 'ACTIVE' },
+          attributes: ['id', 'name', 'email'],
+          order: [['name', 'ASC']],
+          raw: true,
+        }) as unknown as Array<{ id: string; name: string; email: string }>
       : []
     const userById = new Map(users.map((u) => [u.id, u]))
 
-    // 4. Build rows in memory. A role row is shown only if at least one
-    //    eligible user exists (UserCampaignAssignment ∩ UserRoleConfig.leadAccessEnabled)
-    //    OR someone is already assigned to this lead for that role (even if
-    //    that user has since lost eligibility — show the stale assignment so
-    //    admin can see and clear it).
-    //
-    //    Rationale: we don't want "Unassigned" rows for roles that have no
-    //    configured users — those would inflate unassigned-lead metrics in
-    //    analytics. True "Unassigned" should mean eligible users exist but
-    //    none has been picked for this lead yet.
-    const rows = campaign.roleToggles
-      .map((toggle) => {
+    const rows = (campaign.roleToggles ?? [])
+      .map((toggle: any) => {
         const roleId = toggle.roleId
         const ids = eligibleUserIdsByRole.get(roleId) ?? []
         const rowUsers = ids
@@ -119,12 +126,12 @@ export async function GET(_req: NextRequest, { params }: Params) {
           .sort((a, b) => a.name.localeCompare(b.name))
         return {
           roleId,
-          roleName: toggle.role.name,
+          roleName: toggle.role?.name ?? '',
           users: rowUsers,
           assignedUserId: assignedByRole.get(roleId) ?? null,
         }
       })
-      .filter((row) => row.users.length > 0 || row.assignedUserId !== null)
+      .filter((row: any) => row.users.length > 0 || row.assignedUserId !== null)
 
     return NextResponse.json({
       data: {
@@ -158,47 +165,47 @@ export async function POST(req: NextRequest, { params }: Params) {
     const sessionUser = (session as any)?.user ?? {}
     const actorUserId = sessionUser.id as string
 
-    // Snapshot the current state so we can diff for audit events
-    const before = await (prisma as any).propertyTeamAssignment.findMany({
+    const beforeRows = await PropertyTeamAssignment.findAll({
       where: { propertyId: id },
-      select: {
-        roleId: true,
-        userId: true,
-        role: { select: { name: true } },
-      },
-    }) as Array<{ roleId: string; userId: string; role: { name: string } }>
-    const beforeByRole = new Map(before.map((b) => [b.roleId, b]))
+      include: [{ model: Role, as: 'role', attributes: ['name'] }],
+      raw: true,
+      nest: true,
+    }) as unknown as Array<{ roleId: string; userId: string; role: { name: string } }>
+    const beforeByRole = new Map(beforeRows.map((b) => [b.roleId, b]))
 
-    // Resolve role names for any incoming roles not currently assigned
     const missingRoleIds = assignments
       .filter((a) => !beforeByRole.has(a.roleId))
       .map((a) => a.roleId)
     const addedRoles = missingRoleIds.length
-      ? await prisma.role.findMany({
-          where: { id: { in: missingRoleIds } },
-          select: { id: true, name: true },
-        })
+      ? await Role.findAll({
+          where: { id: { [Op.in]: missingRoleIds } },
+          attributes: ['id', 'name'],
+          raw: true,
+        }) as unknown as Array<{ id: string; name: string }>
       : []
     const roleNameById = new Map<string, string>(addedRoles.map((r) => [r.id, r.name]))
-    for (const b of before) roleNameById.set(b.roleId, b.role.name)
+    for (const b of beforeRows) roleNameById.set(b.roleId, b.role.name)
 
-    await prisma.$transaction(async (tx) => {
+    await sequelize.transaction(async (tx) => {
       for (const a of assignments) {
         if (a.userId === null) {
-          await (tx as any).propertyTeamAssignment.deleteMany({
+          await PropertyTeamAssignment.destroy({
             where: { propertyId: id, roleId: a.roleId },
+            transaction: tx,
           })
         } else {
-          await (tx as any).propertyTeamAssignment.upsert({
-            where: { propertyId_roleId: { propertyId: id, roleId: a.roleId } },
-            create: { propertyId: id, roleId: a.roleId, userId: a.userId },
-            update: { userId: a.userId },
+          const [row, created] = await PropertyTeamAssignment.findOrCreate({
+            where: { propertyId: id, roleId: a.roleId },
+            defaults: { propertyId: id, roleId: a.roleId, userId: a.userId },
+            transaction: tx,
           })
+          if (!created) {
+            await row.update({ userId: a.userId }, { transaction: tx })
+          }
         }
       }
     })
 
-    // Emit audit events per diff (fire-and-forget)
     for (const a of assignments) {
       const prior = beforeByRole.get(a.roleId)
       const roleName = roleNameById.get(a.roleId) ?? 'Unknown'
