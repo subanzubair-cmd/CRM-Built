@@ -14,6 +14,7 @@ import {
   sequelize,
 } from '@crm/database'
 import { getActiveCommConfig } from '@/lib/comm-provider'
+import { recordHit } from '@/lib/webhook-log'
 
 /**
  * POST /api/webhooks/telnyx — UNIFIED Telnyx webhook (SMS + Voice).
@@ -36,14 +37,31 @@ export async function POST(req: NextRequest) {
   const sigHeader = req.headers.get('telnyx-signature-ed25519')
   const tsHeader = req.headers.get('telnyx-timestamp')
 
+  // Tiny helper so we record the hit + return in one shot. Body-parse
+  // is deferred until after signature verification so the diagnostic
+  // can show "401 invalid signature" with from/to phone null.
+  function done(status: number, outcome: string, extra?: { eventType?: string | null; fromPhone?: string | null; toPhone?: string | null }, payload?: any): NextResponse {
+    recordHit({
+      ts: Date.now(),
+      route: 'telnyx',
+      hasSignature: !!sigHeader,
+      eventType: extra?.eventType ?? null,
+      responseStatus: status,
+      outcome,
+      fromPhone: extra?.fromPhone ?? null,
+      toPhone: extra?.toPhone ?? null,
+    })
+    return NextResponse.json(payload ?? { ok: status < 300 }, { status })
+  }
+
   // Signature verification — only enforced when Public Key is configured.
   if (config?.providerName === 'telnyx' && config.publicKey) {
     if (!sigHeader || !tsHeader) {
-      return NextResponse.json({ error: 'Missing signature' }, { status: 401 })
+      return done(401, 'signature missing', {}, { error: 'Missing signature' })
     }
     const ts = Number(tsHeader)
     if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) {
-      return NextResponse.json({ error: 'Stale timestamp' }, { status: 401 })
+      return done(401, 'signature stale-timestamp', {}, { error: 'Stale timestamp' })
     }
     try {
       const signedPayload = Buffer.from(`${tsHeader}|${rawBody}`, 'utf8')
@@ -55,11 +73,11 @@ export async function POST(req: NextRequest) {
       })
       const ok = cryptoVerify(null, signedPayload, pubKey, signature)
       if (!ok) {
-        return NextResponse.json({ error: 'Invalid signature' }, { status: 403 })
+        return done(403, 'signature invalid (key mismatch?)', {}, { error: 'Invalid signature' })
       }
     } catch (err) {
       console.error('[webhook/telnyx] signature verify failed:', err)
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 })
+      return done(403, 'signature crypto error', {}, { error: 'Invalid signature' })
     }
   }
 
@@ -67,22 +85,49 @@ export async function POST(req: NextRequest) {
   try {
     body = JSON.parse(rawBody)
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+    return done(400, 'invalid JSON', {}, { error: 'Invalid JSON' })
   }
 
   const eventType = body?.data?.event_type as string | undefined
   const payload = body?.data?.payload
+  const extractFrom: string | null =
+    payload?.from?.phone_number ?? (typeof payload?.from === 'string' ? payload.from : null)
+  const extractTo: string | null =
+    (Array.isArray(payload?.to) ? payload.to[0]?.phone_number : null) ??
+    (typeof payload?.to === 'string' ? payload.to : null)
 
   if (!eventType) {
-    return NextResponse.json({ ok: true, ignored: 'no event_type' })
+    return done(200, 'ignored — no event_type', { eventType: null }, { ok: true, ignored: 'no event_type' })
   }
   if (eventType.startsWith('message.')) {
-    return handleSmsEvent(eventType, payload)
+    const res = await handleSmsEvent(eventType, payload)
+    recordHit({
+      ts: Date.now(),
+      route: 'telnyx',
+      hasSignature: !!sigHeader,
+      eventType,
+      responseStatus: res.status,
+      outcome: 'sms handled',
+      fromPhone: extractFrom,
+      toPhone: extractTo,
+    })
+    return res
   }
   if (eventType.startsWith('call.')) {
-    return handleCallEvent(eventType, payload)
+    const res = await handleCallEvent(eventType, payload)
+    recordHit({
+      ts: Date.now(),
+      route: 'telnyx',
+      hasSignature: !!sigHeader,
+      eventType,
+      responseStatus: res.status,
+      outcome: 'call handled',
+      fromPhone: extractFrom,
+      toPhone: extractTo,
+    })
+    return res
   }
-  return NextResponse.json({ ok: true, ignored: eventType })
+  return done(200, `ignored — ${eventType}`, { eventType, fromPhone: extractFrom, toPhone: extractTo }, { ok: true, ignored: eventType })
 }
 
 // ─── SMS events ────────────────────────────────────────────────────────

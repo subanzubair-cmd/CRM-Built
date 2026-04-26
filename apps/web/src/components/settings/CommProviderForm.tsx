@@ -382,7 +382,122 @@ export function CommProviderForm() {
 
       {/* ─── Inbound diagnostic (Telnyx-only for now) ─────────────────── */}
       {selected === 'telnyx' && (
-        <TelnyxInboundDiagnostic webhookUrl={webhookUrl} />
+        <>
+          <TelnyxInboundDiagnostic webhookUrl={webhookUrl} />
+          <RecentWebhookHits />
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * "Recent Webhook Hits" panel.
+ *
+ * Reads the in-process ring buffer the webhook routes write to. Most
+ * useful for the case where the diagnostic above shows everything
+ * green but inbound SMS/calls still aren't surfacing in the CRM —
+ * this panel shows EXACTLY what hit our route and what we returned.
+ *
+ * Common patterns the operator should look for:
+ *   - "signature missing" / "signature invalid" → Public Key in
+ *     Settings doesn't match what Telnyx is signing with. Re-paste
+ *     from Mission Control → Developers → Webhook Signing.
+ *   - "ignored — no event_type" → unexpected payload shape (likely
+ *     not from Telnyx at all).
+ *   - "sms handled" / "call handled" → request reached the handler.
+ *     If status was 200 but no record appears in the inbox, check
+ *     the dev server console for handler exceptions.
+ *   - No rows at all → webhook URL Telnyx is calling doesn't reach
+ *     our route. Re-run the verification panel above.
+ */
+function RecentWebhookHits() {
+  const [hits, setHits] = useState<any[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/diagnostics/webhook-log')
+      const json = await res.json()
+      setHits(json.hits ?? [])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function clear() {
+    await fetch('/api/diagnostics/webhook-log', { method: 'DELETE' })
+    setHits([])
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  function statusColor(status: number): string {
+    if (status >= 200 && status < 300) return 'bg-emerald-100 text-emerald-700'
+    if (status === 401 || status === 403) return 'bg-amber-100 text-amber-700'
+    if (status >= 400) return 'bg-red-100 text-red-700'
+    return 'bg-gray-100 text-gray-600'
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-800">Recent Webhook Hits</h3>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Last 50 inbound POSTs to your webhook URL. If nothing&apos;s here after sending a test SMS / call,
+            Telnyx isn&apos;t reaching the URL. If hits are here but all 401/403, the Public Key doesn&apos;t match.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-1.5 border border-gray-200 text-gray-700 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Refresh
+          </button>
+          <button
+            onClick={clear}
+            disabled={loading}
+            className="border border-gray-200 text-gray-500 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      {hits === null ? (
+        <p className="text-[11px] text-gray-400">Loading…</p>
+      ) : hits.length === 0 ? (
+        <p className="text-[11px] text-gray-500 italic">
+          No webhook hits recorded since the dev server started. Send a test SMS or place a call
+          to your CRM number, then click Refresh.
+        </p>
+      ) : (
+        <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+          {hits.map((h: any, i: number) => (
+            <li key={i} className="px-3 py-2 flex items-center gap-3 text-[11px]">
+              <span className={`inline-flex items-center justify-center min-w-[42px] px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${statusColor(h.responseStatus)}`}>
+                {h.responseStatus}
+              </span>
+              <span className="text-gray-700 font-medium min-w-[110px]">{h.eventType ?? '—'}</span>
+              <span className="text-gray-500 flex-1 truncate">{h.outcome}</span>
+              {(h.fromPhone || h.toPhone) && (
+                <span className="font-mono text-gray-500 text-[10px]">
+                  {h.fromPhone ?? '?'} → {h.toPhone ?? '?'}
+                </span>
+              )}
+              <span className="text-gray-400 text-[10px] tabular-nums">
+                {new Date(h.ts).toLocaleTimeString()}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )
