@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { getConversationMessages } from '@/lib/inbox'
-import { prisma } from '@/lib/prisma'
+import { Conversation } from '@crm/database'
 
 type RouteParams = { params: Promise<{ propertyId: string }> }
 
@@ -14,10 +14,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   const { propertyId } = await params
   const messages = await getConversationMessages(propertyId)
 
-  // Mark as read
-  prisma.conversation
-    .updateMany({ where: { propertyId }, data: { isRead: true } })
-    .catch(() => {})
+  // Mark all conversations on this property as read (fire-and-forget).
+  Conversation.update({ isRead: true }, { where: { propertyId } }).catch(() => {})
 
   return NextResponse.json({ messages })
 }
