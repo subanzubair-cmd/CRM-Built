@@ -1,17 +1,6 @@
-/**
- * IMAP inbound email worker
- *
- * Polls a shared IMAP inbox every 5 minutes via BullMQ repeat job.
- * Matches sender email to a Contact → finds linked Property.
- * Creates an inbound Message record for each new email.
- *
- * Config via environment variables:
- *   IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASS, IMAP_TLS (true/false)
- */
-
 import imapSimple from 'imap-simple'
 import { simpleParser } from 'mailparser'
-import { prisma } from './prisma.js'
+import { Contact, PropertyContact, Property, Message } from '@crm/database'
 
 export async function syncInboundEmails(): Promise<void> {
   const host = process.env.IMAP_HOST
@@ -36,7 +25,6 @@ export async function syncInboundEmails(): Promise<void> {
     connection = await imapSimple.connect(config)
     await connection.openBox('INBOX')
 
-    // Fetch unseen emails from the last 24h
     const since = new Date()
     since.setDate(since.getDate() - 1)
 
@@ -62,33 +50,34 @@ export async function syncInboundEmails(): Promise<void> {
 
         if (!fromAddress) continue
 
-        // Try to match sender to a Contact
-        const contact = await prisma.contact.findFirst({
+        const contactRow = await Contact.findOne({
           where: { email: fromAddress },
-          include: {
-            properties: {
+          include: [
+            {
+              model: PropertyContact,
+              as: 'properties',
               where: { isPrimary: true },
-              include: { property: { select: { id: true } } },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
+              required: false,
+              separate: true,
+              limit: 1,
+              order: [['createdAt', 'DESC']],
+              include: [{ model: Property, as: 'property', attributes: ['id'] }],
             },
-          },
+          ],
         })
 
-        const propertyId = contact?.properties[0]?.property.id
+        const contact = contactRow?.get({ plain: true }) as any
+        const propertyId = contact?.properties?.[0]?.property?.id
 
-        // Create inbound Message record
-        await prisma.message.create({
-          data: {
-            ...(propertyId ? { propertyId } : {}),
-            channel: 'EMAIL',
-            direction: 'INBOUND',
-            subject: parsed.subject ?? undefined,
-            body: parsed.text ?? parsed.html ?? '',
-            from: fromAddress,
-            emailMessageId: parsed.messageId ?? undefined,
-          } as any,
-        })
+        await Message.create({
+          ...(propertyId ? { propertyId } : {}),
+          channel: 'EMAIL',
+          direction: 'INBOUND',
+          subject: parsed.subject ?? undefined,
+          body: parsed.text ?? parsed.html ?? '',
+          from: fromAddress,
+          emailMessageId: parsed.messageId ?? undefined,
+        } as any)
 
         console.log(`[imap] inbound email from ${fromAddress}, property: ${propertyId ?? 'unmatched'}`)
       } catch (msgErr) {

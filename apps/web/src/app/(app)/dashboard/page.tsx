@@ -6,7 +6,6 @@ import { getAnalyticsOverview } from '@/lib/analytics'
 import { getAbandonedLeadsMatrix } from '@/lib/analytics'
 import { getTaskList } from '@/lib/tasks'
 import { getMarketScope } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
 import { Market } from '@crm/database'
 
 const STAGE_LABELS: Record<string, string> = {

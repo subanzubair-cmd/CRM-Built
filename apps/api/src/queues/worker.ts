@@ -4,19 +4,22 @@ import { processDripCampaigns } from '../lib/drip-executor.js'
 import { runAutomations, type AutomationJobData } from '../lib/automation-runner.js'
 import { syncInboundEmails } from '../lib/imap-worker.js'
 import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from '../lib/google-calendar.js'
-import { prisma } from '../lib/prisma.js'
+import {
+  Property,
+  Task,
+  Notification,
+  Automation,
+  Appointment,
+  User,
+  Op,
+} from '@crm/database'
 
 const connection = redis
 
 // ── Drip Campaign Worker ───────────────────────────────────────────────────────
-//
-// Scans all active enrollments every 15 minutes and fires any steps whose
-// delay has elapsed. This is a "tick" pattern — the job itself doesn't carry
-// enrollment state; it just processes whatever is due at that moment.
 
 const dripQueue = new Queue('drip-campaign', { connection })
 
-// Schedule the recurring drip-check job if not already scheduled
 async function scheduleDripJob() {
   const existing = await dripQueue.getRepeatableJobs()
   const alreadyScheduled = existing.some((j) => j.name === 'drip-tick')
@@ -24,7 +27,7 @@ async function scheduleDripJob() {
     await dripQueue.add(
       'drip-tick',
       {},
-      { repeat: { every: 15 * 60 * 1000 } }, // every 15 min
+      { repeat: { every: 15 * 60 * 1000 } },
     )
     console.log('✓ drip-tick repeat job scheduled (every 15 min)')
   }
@@ -45,13 +48,6 @@ new Worker(
 scheduleDripJob().catch((err) => console.error('[drip] schedule error:', err))
 
 // ── Automation Worker ──────────────────────────────────────────────────────────
-//
-// Processes automation jobs pushed by the promote route and lead creation route.
-// Each job carries: { trigger, propertyId, meta? }
-//
-// Also hosts a periodic "no-contact-tick" that fires NO_CONTACT_X_DAYS
-// automations against properties whose lastActivityAt has fallen past the
-// configured threshold (conditions.days on each Automation row).
 
 const automationQueueLocal = new Queue('automation', { connection })
 
@@ -62,7 +58,7 @@ async function scheduleNoContactTick() {
     await automationQueueLocal.add(
       'no-contact-tick',
       {},
-      { repeat: { every: 6 * 60 * 60 * 1000 } }, // every 6 hours
+      { repeat: { every: 6 * 60 * 60 * 1000 } },
     )
     console.log('✓ no-contact-tick repeat job scheduled (every 6h)')
   }
@@ -84,11 +80,11 @@ new Worker(
 scheduleNoContactTick().catch((err) => console.error('[automation] schedule error:', err))
 
 async function fireNoContactAutomations(): Promise<void> {
-  // Fetch all active NO_CONTACT_X_DAYS automations
-  const rules = await prisma.automation.findMany({
-    where: { trigger: 'NO_CONTACT_X_DAYS' as any, isActive: true },
-    select: { id: true, conditions: true },
-  })
+  const rules = await Automation.findAll({
+    where: { trigger: 'NO_CONTACT_X_DAYS', isActive: true },
+    attributes: ['id', 'conditions'],
+    raw: true,
+  }) as unknown as Array<{ id: string; conditions: Record<string, unknown> | null }>
   if (rules.length === 0) return
 
   for (const rule of rules) {
@@ -97,17 +93,18 @@ async function fireNoContactAutomations(): Promise<void> {
     if (!Number.isFinite(days) || days <= 0) continue
 
     const threshold = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const stale = await prisma.property.findMany({
+    const stale = await Property.findAll({
       where: {
         leadStatus: 'ACTIVE',
-        OR: [
-          { lastActivityAt: { lt: threshold } },
-          { lastActivityAt: null, createdAt: { lt: threshold } },
+        [Op.or]: [
+          { lastActivityAt: { [Op.lt]: threshold } },
+          { lastActivityAt: null, createdAt: { [Op.lt]: threshold } },
         ],
       },
-      select: { id: true },
-      take: 500, // cap per tick to avoid runaway enqueueing
-    })
+      attributes: ['id'],
+      limit: 500,
+      raw: true,
+    }) as unknown as Array<{ id: string }>
 
     for (const p of stale) {
       await automationQueueLocal.add('automation', {
@@ -122,7 +119,6 @@ async function fireNoContactAutomations(): Promise<void> {
 }
 
 // ── CSV Import Worker ──────────────────────────────────────────────────────────
-// (real CSV processing handled in Phase 20)
 new Worker(
   'csv-import',
   async (job) => {
@@ -142,7 +138,7 @@ async function scheduleTaskReminderJob() {
     await notificationQueue.add(
       'task-reminder-tick',
       {},
-      { repeat: { every: 5 * 60 * 1000 } }, // every 5 min
+      { repeat: { every: 5 * 60 * 1000 } },
     )
     console.log('✓ task-reminder-tick repeat job scheduled (every 5 min)')
   }
@@ -152,69 +148,69 @@ new Worker(
   'notification',
   async (job) => {
     if (job.name === 'task-reminder-tick') {
-      // 1. Notify about tasks due within next 30 minutes
       const now = new Date()
       const in30Min = new Date(now.getTime() + 30 * 60000)
 
-      const upcomingTasks = await prisma.task.findMany({
+      const upcomingRows = await Task.findAll({
         where: {
           status: 'PENDING',
-          dueAt: { gte: now, lte: in30Min },
+          dueAt: { [Op.gte]: now, [Op.lte]: in30Min },
         },
-        include: { assignedTo: true, property: true },
+        include: [
+          { model: User, as: 'assignedTo' },
+          { model: Property, as: 'property' },
+        ],
       })
+      const upcomingTasks = upcomingRows.map((t) => t.get({ plain: true }) as any)
 
       for (const task of upcomingTasks) {
         if (!task.assignedToId) continue
-        // Avoid duplicate notifications: check if one already exists for this task in the last 30 min
-        const existing = await prisma.notification.findFirst({
+        const existing = await Notification.findOne({
           where: {
             userId: task.assignedToId,
             type: 'TASK_DUE',
             propertyId: task.propertyId,
-            createdAt: { gte: new Date(now.getTime() - 30 * 60000) },
+            createdAt: { [Op.gte]: new Date(now.getTime() - 30 * 60000) },
             title: 'Task due soon',
           },
+          raw: true,
         })
         if (existing) continue
-        await prisma.notification.create({
-          data: {
-            userId: task.assignedToId,
-            type: 'TASK_DUE',
-            title: 'Task due soon',
-            body: `${task.title} — due ${task.dueAt?.toLocaleTimeString()}`,
-            propertyId: task.propertyId,
-          },
-        })
+        await Notification.create({
+          userId: task.assignedToId,
+          type: 'TASK_DUE',
+          title: 'Task due soon',
+          body: `${task.title} — due ${task.dueAt ? new Date(task.dueAt).toLocaleTimeString() : ''}`,
+          propertyId: task.propertyId,
+        } as any)
       }
 
-      // 2. Notify about overdue tasks
-      const overdueTasks = await prisma.task.findMany({
-        where: { status: 'PENDING', dueAt: { lt: now } },
-        include: { assignedTo: true },
+      const overdueRows = await Task.findAll({
+        where: { status: 'PENDING', dueAt: { [Op.lt]: now } },
+        include: [{ model: User, as: 'assignedTo' }],
       })
+      const overdueTasks = overdueRows.map((t) => t.get({ plain: true }) as any)
 
       for (const task of overdueTasks) {
         if (!task.assignedToId) continue
-        const existing = await prisma.notification.findFirst({
+        const existing = await Notification.findOne({
           where: {
             userId: task.assignedToId,
             type: 'TASK_DUE',
             propertyId: task.propertyId,
-            createdAt: { gte: new Date(now.getTime() - 60 * 60000) },
+            createdAt: { [Op.gte]: new Date(now.getTime() - 60 * 60000) },
             title: 'Task overdue',
           },
+          raw: true,
         })
         if (existing) continue
-        await prisma.notification.create({
-          data: {
-            userId: task.assignedToId,
-            type: 'TASK_DUE',
-            title: 'Task overdue',
-            body: `${task.title} was due ${task.dueAt?.toLocaleString()}`,
-            propertyId: task.propertyId,
-          },
-        })
+        await Notification.create({
+          userId: task.assignedToId,
+          type: 'TASK_DUE',
+          title: 'Task overdue',
+          body: `${task.title} was due ${task.dueAt ? new Date(task.dueAt).toLocaleString() : ''}`,
+          propertyId: task.propertyId,
+        } as any)
       }
 
       console.log(`[notification] task-reminder-tick: ${upcomingTasks.length} upcoming, ${overdueTasks.length} overdue`)
@@ -234,7 +230,7 @@ async function scheduleImapJob() {
   const existing = await imapQueue.getRepeatableJobs()
   const alreadyScheduled = existing.some((j) => j.name === 'imap-tick')
   if (!alreadyScheduled) {
-    await imapQueue.add('imap-tick', {}, { repeat: { every: 5 * 60 * 1000 } }) // every 5 min
+    await imapQueue.add('imap-tick', {}, { repeat: { every: 5 * 60 * 1000 } })
     console.log('✓ imap-tick repeat job scheduled (every 5 min)')
   }
 }
@@ -252,9 +248,6 @@ new Worker(
 scheduleImapJob().catch((err) => console.error('[imap] schedule error:', err))
 
 // ── Google Calendar Sync Worker ────────────────────────────────────────────────
-//
-// Fires after create/update/delete of an Appointment record.
-// Job data: { action: 'create'|'update'|'delete', appointmentId, googleEventId? }
 
 new Worker(
   'calendar-sync',
@@ -274,12 +267,12 @@ new Worker(
       return
     }
 
-    // For create/update we need the full appointment record
-    const apt = await prisma.appointment.findUnique({ where: { id: appointmentId } })
-    if (!apt) {
+    const aptRow = await Appointment.findByPk(appointmentId)
+    if (!aptRow) {
       console.warn(`[calendar-sync] appointment ${appointmentId} not found`)
       return
     }
+    const apt = aptRow.get({ plain: true }) as any
 
     if (action === 'create') {
       const eventId = await createCalendarEvent({
@@ -295,10 +288,10 @@ new Worker(
       })
 
       if (eventId) {
-        await prisma.appointment.update({
-          where: { id: appointmentId },
-          data: { googleEventId: eventId },
-        }).catch(() => {})
+        await Appointment.update(
+          { googleEventId: eventId },
+          { where: { id: appointmentId } },
+        ).catch(() => {})
       }
     } else if (action === 'update') {
       if (apt.googleEventId) {

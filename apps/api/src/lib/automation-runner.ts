@@ -1,28 +1,25 @@
-/**
- * Automation runner
- *
- * Executes AutomationAction records for a given trigger + property context.
- * Called from the BullMQ worker when an automation job is dequeued.
- *
- * Supported actions:
- *   ADD_TAG         — append to property.tags
- *   CHANGE_STAGE    — promote via same logic as promote route (simple Prisma update)
- *   ASSIGN_USER     — update property.assignedToId
- *   CREATE_TASK     — create a Task record linked to property
- *   ENROLL_CAMPAIGN — create a CampaignEnrollment record
- *   SEND_SMS        — log a Message record (real send in Phase 16)
- *   SEND_EMAIL      — log a Message record (real send in Phase 17)
- *   SEND_RVM        — log a Message record stub
- */
-
-import { prisma } from './prisma.js'
+import {
+  Property,
+  PropertyContact,
+  Contact,
+  User,
+  LeadCampaign,
+  Automation,
+  AutomationAction,
+  Task,
+  CampaignEnrollment,
+  ActivityLog,
+  Message,
+  fn,
+  col,
+} from '@crm/database'
 import { sendSms, sendRvm } from './twilio.js'
 import { sendEmail } from './email-adapter.js'
 import { checkDndByPhone, checkDndByEmail } from './dnd.js'
 import { substituteTemplateVars, buildTemplateContext } from '@crm/shared'
 
 export interface AutomationJobData {
-  trigger: string      // AutomationTrigger enum value
+  trigger: string
   propertyId: string
   meta?: Record<string, unknown>
 }
@@ -30,53 +27,45 @@ export interface AutomationJobData {
 export async function runAutomations(data: AutomationJobData): Promise<void> {
   const { trigger, propertyId } = data
 
-  // Find matching active automations for this trigger
-  const automations = await prisma.automation.findMany({
-    where: { trigger: trigger as any, isActive: true },
-    include: {
-      actions: { orderBy: { order: 'asc' } },
-    },
+  const automations = await Automation.findAll({
+    where: { trigger, isActive: true },
+    include: [
+      {
+        model: AutomationAction,
+        as: 'actions',
+        separate: true,
+        order: [['order', 'ASC']],
+      },
+    ],
   })
 
   if (automations.length === 0) return
 
-  // Load the property with template context
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    select: {
-      id: true,
-      tags: true,
-      assignedToId: true,
-      propertyStatus: true,
-      leadType: true,
-      leadCampaignId: true,
-      leadNumber: true,
-      streetAddress: true,
-      city: true,
-      state: true,
-      zip: true,
-      assignedTo: { select: { name: true, email: true, phone: true } },
-      leadCampaign: { select: { name: true } },
-      contacts: {
+  const propertyRow = await Property.findByPk(propertyId, {
+    attributes: [
+      'id', 'tags', 'assignedToId', 'propertyStatus', 'leadType',
+      'leadCampaignId', 'leadNumber', 'streetAddress', 'city', 'state', 'zip',
+    ],
+    include: [
+      { model: User, as: 'assignedTo', attributes: ['name', 'email', 'phone'] },
+      { model: LeadCampaign, as: 'leadCampaign', attributes: ['name'] },
+      {
+        model: PropertyContact,
+        as: 'contacts',
         where: { isPrimary: true },
-        include: {
-          contact: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              phone: true,
-              email: true,
-            },
-          },
-        },
-        take: 1,
+        required: false,
+        separate: true,
+        limit: 1,
+        include: [
+          { model: Contact, as: 'contact', attributes: ['id', 'firstName', 'lastName', 'phone', 'email'] },
+        ],
       },
-    },
+    ],
   })
-  if (!property) return
+  if (!propertyRow) return
+  const property = propertyRow.get({ plain: true }) as any
 
-  const primaryContact = property.contacts[0]?.contact
+  const primaryContact = property.contacts?.[0]?.contact
   const tplCtx = buildTemplateContext({
     contact: primaryContact,
     property,
@@ -84,22 +73,23 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
     campaign: property.leadCampaign,
   })
 
-  for (const automation of automations) {
+  for (const automationRow of automations) {
+    const automation = automationRow.get({ plain: true }) as any
     console.log(`[automation] running "${automation.name}" (trigger: ${trigger}, property: ${propertyId})`)
 
-    for (const action of automation.actions) {
+    for (const action of (automation.actions ?? [])) {
       const cfg = action.config as Record<string, unknown>
 
       try {
         switch (action.actionType) {
           case 'ADD_TAG': {
             const tag = String(cfg.tag ?? '')
-            if (tag && !property.tags.includes(tag)) {
-              await prisma.property.update({
-                where: { id: propertyId },
-                data: { tags: { push: tag } },
-              })
-              property.tags.push(tag)
+            if (tag && !(property.tags ?? []).includes(tag)) {
+              await Property.update(
+                { tags: fn('array_append', col('tags'), tag) as any },
+                { where: { id: propertyId } },
+              )
+              property.tags = [...(property.tags ?? []), tag]
             }
             break
           }
@@ -107,38 +97,31 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
           case 'ASSIGN_USER': {
             const userId = String(cfg.userId ?? '')
             if (userId) {
-              await prisma.property.update({
-                where: { id: propertyId },
-                data: { assignedToId: userId },
-              })
+              await Property.update({ assignedToId: userId }, { where: { id: propertyId } })
             }
             break
           }
 
           case 'CREATE_TASK': {
-            await prisma.task.create({
-              data: {
-                propertyId,
-                title: String(cfg.title ?? 'Automated Task'),
-                description: cfg.description ? String(cfg.description) : undefined,
-                dueAt: cfg.dueDaysFromNow
-                  ? new Date(Date.now() + Number(cfg.dueDaysFromNow) * 86400000)
-                  : undefined,
-                assignedToId: String(cfg.assignedToId ?? property.assignedToId ?? ''),
-                status: 'PENDING',
-              },
-            })
+            await Task.create({
+              propertyId,
+              title: String(cfg.title ?? 'Automated Task'),
+              description: cfg.description ? String(cfg.description) : undefined,
+              dueAt: cfg.dueDaysFromNow
+                ? new Date(Date.now() + Number(cfg.dueDaysFromNow) * 86400000)
+                : undefined,
+              assignedToId: String(cfg.assignedToId ?? property.assignedToId ?? ''),
+              status: 'PENDING',
+            } as any)
             break
           }
 
           case 'ENROLL_CAMPAIGN': {
             const campaignId = String(cfg.campaignId ?? '')
             if (campaignId) {
-              // upsert — don't re-enroll if already enrolled
-              await prisma.campaignEnrollment.upsert({
-                where: { campaignId_propertyId: { campaignId, propertyId } },
-                create: { campaignId, propertyId, currentStep: 0 },
-                update: {},
+              await CampaignEnrollment.findOrCreate({
+                where: { campaignId, propertyId },
+                defaults: { campaignId, propertyId, currentStep: 0 } as any,
               })
             }
             break
@@ -147,22 +130,16 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
           case 'CHANGE_STAGE': {
             const toStatus = String(cfg.toStatus ?? '')
             if (toStatus) {
-              await prisma.property.update({
-                where: { id: propertyId },
-                data: {
-                  propertyStatus: toStatus as any,
-                  activityLogs: {
-                    create: {
-                      action: 'PIPELINE_CHANGE',
-                      detail: {
-                        description: `Automation "${automation.name}" changed stage to ${toStatus}`,
-                        from: property.propertyStatus,
-                        to: toStatus,
-                      },
-                    },
-                  },
+              await Property.update({ propertyStatus: toStatus as any }, { where: { id: propertyId } })
+              await ActivityLog.create({
+                propertyId,
+                action: 'PIPELINE_CHANGE',
+                detail: {
+                  description: `Automation "${automation.name}" changed stage to ${toStatus}`,
+                  from: property.propertyStatus,
+                  to: toStatus,
                 },
-              })
+              } as any)
             }
             break
           }
@@ -185,22 +162,20 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
                 console.error('[automation] sendSms failed:', err)
               }
             }
-            await prisma.message.create({
-              data: {
-                propertyId,
-                leadCampaignId: property.leadCampaignId ?? null,
-                contactId: primaryContact?.id ?? null,
-                channel: 'SMS',
-                direction: 'OUTBOUND',
-                body,
-                to: to || undefined,
-                from: from || undefined,
-                twilioSid,
-                failedAt: failReason ? new Date() : undefined,
-                failReason: failReason ?? undefined,
-                status: failReason ? 'failed' : 'sent',
-              },
-            })
+            await Message.create({
+              propertyId,
+              leadCampaignId: property.leadCampaignId ?? null,
+              contactId: primaryContact?.id ?? null,
+              channel: 'SMS',
+              direction: 'OUTBOUND',
+              body,
+              to: to || undefined,
+              from: from || undefined,
+              twilioSid,
+              failedAt: failReason ? new Date() : undefined,
+              failReason: failReason ?? undefined,
+              status: failReason ? 'failed' : 'sent',
+            } as any)
             break
           }
 
@@ -211,7 +186,6 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
             let twilioSid: string | undefined
             let failReason: string | undefined
 
-            // RVM is a call-channel delivery — honor doNotCall
             const block = await checkDndByPhone(to, 'call')
             if (block) {
               failReason = `DND_BLOCKED: ${block}`
@@ -223,22 +197,20 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
                 console.error('[automation] sendRvm failed:', err)
               }
             }
-            await prisma.message.create({
-              data: {
-                propertyId,
-                leadCampaignId: property.leadCampaignId ?? null,
-                contactId: primaryContact?.id ?? null,
-                channel: 'RVM',
-                direction: 'OUTBOUND',
-                body: audioUrl,
-                to: to || undefined,
-                from: from || undefined,
-                twilioSid,
-                failedAt: failReason ? new Date() : undefined,
-                failReason: failReason ?? undefined,
-                status: failReason ? 'failed' : 'sent',
-              },
-            })
+            await Message.create({
+              propertyId,
+              leadCampaignId: property.leadCampaignId ?? null,
+              contactId: primaryContact?.id ?? null,
+              channel: 'RVM',
+              direction: 'OUTBOUND',
+              body: audioUrl,
+              to: to || undefined,
+              from: from || undefined,
+              twilioSid,
+              failedAt: failReason ? new Date() : undefined,
+              failReason: failReason ?? undefined,
+              status: failReason ? 'failed' : 'sent',
+            } as any)
             break
           }
 
@@ -263,22 +235,20 @@ export async function runAutomations(data: AutomationJobData): Promise<void> {
                 console.error('[automation] sendEmail failed:', err)
               }
             }
-            await prisma.message.create({
-              data: {
-                propertyId,
-                leadCampaignId: property.leadCampaignId ?? null,
-                contactId: primaryContact?.id ?? null,
-                channel: 'EMAIL',
-                direction: 'OUTBOUND',
-                body,
-                subject: subject || undefined,
-                to: to || undefined,
-                emailMessageId,
-                failedAt: failReason ? new Date() : undefined,
-                failReason: failReason ?? undefined,
-                status: failReason ? 'failed' : 'sent',
-              },
-            })
+            await Message.create({
+              propertyId,
+              leadCampaignId: property.leadCampaignId ?? null,
+              contactId: primaryContact?.id ?? null,
+              channel: 'EMAIL',
+              direction: 'OUTBOUND',
+              body,
+              subject: subject || undefined,
+              to: to || undefined,
+              emailMessageId,
+              failedAt: failReason ? new Date() : undefined,
+              failReason: failReason ?? undefined,
+              status: failReason ? 'failed' : 'sent',
+            } as any)
             break
           }
 
