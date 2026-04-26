@@ -8,20 +8,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "db:migrate": "prisma migrate dev",
-    "db:migrate:deploy": "prisma migrate deploy",
-    "db:migrate:sequelize": "tsx src/migrations-umzug/cli.ts",
-    "db:migrate:sequelize:status": "tsx src/migrations-umzug/cli.ts status",
-    "db:migrate:sequelize:up": "tsx src/migrations-umzug/cli.ts up",
-    "db:migrate:sequelize:down": "tsx src/migrations-umzug/cli.ts down",
+    "db:migrate": "tsx src/migrations-umzug/cli.ts",
+    "db:migrate:status": "tsx src/migrations-umzug/cli.ts status",
+    "db:migrate:up": "tsx src/migrations-umzug/cli.ts up",
+    "db:migrate:down": "tsx src/migrations-umzug/cli.ts down",
     "db:seed": "tsx src/seed.ts",
-    "db:studio": "prisma studio",
-    "db:generate": "prisma generate",
     "test": "vitest run"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "^7.7.0",
-    "@prisma/client": "^6.0.0",
     "bcryptjs": "^2.4.3",
     "cuid": "^3.0.0",
     "decimal.js": "^10.4.3",
@@ -38,7 +32,6 @@
     "@types/node": "^20.0.0",
     "@types/pg": "^8.11.0",
     "@types/validator": "^13.12.2",
-    "prisma": "^6.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
     "vitest": "^2.1.8"

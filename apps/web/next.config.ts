@@ -14,7 +14,6 @@ const nextConfig: NextConfig = {
     'pg',
     'pg-hstore',
     'umzug',
-    '@prisma/client',
   ],
 }
 

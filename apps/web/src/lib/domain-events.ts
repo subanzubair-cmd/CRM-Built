@@ -1,4 +1,4 @@
-import { prisma } from './prisma'
+import { ActivityLog } from '@crm/database'
 
 interface DomainEvent {
   type: string
@@ -13,17 +13,14 @@ interface DomainEvent {
  * Call this AFTER the main operation in API routes.
  */
 export async function emitEvent(event: DomainEvent) {
-  // 1. Write to activity log
   if (event.propertyId) {
-    await prisma.activityLog.create({
-      data: {
-        propertyId: event.propertyId,
-        action: event.type,
-        detail: event.payload ? JSON.stringify(event.payload) : undefined,
-        actorType: event.actorType || 'system',
-        userId: event.userId || null,
-      },
-    }).catch((err) => console.error('[events] Activity log write failed:', err))
+    await ActivityLog.create({
+      propertyId: event.propertyId,
+      action: event.type,
+      detail: event.payload ? JSON.stringify(event.payload) : undefined,
+      actorType: event.actorType || 'system',
+      userId: event.userId || null,
+    } as any).catch((err: unknown) => console.error('[events] Activity log write failed:', err))
   }
 }
 

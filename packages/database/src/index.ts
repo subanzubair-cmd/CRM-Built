@@ -1,60 +1,62 @@
 /**
- * @crm/database — dual-export hub during the Prisma → Sequelize migration.
+ * @crm/database — Sequelize is now the only ORM in the project.
  *
- * Three groups of exports:
- *   1. Prisma runtime + types — unchanged. Removed in Phase 10.
- *   2. Sequelize singleton + (eventually) model classes from `./models`.
- *   3. TS-union enums (decoupled from Prisma's generated runtime), so
- *      callers don't have to import from `@prisma/client`.
+ * Two groups of exports:
+ *   1. Sequelize singleton + every model class (re-exported from `./models`).
+ *   2. TS-union enums (Postgres-shaped runtime objects + value lists) so
+ *      callers can stop importing enum values from `@prisma/client` (which
+ *      has been removed).
  *
- * Migrated clusters export their model class from `./models` and that class
- * shadows the Prisma type name (e.g. `User`) — call sites that did
- * `import type { User }` keep working.
+ * Prisma is fully decommissioned as of the post-batch-17 cutover.
  */
 
-// ── Group 1: Prisma (until Phase 10) ────────────────────────────────────────
-export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
-
-// Prisma row-shape types — used as `import type` at call sites. These
-// disappear cluster-by-cluster as their model gets replaced by a Sequelize
-// class (which IS both the runtime and the type).
-//
-// Phase 2 leaves migrated → exported from ./models below:
-//   - Market, TwilioNumber, ListStackSource (the ones the original list
-//     covered). LeadSource, Tag, AiConfiguration, GlobalFolder, GlobalFile,
-//     CommProviderConfig were never in this re-export, so no removal needed.
-// All Prisma row-shape types previously re-exported here have moved to
-// Sequelize classes (Phase 2 through Phase 8 cumulative). Callers using
-// `import type { User, Property, ... } from '@crm/database'` now get the
-// Sequelize class, which is both runtime + type.
-
-// Prisma's runtime enums — kept for backwards compat. Prefer importing the
-// equivalents from `./enums` in new code.
-export {
-  LeadType, LeadStatus, ActiveLeadStage, TmStage, InventoryStage,
-  ExitStrategy, PropertyStatus, ContactType, MessageChannel, MessageDirection,
-  TaskStatus, TaskType, CampaignType, CampaignStatus, AutomationTrigger,
-  AutomationActionType, FileType, UserStatus, NotificationType,
-  WebhookEventStatus, AiEngine,
-} from '../node_modules/.prisma/client'
-
-// ── Group 2: Sequelize ──────────────────────────────────────────────────────
+// ── Sequelize ──────────────────────────────────────────────────────────────
 export { sequelize, pingDatabase, registerSequelizeModel } from './sequelize'
-// Re-export migrated model classes from the registry barrel. As clusters
-// migrate, this line picks up the new exports automatically.
 export * from './models'
 
-// Re-export the Sequelize query-building helpers callers commonly need
-// (operators, raw SQL fragments, aggregate functions). Keeps `sequelize`
-// out of `apps/web`'s direct deps — they import from `@crm/database`
-// just like the model classes.
+// Re-export common Sequelize query helpers + types so app code can import
+// them from `@crm/database` (matching how it imports the model classes).
 export { Op, fn, col, literal, where, cast, QueryTypes } from 'sequelize'
-export type { Transaction, FindOptions, WhereOptions, Includeable, OrderItem, Order, Attributes, ModelStatic } from 'sequelize'
+export type {
+  Transaction,
+  FindOptions,
+  WhereOptions,
+  Includeable,
+  OrderItem,
+  Order,
+  Attributes,
+  ModelStatic,
+} from 'sequelize'
 
-// ── Group 3: TS-union enums (Sequelize-friendly, no Prisma dep) ─────────────
-// Renamed exports avoid clashing with Group 1's Prisma enum runtime values.
-// Use these in NEW code:
+// ── TS-union enums ─────────────────────────────────────────────────────────
+// Both per-value VALUES arrays (used for DataType.ENUM(...VALUES)) and the
+// human-friendly enum-shaped objects (e.g. `LeadStatus.ACTIVE`).
 export {
+  LeadType,
+  LeadStatus,
+  ActiveLeadStage,
+  TmStage,
+  InventoryStage,
+  ExitStrategy,
+  PropertyStatus,
+  ContactType,
+  MessageChannel,
+  MessageDirection,
+  TaskStatus,
+  TaskType,
+  CampaignType,
+  CampaignStatus,
+  AutomationTrigger,
+  AutomationActionType,
+  FileType,
+  UserStatus,
+  NotificationType,
+  WebhookEventStatus,
+  AiEngine,
+  LeadCampaignType,
+  LeadAssignmentMethod,
+  WorkspaceType,
+  TemplateType,
   LEAD_TYPE_VALUES,
   LEAD_STATUS_VALUES,
   ACTIVE_LEAD_STAGE_VALUES,
@@ -81,15 +83,7 @@ export {
   LEAD_ASSIGNMENT_METHOD_VALUES,
   WORKSPACE_TYPE_VALUES,
   TEMPLATE_TYPE_VALUES,
-  // Renamed runtime enums (object-shaped) to avoid colliding with Group 1.
-  LeadCampaignType,
-  LeadAssignmentMethod,
-  WorkspaceType,
-  TemplateType,
-  // Type-only exports re-exported under different names; consumers can
-  // pick either Prisma's runtime or the TS-union version.
 } from './enums'
 
-// Migration runner — exposed so apps/api can call `migrateUp()` at boot
-// in production deploys (Umzug owns DDL post-Phase-1).
+// Migration runner — exposed so apps/api can call `migrateUp()` at boot.
 export { migrateUp, migrateStatus, umzug, bootstrapFromPrismaHistory } from './migrations-umzug/umzug'
