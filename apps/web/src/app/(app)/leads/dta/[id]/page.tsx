@@ -22,8 +22,7 @@ import { TeamCard } from '@/components/leads/TeamCard'
 import { DealCalculator } from '@/components/leads/DealCalculator'
 import { DuplicateWarningLoader } from '@/components/leads/DuplicateWarningLoader'
 import { DeadReasonsCard } from '@/components/leads/DeadReasonsCard'
-import { prisma } from '@/lib/prisma'
-import { User } from '@crm/database'
+import { User, Property } from '@crm/database'
 
 type PageProps = {
   params: Promise<{ id: string }>
@@ -31,10 +30,7 @@ type PageProps = {
 
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params
-  const p = await prisma.property.findUnique({
-    where: { id },
-    select: { streetAddress: true, city: true },
-  })
+  const p = await Property.findByPk(id, { attributes: ['streetAddress', 'city'], raw: true }) as { streetAddress: string | null; city: string | null } | null
   const addr = [p?.streetAddress, p?.city].filter(Boolean).join(', ')
   return { title: addr || 'Lead' }
 }
