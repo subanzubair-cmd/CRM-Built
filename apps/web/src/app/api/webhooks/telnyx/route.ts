@@ -213,27 +213,20 @@ async function resolveCampaignByPhone(
 
 /**
  * Property requires createdById (NOT NULL FK to User), but webhook
- * requests have no session. Resolve a user to attribute webhook-
- * created leads to:
- *   1. The LeadCampaign's owner (assignedToId) — best semantic fit,
- *      this is "their" lead.
- *   2. Fall back to the first User in the system (typically Admin).
- * Returns null only if there are zero users — in which case the
- * webhook caller should bail.
+ * requests have no session. Resolve the first User in the system
+ * (typically the Admin) and use them as the system attribution
+ * target.
  *
- * Cached for the lifetime of the process (and any campaign-specific
- * cache miss falls through to the global fallback so the cache can't
- * go stale after a campaign assignment changes).
+ * (LeadCampaign doesn't have an `assignedToId` column on this
+ * schema, so per-campaign owner attribution isn't available — pick
+ * up that signal from PropertyTeamAssignment after creation if you
+ * want it, or migrate LeadCampaign to add the FK.)
+ *
+ * Cached for the lifetime of the process — User rows are stable
+ * within a session and the fallback is a single global read.
  */
 let cachedFallbackUserId: string | null = null
-async function resolveSystemUserId(leadCampaignId: string | null): Promise<string | null> {
-  if (leadCampaignId) {
-    const lc = await LeadCampaign.findByPk(leadCampaignId, {
-      attributes: ['assignedToId'],
-      raw: true,
-    }) as any
-    if (lc?.assignedToId) return lc.assignedToId
-  }
+async function resolveSystemUserId(_leadCampaignId: string | null): Promise<string | null> {
   if (cachedFallbackUserId) return cachedFallbackUserId
   const u = await User.findOne({
     attributes: ['id'],
