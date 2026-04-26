@@ -1,4 +1,10 @@
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  Buyer,
+  BuyerCriteria,
+  BuyerMatch,
+  Market,
+} from '@crm/database'
 
 export interface ScoringCriteria {
   markets: string[]
@@ -31,24 +37,20 @@ export interface ScoringProperty {
 export function scoreCriteria(c: ScoringCriteria, p: ScoringProperty): number {
   let score = 0
 
-  // Market — hard disqualifier
   if (c.markets.length > 0 && !c.markets.includes(p.marketName)) return 0
   score += 20
 
-  // Property type — hard disqualifier
   if (c.propertyTypes.length > 0 && p.propertyType != null) {
     if (!c.propertyTypes.includes(p.propertyType)) return 0
   }
   score += 10
 
-  // Beds (+10)
   if (p.bedrooms != null) {
     const ok = (c.minBeds == null || p.bedrooms >= c.minBeds) &&
                (c.maxBeds == null || p.bedrooms <= c.maxBeds)
     if (ok) score += 10
   }
 
-  // Baths (+10)
   if (p.bathrooms != null) {
     const b = Number(p.bathrooms)
     const ok = (c.minBaths == null || b >= Number(c.minBaths)) &&
@@ -56,7 +58,6 @@ export function scoreCriteria(c: ScoringCriteria, p: ScoringProperty): number {
     if (ok) score += 10
   }
 
-  // Price (+20)
   if (p.askingPrice != null) {
     const pr = Number(p.askingPrice)
     const ok = (c.minPrice == null || pr >= Number(c.minPrice)) &&
@@ -64,14 +65,12 @@ export function scoreCriteria(c: ScoringCriteria, p: ScoringProperty): number {
     if (ok) score += 20
   }
 
-  // Sqft (+10)
   if (p.sqft != null) {
     const ok = (c.minSqft == null || p.sqft >= c.minSqft) &&
                (c.maxSqft == null || p.sqft <= c.maxSqft)
     if (ok) score += 10
   }
 
-  // ARV (+10)
   if (p.arv != null) {
     const a = Number(p.arv)
     const ok = (c.minArv == null || a >= Number(c.minArv)) &&
@@ -79,7 +78,6 @@ export function scoreCriteria(c: ScoringCriteria, p: ScoringProperty): number {
     if (ok) score += 10
   }
 
-  // Repair estimate (+10)
   if (c.maxRepairs == null) {
     score += 10
   } else if (p.repairEstimate != null) {
@@ -93,25 +91,27 @@ const MATCH_THRESHOLD = 40
 
 /** Scores all active buyers against the given property, upserts BuyerMatch records. Returns match count. */
 export async function runBuyerMatching(propertyId: string): Promise<number> {
-  const property = await prisma.property.findUniqueOrThrow({
-    where: { id: propertyId },
-    include: { market: true },
+  const propertyRow = await Property.findByPk(propertyId, {
+    include: [{ model: Market, as: 'market' }],
   })
+  if (!propertyRow) throw new Error(`Property ${propertyId} not found`)
+  const property = propertyRow.get({ plain: true }) as any
 
-  const buyers = await prisma.buyer.findMany({
+  const buyerRows = await Buyer.findAll({
     where: { isActive: true },
-    include: { criteria: true },
+    include: [{ model: BuyerCriteria, as: 'criteria', separate: true }],
   })
+  const buyers = buyerRows.map((b) => b.get({ plain: true }) as any)
 
   const qualified: Array<{ buyerId: string; score: number }> = []
 
   for (const buyer of buyers) {
     let best = 0
-    for (const c of buyer.criteria) {
+    for (const c of (buyer.criteria ?? [])) {
       const s = scoreCriteria(
         {
-          markets: c.markets,
-          propertyTypes: c.propertyTypes,
+          markets: c.markets ?? [],
+          propertyTypes: c.propertyTypes ?? [],
           minBeds: c.minBeds,
           maxBeds: c.maxBeds,
           minBaths: c.minBaths != null ? Number(c.minBaths) : null,
@@ -141,13 +141,15 @@ export async function runBuyerMatching(propertyId: string): Promise<number> {
   }
 
   await Promise.all(
-    qualified.map(({ buyerId, score }) =>
-      prisma.buyerMatch.upsert({
-        where: { buyerId_propertyId: { buyerId, propertyId } },
-        create: { buyerId, propertyId, score, notified: false },
-        update: { score },
+    qualified.map(async ({ buyerId, score }) => {
+      const [match, created] = await BuyerMatch.findOrCreate({
+        where: { buyerId, propertyId },
+        defaults: { buyerId, propertyId, score, notified: false },
       })
-    )
+      if (!created) {
+        await match.update({ score })
+      }
+    })
   )
 
   return qualified.length

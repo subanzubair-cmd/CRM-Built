@@ -1,5 +1,4 @@
-// apps/web/src/lib/associated-properties.ts
-import { prisma } from '@/lib/prisma'
+import { PropertyContact, Contact, Property, Op } from '@crm/database'
 
 export interface AssociatedProperty {
   id: string
@@ -12,65 +11,62 @@ export interface AssociatedProperty {
   matchedPhone: string
 }
 
-/**
- * Returns properties (excluding currentPropertyId) that share a phone number
- * with any contact on the current property.
- */
 export async function getAssociatedProperties(
-  currentPropertyId: string
+  currentPropertyId: string,
 ): Promise<AssociatedProperty[]> {
-  // Step 1: get all phone numbers from contacts linked to the current property
-  const currentContacts = await prisma.propertyContact.findMany({
+  const currentContacts = await PropertyContact.findAll({
     where: { propertyId: currentPropertyId },
-    select: { contact: { select: { phone: true, phone2: true } } },
-  })
+    include: [{ model: Contact, as: 'contact', attributes: ['phone', 'phone2'] }],
+    raw: true,
+    nest: true,
+  }) as unknown as Array<{ contact: { phone: string | null; phone2: string | null } }>
 
   const phones = new Set<string>()
   for (const pc of currentContacts) {
-    if (pc.contact.phone) phones.add(pc.contact.phone)
-    if (pc.contact.phone2) phones.add(pc.contact.phone2)
+    if (pc.contact?.phone) phones.add(pc.contact.phone)
+    if (pc.contact?.phone2) phones.add(pc.contact.phone2)
   }
 
   if (phones.size === 0) return []
+  const phoneList = [...phones]
 
-  // Step 2: find contacts with matching phones, get their linked properties
-  const matchingContacts = await prisma.propertyContact.findMany({
+  const matchingContacts = await PropertyContact.findAll({
     where: {
-      contact: {
-        OR: [
-          { phone: { in: [...phones] } },
-          { phone2: { in: [...phones] } },
-        ],
-      },
-      propertyId: { not: currentPropertyId },
+      propertyId: { [Op.ne]: currentPropertyId },
     },
-    select: {
-      property: {
-        select: {
-          id: true,
-          streetAddress: true,
-          city: true,
-          state: true,
-          leadStatus: true,
-          propertyStatus: true,
-          activeLeadStage: true,
+    include: [
+      {
+        model: Contact,
+        as: 'contact',
+        required: true,
+        attributes: ['phone', 'phone2'],
+        where: {
+          [Op.or]: [
+            { phone: { [Op.in]: phoneList } },
+            { phone2: { [Op.in]: phoneList } },
+          ],
         },
       },
-      contact: { select: { phone: true, phone2: true } },
-    },
-    distinct: ['propertyId'],
-    take: 20,
+      {
+        model: Property,
+        as: 'property',
+        attributes: ['id', 'streetAddress', 'city', 'state', 'leadStatus', 'propertyStatus', 'activeLeadStage'],
+      },
+    ],
+    limit: 60,
   })
 
   const seen = new Set<string>()
   const results: AssociatedProperty[] = []
-  for (const pc of matchingContacts) {
+  for (const pcRow of matchingContacts) {
+    const pc = pcRow.get({ plain: true }) as any
     if (!pc.property || seen.has(pc.property.id)) continue
     seen.add(pc.property.id)
-    const matchedPhone = [...phones].find(
-      (p) => p === pc.contact.phone || p === pc.contact.phone2
+    const matchedPhone = phoneList.find(
+      (p) => p === pc.contact?.phone || p === pc.contact?.phone2,
     ) ?? ''
     results.push({ ...pc.property, matchedPhone })
+    if (results.length >= 20) break
   }
 
   return results

@@ -1,5 +1,20 @@
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import {
+  Property,
+  PropertyContact,
+  Contact,
+  User,
+  Market,
+  Note,
+  Task,
+  ActivityLog,
+  StageHistory,
+  BuyerMatch,
+  BuyerOffer,
+  Buyer,
+  Op,
+  literal,
+} from '@crm/database'
+import type { WhereOptions } from '@crm/database'
 
 const DECIMAL_FIELDS = ['bathrooms', 'askingPrice', 'offerPrice', 'arv', 'repairEstimate', 'lotSize', 'contractPrice', 'expectedProfit', 'underContractPrice', 'estimatedValue', 'dispoOfferAmount', 'soldPrice'] as const
 
@@ -19,181 +34,244 @@ export interface PipelineFilter {
   marketScope?: string[] | null
 }
 
-const PROPERTY_LIST_INCLUDE = {
-  contacts: {
-    where: { isPrimary: true },
-    include: { contact: { select: { firstName: true, lastName: true, phone: true } } },
-    take: 1,
-  },
-  assignedTo: { select: { id: true, name: true } },
-  _count: { select: { tasks: { where: { status: 'PENDING' as const } } } },
-} satisfies Prisma.PropertyInclude
-
-function buildSearchOr(search: string): Prisma.PropertyWhereInput['OR'] {
-  return [
-    { normalizedAddress: { contains: search, mode: 'insensitive' } },
-    { streetAddress: { contains: search, mode: 'insensitive' } },
-    { city: { contains: search, mode: 'insensitive' } },
-    {
-      contacts: {
-        some: {
-          contact: {
-            OR: [
-              { firstName: { contains: search, mode: 'insensitive' } },
-              { lastName: { contains: search, mode: 'insensitive' } },
-            ],
-          },
-        },
-      },
+function buildSearchExists(search: string): { id: { [k: symbol]: unknown } } {
+  const like = search.replace(/'/g, "''")
+  return {
+    id: {
+      [Op.in]: literal(
+        `(SELECT pc."propertyId" FROM "PropertyContact" pc JOIN "Contact" c ON c."id" = pc."contactId" WHERE c."firstName" ILIKE '%${like}%' OR c."lastName" ILIKE '%${like}%')`,
+      ),
     },
+  }
+}
+
+function buildWhere(
+  baseWhere: Record<string, unknown>,
+  search?: string,
+  assignedToId?: string,
+  marketScope?: string[] | null,
+): WhereOptions {
+  const where: Record<string, unknown> = { ...baseWhere }
+  if (assignedToId) where.assignedToId = assignedToId
+  if (marketScope !== null && marketScope !== undefined) {
+    where.marketId = { [Op.in]: marketScope }
+  }
+  if (search) {
+    const like = `%${search}%`
+    where[Op.or as unknown as string] = [
+      { normalizedAddress: { [Op.iLike]: like } },
+      { streetAddress: { [Op.iLike]: like } },
+      { city: { [Op.iLike]: like } },
+      buildSearchExists(search),
+    ]
+  }
+  return where as WhereOptions
+}
+
+function listInclude() {
+  return [
+    {
+      model: PropertyContact,
+      as: 'contacts',
+      where: { isPrimary: true },
+      required: false,
+      separate: true,
+      limit: 1,
+      include: [
+        { model: Contact, as: 'contact', attributes: ['firstName', 'lastName', 'phone'] },
+      ],
+    },
+    { model: User, as: 'assignedTo', attributes: ['id', 'name'] },
   ]
+}
+
+const TASK_COUNT_ATTR: [any, string] = [
+  literal(`(SELECT COUNT(*) FROM "Task" t WHERE t."propertyId" = "Property"."id" AND t."status" = 'PENDING')`),
+  '_count_tasks',
+]
+
+function reshapeListRow(row: any): Record<string, any> {
+  const obj = row.get({ plain: true }) as Record<string, any>
+  obj._count = { tasks: Number(obj._count_tasks ?? 0) }
+  delete obj._count_tasks
+  if (obj._count_buyerMatches !== undefined) {
+    obj._count.buyerMatches = Number(obj._count_buyerMatches ?? 0)
+    delete obj._count_buyerMatches
+  }
+  return serializeRow(obj)
 }
 
 export async function getTmList(filter: PipelineFilter) {
   const { search, assignedToId, page = 1, pageSize = 50, marketScope } = filter
-
-  const where: Prisma.PropertyWhereInput = {
-    propertyStatus: 'IN_TM',
-    ...(assignedToId && { assignedToId }),
-    ...(marketScope !== null && marketScope !== undefined && { marketId: { in: marketScope } }),
-    ...(search && { OR: buildSearchOr(search) }),
-  }
+  const where = buildWhere({ propertyStatus: 'IN_TM' }, search, assignedToId, marketScope)
 
   const [rows, total] = await Promise.all([
-    prisma.property.findMany({
+    Property.findAll({
       where,
-      include: PROPERTY_LIST_INCLUDE,
-      orderBy: { updatedAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      attributes: { include: [TASK_COUNT_ATTR] },
+      include: listInclude(),
+      order: [['updatedAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.property.count({ where }),
+    Property.count({ where }),
   ])
-
-  return { rows: rows.map(serializeRow), total, page, pageSize }
+  return { rows: rows.map(reshapeListRow), total, page, pageSize }
 }
 
 export async function getInventoryList(filter: PipelineFilter) {
   const { search, assignedToId, page = 1, pageSize = 50, marketScope } = filter
-
-  const where: Prisma.PropertyWhereInput = {
-    propertyStatus: 'IN_INVENTORY',
-    ...(assignedToId && { assignedToId }),
-    ...(marketScope !== null && marketScope !== undefined && { marketId: { in: marketScope } }),
-    ...(search && { OR: buildSearchOr(search) }),
-  }
+  const where = buildWhere({ propertyStatus: 'IN_INVENTORY' }, search, assignedToId, marketScope)
 
   const [rows, total] = await Promise.all([
-    prisma.property.findMany({
+    Property.findAll({
       where,
-      include: PROPERTY_LIST_INCLUDE,
-      orderBy: { updatedAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      attributes: { include: [TASK_COUNT_ATTR] },
+      include: listInclude(),
+      order: [['updatedAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.property.count({ where }),
+    Property.count({ where }),
   ])
-
-  return { rows: rows.map(serializeRow), total, page, pageSize }
+  return { rows: rows.map(reshapeListRow), total, page, pageSize }
 }
 
 export async function getDispoList(filter: PipelineFilter) {
   const { search, assignedToId, page = 1, pageSize = 50, marketScope } = filter
-
-  const where: Prisma.PropertyWhereInput = {
-    inDispo: true,
-    ...(assignedToId && { assignedToId }),
-    ...(marketScope !== null && marketScope !== undefined && { marketId: { in: marketScope } }),
-    ...(search && { OR: buildSearchOr(search) }),
-  }
+  const where = buildWhere({ inDispo: true }, search, assignedToId, marketScope)
 
   const [rows, total] = await Promise.all([
-    prisma.property.findMany({
+    Property.findAll({
       where,
-      include: {
-        contacts: {
-          where: { isPrimary: true },
-          include: { contact: { select: { firstName: true, lastName: true, phone: true } } },
-          take: 1,
-        },
-        assignedTo: { select: { id: true, name: true } },
-        _count: {
-          select: {
-            tasks: { where: { status: 'PENDING' } },
-            buyerMatches: true,
-          },
-        },
-        offers: {
-          select: { buyerId: true },
-          distinct: ['buyerId'],
-        },
+      attributes: {
+        include: [
+          TASK_COUNT_ATTR,
+          [
+            literal(`(SELECT COUNT(*) FROM "BuyerMatch" bm WHERE bm."propertyId" = "Property"."id")`),
+            '_count_buyerMatches',
+          ],
+        ],
       },
-      orderBy: { updatedAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      include: [
+        ...listInclude(),
+        {
+          model: BuyerOffer,
+          as: 'offers',
+          attributes: ['buyerId'],
+          separate: true,
+        },
+      ],
+      order: [['updatedAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.property.count({ where }),
+    Property.count({ where }),
   ])
 
-  return { rows: rows.map(serializeRow), total, page, pageSize }
+  // Apply distinct(buyerId) on offers in JS to mirror Prisma's distinct: ['buyerId'].
+  const reshaped = rows.map((row) => {
+    const obj = reshapeListRow(row)
+    if (Array.isArray(obj.offers)) {
+      const seen = new Set<string>()
+      obj.offers = obj.offers.filter((o: any) => {
+        if (seen.has(o.buyerId)) return false
+        seen.add(o.buyerId)
+        return true
+      })
+    }
+    return obj
+  })
+  return { rows: reshaped, total, page, pageSize }
 }
 
 export async function getPropertyById(id: string) {
-  const property = await prisma.property.findUnique({
-    where: { id },
-    include: {
-      contacts: {
-        include: { contact: true },
-        orderBy: { isPrimary: 'desc' },
+  const property = await Property.findByPk(id, {
+    include: [
+      {
+        model: PropertyContact,
+        as: 'contacts',
+        separate: true,
+        order: [['isPrimary', 'DESC']],
+        include: [{ model: Contact, as: 'contact' }],
       },
-      notes: { orderBy: { createdAt: 'desc' }, take: 50 },
-      tasks: {
-        include: { assignedTo: { select: { id: true, name: true } } },
-        orderBy: { dueAt: 'asc' },
+      { model: Note, as: 'notes', separate: true, order: [['createdAt', 'DESC']], limit: 50 },
+      {
+        model: Task,
+        as: 'tasks',
+        separate: true,
+        order: [['dueAt', 'ASC']],
+        include: [{ model: User, as: 'assignedTo', attributes: ['id', 'name'] }],
       },
-      activityLogs: {
-        include: { user: { select: { id: true, name: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
+      {
+        model: ActivityLog,
+        as: 'activityLogs',
+        separate: true,
+        order: [['createdAt', 'DESC']],
+        limit: 100,
+        include: [{ model: User, as: 'user', attributes: ['id', 'name'] }],
       },
-      stageHistory: { orderBy: { createdAt: 'desc' }, take: 20 },
-      assignedTo: { select: { id: true, name: true } },
-      market: { select: { id: true, name: true } },
-      buyerMatches: {
-        include: {
-          buyer: {
-            include: {
-              contact: { select: { firstName: true, lastName: true, phone: true, email: true } },
-            },
+      {
+        model: StageHistory,
+        as: 'stageHistory',
+        separate: true,
+        order: [['createdAt', 'DESC']],
+        limit: 20,
+      },
+      { model: User, as: 'assignedTo', attributes: ['id', 'name'] },
+      { model: Market, as: 'market', attributes: ['id', 'name'] },
+      {
+        model: BuyerMatch,
+        as: 'buyerMatches',
+        separate: true,
+        order: [['score', 'DESC']],
+        include: [
+          {
+            model: Buyer,
+            as: 'buyer',
+            include: [
+              { model: Contact, as: 'contact', attributes: ['firstName', 'lastName', 'phone', 'email'] },
+            ],
           },
-        },
-        orderBy: { score: 'desc' },
+        ],
       },
-      offers: {
-        include: {
-          buyer: {
-            include: {
-              contact: { select: { firstName: true, lastName: true } },
-            },
+      {
+        model: BuyerOffer,
+        as: 'offers',
+        separate: true,
+        order: [['submittedAt', 'DESC']],
+        include: [
+          {
+            model: Buyer,
+            as: 'buyer',
+            include: [
+              { model: Contact, as: 'contact', attributes: ['firstName', 'lastName'] },
+            ],
           },
-        },
-        orderBy: { submittedAt: 'desc' },
+        ],
       },
-    },
+    ],
   })
-  return property ? serializeRow(property) : null
+  if (!property) return null
+  return serializeRow(property.get({ plain: true }) as Record<string, any>)
 }
 
 export async function getDispoPropertyBuyerMatches(propertyId: string) {
-  return prisma.buyerMatch.findMany({
+  const matches = await BuyerMatch.findAll({
     where: { propertyId },
-    include: {
-      buyer: {
-        include: {
-          contact: { select: { firstName: true, lastName: true, phone: true, email: true } },
-        },
+    include: [
+      {
+        model: Buyer,
+        as: 'buyer',
+        include: [
+          { model: Contact, as: 'contact', attributes: ['firstName', 'lastName', 'phone', 'email'] },
+        ],
       },
-    },
-    orderBy: { score: 'desc' },
+    ],
+    order: [['score', 'DESC']],
   })
+  return matches.map((m) => m.get({ plain: true }) as any)
 }

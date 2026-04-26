@@ -1,35 +1,60 @@
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  PropertyContact,
+  Contact,
+  Conversation,
+  Message,
+  AiLog,
+} from '@crm/database'
 import { generateText } from '@/lib/ai'
 
 export async function generateLeadSummary(propertyId: string): Promise<string> {
-  const property = await prisma.property.findUniqueOrThrow({
-    where: { id: propertyId },
-    include: {
-      contacts: {
+  const property = await Property.findByPk(propertyId, {
+    include: [
+      {
+        model: PropertyContact,
+        as: 'contacts',
         where: { isPrimary: true },
-        include: { contact: { select: { firstName: true, lastName: true } } },
-        take: 3,
+        required: false,
+        separate: true,
+        limit: 3,
+        include: [
+          { model: Contact, as: 'contact', attributes: ['firstName', 'lastName'] },
+        ],
       },
-      conversations: {
-        orderBy: { updatedAt: 'desc' },
-        take: 2,
-        include: {
-          messages: { orderBy: { createdAt: 'asc' }, take: 10 },
-        },
+      {
+        model: Conversation,
+        as: 'conversations',
+        separate: true,
+        order: [['updatedAt', 'DESC']],
+        limit: 2,
+        include: [
+          {
+            model: Message,
+            as: 'messages',
+            separate: true,
+            order: [['createdAt', 'ASC']],
+            limit: 10,
+          },
+        ],
       },
-    },
+    ],
   })
+  if (!property) throw new Error(`Property ${propertyId} not found`)
+  const plain = property.get({ plain: true }) as any
 
-  const contactNames = property.contacts
-    .map((c) => `${c.contact.firstName} ${c.contact.lastName ?? ''}`.trim())
+  const contactNames = (plain.contacts ?? [])
+    .map((c: any) => `${c.contact?.firstName ?? ''} ${c.contact?.lastName ?? ''}`.trim())
     .filter(Boolean)
     .join(', ')
 
-  const messages = property.conversations.flatMap((conv) => conv.messages).slice(0, 20)
+  const messages = (plain.conversations ?? [])
+    .flatMap((conv: any) => conv.messages ?? [])
+    .slice(0, 20)
   const msgText =
     messages.length > 0
       ? messages
-          .map((m) => `[${m.channel}/${m.direction}]: ${m.body ?? '(no body)'}`)
+          .map((m: any) => `[${m.channel}/${m.direction}]: ${m.body ?? '(no body)'}`)
           .join('\n')
       : 'No communications yet.'
 
@@ -37,9 +62,9 @@ export async function generateLeadSummary(propertyId: string): Promise<string> {
 
   const prompt = `Summarize this lead in 2–3 sentences.
 
-Property: ${property.streetAddress ?? 'No address'}, ${property.city ?? ''}, ${property.state ?? ''}
-Status: ${property.leadStatus} | Stage: ${property.activeLeadStage ?? 'N/A'}
-Exit Strategy: ${property.exitStrategy ?? 'Unknown'}
+Property: ${plain.streetAddress ?? 'No address'}, ${plain.city ?? ''}, ${plain.state ?? ''}
+Status: ${plain.leadStatus} | Stage: ${plain.activeLeadStage ?? 'N/A'}
+Exit Strategy: ${plain.exitStrategy ?? 'Unknown'}
 Contacts: ${contactNames || 'None'}
 
 Recent Communications:
@@ -50,17 +75,15 @@ Write a concise summary of this lead's current situation and the single most imp
   const summary = await generateText(prompt, systemPrompt)
 
   try {
-    await prisma.aiLog.create({
-      data: {
+    await AiLog.create({
+      propertyId,
+      engine: 'LEAD_SUMMARIZATION',
+      input: {
         propertyId,
-        engine: 'LEAD_SUMMARIZATION',
-        input: {
-          propertyId,
-          stage: property.activeLeadStage,
-          messageCount: messages.length,
-        },
-        output: { summary },
+        stage: plain.activeLeadStage,
+        messageCount: messages.length,
       },
+      output: { summary },
     })
   } catch (err) {
     console.error('[lead-summary] AiLog write failed', err)

@@ -1,8 +1,8 @@
-import { prisma } from '@/lib/prisma'
 import {
   Campaign,
   CampaignStep,
   CampaignEnrollment,
+  Property,
   Market,
   Op,
   literal,
@@ -91,22 +91,16 @@ export async function getCampaignById(id: string) {
     limit: 50,
   })
 
-  // Pull lightweight Property info via Prisma — Property migrates in Phase 6.
   const propertyIds = enrollments.map((e) => e.propertyId)
   const properties =
     propertyIds.length > 0
-      ? await prisma.property.findMany({
-          where: { id: { in: propertyIds } },
-          select: {
-            id: true,
-            streetAddress: true,
-            city: true,
-            propertyStatus: true,
-            leadType: true,
-          },
+      ? await Property.findAll({
+          where: { id: { [Op.in]: propertyIds } },
+          attributes: ['id', 'streetAddress', 'city', 'propertyStatus', 'leadType'],
+          raw: true,
         })
       : []
-  const propertyById = new Map(properties.map((p) => [p.id, p]))
+  const propertyById = new Map((properties as any[]).map((p) => [p.id, p]))
 
   return {
     ...(campaign.toJSON() as any),

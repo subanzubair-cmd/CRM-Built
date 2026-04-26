@@ -1,30 +1,68 @@
-import { prisma } from '@/lib/prisma'
-import { User } from '@crm/database'
+import {
+  Property,
+  Task,
+  Message,
+  Conversation,
+  User,
+  FinancialGoal,
+  Op,
+  fn,
+  col,
+  literal,
+  sequelize,
+  QueryTypes,
+} from '@crm/database'
+import type { WhereOptions } from '@crm/database'
 
-/**
- * Build a property-scoped Prisma where fragment for the user's markets.
- * marketIds = null → admin, no filter
- * marketIds = []   → impossible filter (returns no rows)
- * marketIds = [...] → marketId in that list
- */
 function propertyMarketScope(marketIds: string[] | null | undefined): Record<string, unknown> {
   if (marketIds === null || marketIds === undefined) return {}
   if (marketIds.length === 0) return { marketId: '__NO_MARKET__' }
-  return { marketId: { in: marketIds } }
+  return { marketId: { [Op.in]: marketIds } }
 }
 
-/** Same as propertyMarketScope but scoped via a related property (for Message/Task). */
-function relatedPropertyMarketScope(
-  marketIds: string[] | null | undefined,
-): Record<string, unknown> {
+/** EXISTS subquery filter for Property — returns where fragment narrowing by Property.marketId. */
+function propertyJoinScope(marketIds: string[] | null | undefined): Record<string, unknown> {
   if (marketIds === null || marketIds === undefined) return {}
-  if (marketIds.length === 0) return { property: { marketId: '__NO_MARKET__' } }
-  return { property: { marketId: { in: marketIds } } }
+  if (marketIds.length === 0) {
+    return {
+      propertyId: {
+        [Op.in]: literal(`(SELECT id FROM "Property" WHERE "marketId" = '__NO_MARKET__')`),
+      },
+    }
+  }
+  const escaped = marketIds.map((m) => `'${m.replace(/'/g, "''")}'`).join(',')
+  return {
+    propertyId: {
+      [Op.in]: literal(`(SELECT id FROM "Property" WHERE "marketId" IN (${escaped}))`),
+    },
+  }
+}
+
+async function groupByProperty(
+  field: string,
+  where: WhereOptions,
+  options: { orderByCountDesc?: boolean; limit?: number } = {},
+): Promise<Array<Record<string, unknown>>> {
+  const order: any[] = options.orderByCountDesc
+    ? [[fn('COUNT', col(field)), 'DESC']]
+    : []
+  const rows = await Property.findAll({
+    where,
+    attributes: [field, [fn('COUNT', col(field)), 'count']],
+    group: [field],
+    order,
+    limit: options.limit,
+    raw: true,
+  }) as unknown as Array<Record<string, unknown>>
+  return rows.map((r) => ({
+    [field]: r[field],
+    _count: { [field]: Number(r.count) },
+  }))
 }
 
 export async function getAnalyticsOverview(userId?: string, marketIds?: string[] | null) {
   const propertyScope = propertyMarketScope(marketIds)
-  const messageScope = relatedPropertyMarketScope(marketIds)
+  const messageScope = propertyJoinScope(marketIds)
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
   const startOfYear = new Date(now.getFullYear(), 0, 1)
@@ -47,24 +85,19 @@ export async function getAnalyticsOverview(userId?: string, marketIds?: string[]
     conversionWeekly,
     goals,
   ] = await Promise.all([
-    prisma.property.count({ where: { leadStatus: 'ACTIVE', ...propertyScope } }),
-    prisma.property.count({ where: { createdAt: { gte: startOfMonth }, ...propertyScope } }),
-    prisma.property.count({ where: { propertyStatus: 'IN_TM', ...propertyScope } }),
-    prisma.property.count({ where: { propertyStatus: 'SOLD', soldAt: { gte: startOfYear }, ...propertyScope } }),
-    prisma.property.aggregate({
-      where: { propertyStatus: 'SOLD', soldAt: { gte: startOfYear }, ...propertyScope },
-      _sum: { offerPrice: true },
-    }),
-    prisma.property.groupBy({
-      by: ['activeLeadStage'],
-      where: { leadStatus: 'ACTIVE', activeLeadStage: { not: null }, ...propertyScope },
-      _count: { activeLeadStage: true },
-    }),
-    prisma.property.groupBy({
-      by: ['exitStrategy'],
-      where: { exitStrategy: { not: null }, ...propertyScope },
-      _count: { exitStrategy: true },
-    }),
+    Property.count({ where: { leadStatus: 'ACTIVE', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { createdAt: { [Op.gte]: startOfMonth }, ...propertyScope } as WhereOptions }),
+    Property.count({ where: { propertyStatus: 'IN_TM', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { propertyStatus: 'SOLD', soldAt: { [Op.gte]: startOfYear }, ...propertyScope } as WhereOptions }),
+    Property.findOne({
+      where: { propertyStatus: 'SOLD', soldAt: { [Op.gte]: startOfYear }, ...propertyScope } as WhereOptions,
+      attributes: [[fn('SUM', col('offerPrice')), 'sumOfferPrice']],
+      raw: true,
+    }) as unknown as Promise<{ sumOfferPrice: string | null }>,
+    groupByProperty('activeLeadStage',
+      { leadStatus: 'ACTIVE', activeLeadStage: { [Op.ne]: null }, ...propertyScope } as WhereOptions),
+    groupByProperty('exitStrategy',
+      { exitStrategy: { [Op.ne]: null }, ...propertyScope } as WhereOptions),
     Promise.all(
       Array.from({ length: 8 }, (_, i) => {
         const weekStart = new Date(now)
@@ -72,21 +105,17 @@ export async function getAnalyticsOverview(userId?: string, marketIds?: string[]
         weekStart.setHours(0, 0, 0, 0)
         const weekEnd = new Date(weekStart)
         weekEnd.setDate(weekEnd.getDate() + 7)
-        return prisma.property.count({ where: { createdAt: { gte: weekStart, lt: weekEnd }, ...propertyScope } })
+        return Property.count({ where: { createdAt: { [Op.gte]: weekStart, [Op.lt]: weekEnd }, ...propertyScope } as WhereOptions })
       })
     ),
-    prisma.property.count({ where: { leadStatus: 'ACTIVE', assignedToId: null, ...propertyScope } }),
-    prisma.property.count({ where: { leadStatus: 'ACTIVE', assignedToId: null, ...propertyScope } }),
-    prisma.property.groupBy({
-      by: ['source'],
-      where: { source: { not: null }, ...propertyScope },
-      _count: { source: true },
-      orderBy: { _count: { source: 'desc' } },
-      take: 8,
-    }),
-    prisma.message.count({ where: { channel: 'CALL', createdAt: { gte: startOfYear }, ...messageScope } }),
-    prisma.message.count({ where: { channel: 'CALL', direction: 'OUTBOUND', createdAt: { gte: startOfYear }, ...messageScope } }),
-    prisma.message.count({ where: { channel: 'CALL', direction: 'INBOUND', createdAt: { gte: startOfYear }, ...messageScope } }),
+    Property.count({ where: { leadStatus: 'ACTIVE', assignedToId: null, ...propertyScope } as WhereOptions }),
+    Property.count({ where: { leadStatus: 'ACTIVE', assignedToId: null, ...propertyScope } as WhereOptions }),
+    groupByProperty('source',
+      { source: { [Op.ne]: null }, ...propertyScope } as WhereOptions,
+      { orderByCountDesc: true, limit: 8 }),
+    Message.count({ where: { channel: 'CALL', createdAt: { [Op.gte]: startOfYear }, ...messageScope } as WhereOptions }),
+    Message.count({ where: { channel: 'CALL', direction: 'OUTBOUND', createdAt: { [Op.gte]: startOfYear }, ...messageScope } as WhereOptions }),
+    Message.count({ where: { channel: 'CALL', direction: 'INBOUND', createdAt: { [Op.gte]: startOfYear }, ...messageScope } as WhereOptions }),
     Promise.all(
       Array.from({ length: 8 }, (_, i) => {
         const weekStart = new Date(now)
@@ -94,14 +123,14 @@ export async function getAnalyticsOverview(userId?: string, marketIds?: string[]
         weekStart.setHours(0, 0, 0, 0)
         const weekEnd = new Date(weekStart)
         weekEnd.setDate(weekEnd.getDate() + 7)
-        return prisma.property.count({
-          where: { activeLeadStage: 'UNDER_CONTRACT', updatedAt: { gte: weekStart, lt: weekEnd }, ...propertyScope },
+        return Property.count({
+          where: { activeLeadStage: 'UNDER_CONTRACT', updatedAt: { [Op.gte]: weekStart, [Op.lt]: weekEnd }, ...propertyScope } as WhereOptions,
         })
       })
     ),
     userId
-      ? (prisma as any).financialGoal.findMany({ where: { userId, year: now.getFullYear() } })
-      : Promise.resolve([]),
+      ? FinancialGoal.findAll({ where: { userId, year: now.getFullYear() }, raw: true })
+      : Promise.resolve([] as any[]),
   ])
 
   return {
@@ -109,7 +138,7 @@ export async function getAnalyticsOverview(userId?: string, marketIds?: string[]
     newLeadsThisMonth,
     inTm,
     soldThisYear,
-    revenueThisYear: Number(revenueResult._sum.offerPrice ?? 0),
+    revenueThisYear: Number((revenueResult as any)?.sumOfferPrice ?? 0),
     pipelineStages,
     exitBreakdown,
     weeklyVolume,
@@ -124,12 +153,10 @@ export async function getAnalyticsOverview(userId?: string, marketIds?: string[]
   }
 }
 
-// ─── Dashboard-specific queries ──────────────────────────────────────────────
-
 export async function getDashboardStats(marketIds?: string[] | null) {
   const propertyScope = propertyMarketScope(marketIds)
-  const taskScope = relatedPropertyMarketScope(marketIds)
-  const conversationScope = relatedPropertyMarketScope(marketIds)
+  const taskScope = propertyJoinScope(marketIds)
+  const conversationScope = propertyJoinScope(marketIds)
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
@@ -146,47 +173,48 @@ export async function getDashboardStats(marketIds?: string[] | null) {
     openLeadsTotal,
     staleLeadsCount,
   ] = await Promise.all([
-    prisma.task.count({
+    Task.count({
       where: {
         status: 'PENDING',
-        dueAt: { gte: startOfToday, lt: new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000) },
+        dueAt: { [Op.gte]: startOfToday, [Op.lt]: new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000) },
         ...taskScope,
-      },
+      } as WhereOptions,
     }),
-    prisma.task.count({
-      where: { status: 'PENDING', dueAt: { lt: now }, ...taskScope },
+    Task.count({
+      where: { status: 'PENDING', dueAt: { [Op.lt]: now }, ...taskScope } as WhereOptions,
     }),
-    prisma.property.count({
-      where: { leadStatus: 'ACTIVE', createdAt: { gte: startOfToday }, ...propertyScope },
+    Property.count({
+      where: { leadStatus: 'ACTIVE', createdAt: { [Op.gte]: startOfToday }, ...propertyScope } as WhereOptions,
     }),
-    prisma.conversation.count({
-      where: { isRead: false, ...conversationScope },
+    Conversation.count({
+      where: { isRead: false, ...conversationScope } as WhereOptions,
     }),
-    prisma.property.count({
-      where: { activeLeadStage: 'UNDER_CONTRACT', ...propertyScope },
+    Property.count({
+      where: { activeLeadStage: 'UNDER_CONTRACT', ...propertyScope } as WhereOptions,
     }),
-    prisma.property.aggregate({
-      where: { activeLeadStage: 'UNDER_CONTRACT', ...propertyScope },
-      _sum: { expectedProfit: true },
+    Property.findOne({
+      where: { activeLeadStage: 'UNDER_CONTRACT', ...propertyScope } as WhereOptions,
+      attributes: [[fn('SUM', col('expectedProfit')), 'sumExpectedProfit']],
+      raw: true,
+    }) as unknown as Promise<{ sumExpectedProfit: string | null }>,
+    Property.count({
+      where: { isHot: true, leadStatus: 'ACTIVE', ...propertyScope } as WhereOptions,
     }),
-    prisma.property.count({
-      where: { isHot: true, leadStatus: 'ACTIVE', ...propertyScope },
+    Property.count({
+      where: { leadStatus: 'ACTIVE', assignedToId: null, ...propertyScope } as WhereOptions,
     }),
-    prisma.property.count({
-      where: { leadStatus: 'ACTIVE', assignedToId: null, ...propertyScope },
+    Property.count({
+      where: { leadStatus: 'ACTIVE', ...propertyScope } as WhereOptions,
     }),
-    prisma.property.count({
-      where: { leadStatus: 'ACTIVE', ...propertyScope },
-    }),
-    prisma.property.count({
+    Property.count({
       where: {
         leadStatus: 'ACTIVE',
-        OR: [
-          { lastActivityAt: { lt: sevenDaysAgo } },
+        [Op.or]: [
+          { lastActivityAt: { [Op.lt]: sevenDaysAgo } },
           { lastActivityAt: null },
         ],
         ...propertyScope,
-      },
+      } as WhereOptions,
     }),
   ])
 
@@ -196,15 +224,13 @@ export async function getDashboardStats(marketIds?: string[] | null) {
     newLeadsToday,
     openMessagesCount,
     underContractCount,
-    pipelineValue: Number(pipelineValue._sum.expectedProfit ?? 0),
+    pipelineValue: Number((pipelineValue as any)?.sumExpectedProfit ?? 0),
     hotLeadCount,
     unclaimedCount,
     openLeadsTotal,
     staleLeadsCount,
   }
 }
-
-// ─── Abandoned Leads Matrix ──────────────────────────────────────────────────
 
 export interface AbandonedRow {
   stage: string
@@ -226,75 +252,50 @@ const ACTIVE_STAGES = [
 export async function getAbandonedLeadsMatrix(
   marketIds?: string[] | null,
 ): Promise<AbandonedRow[]> {
-  // Market scope is applied via a second parameterized $queryRaw fragment.
-  // Using Prisma.sql would be cleaner; for now we inline safely because
-  // marketIds only ever contain CUIDs from the session.
-  const rows = marketIds === null || marketIds === undefined
-    ? await prisma.$queryRaw<Array<{
-        stage: string
-        no_drip: bigint
-        no_tasks: bigint
-        neither: bigint
-      }>>`
-        SELECT
-          p."activeLeadStage" as stage,
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "CampaignEnrollment" ce WHERE ce."propertyId" = p.id AND ce."isActive" = true
-            )
-          ) as no_drip,
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "Task" t WHERE t."propertyId" = p.id AND t.status = 'PENDING'
-            )
-          ) as no_tasks,
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "CampaignEnrollment" ce WHERE ce."propertyId" = p.id AND ce."isActive" = true
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM "Task" t WHERE t."propertyId" = p.id AND t.status = 'PENDING'
-            )
-          ) as neither
-        FROM "Property" p
-        WHERE p."leadStatus" = 'ACTIVE'
-          AND p."activeLeadStage" IS NOT NULL
-        GROUP BY p."activeLeadStage"
-        ORDER BY p."activeLeadStage"
-      `
-    : await prisma.$queryRaw<Array<{
-        stage: string
-        no_drip: bigint
-        no_tasks: bigint
-        neither: bigint
-      }>>`
-        SELECT
-          p."activeLeadStage" as stage,
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "CampaignEnrollment" ce WHERE ce."propertyId" = p.id AND ce."isActive" = true
-            )
-          ) as no_drip,
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "Task" t WHERE t."propertyId" = p.id AND t.status = 'PENDING'
-            )
-          ) as no_tasks,
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "CampaignEnrollment" ce WHERE ce."propertyId" = p.id AND ce."isActive" = true
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM "Task" t WHERE t."propertyId" = p.id AND t.status = 'PENDING'
-            )
-          ) as neither
-        FROM "Property" p
-        WHERE p."leadStatus" = 'ACTIVE'
-          AND p."activeLeadStage" IS NOT NULL
-          AND p."marketId" = ANY(${marketIds}::text[])
-        GROUP BY p."activeLeadStage"
-        ORDER BY p."activeLeadStage"
-      `
+  const baseSql = `
+    SELECT
+      p."activeLeadStage" as stage,
+      COUNT(*) FILTER (
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "CampaignEnrollment" ce WHERE ce."propertyId" = p.id AND ce."isActive" = true
+        )
+      ) as no_drip,
+      COUNT(*) FILTER (
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "Task" t WHERE t."propertyId" = p.id AND t.status = 'PENDING'
+        )
+      ) as no_tasks,
+      COUNT(*) FILTER (
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "CampaignEnrollment" ce WHERE ce."propertyId" = p.id AND ce."isActive" = true
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "Task" t WHERE t."propertyId" = p.id AND t.status = 'PENDING'
+        )
+      ) as neither
+    FROM "Property" p
+    WHERE p."leadStatus" = 'ACTIVE'
+      AND p."activeLeadStage" IS NOT NULL
+  `
+  const groupBy = `
+    GROUP BY p."activeLeadStage"
+    ORDER BY p."activeLeadStage"
+  `
+
+  const rows = await sequelize.query<{
+    stage: string
+    no_drip: string
+    no_tasks: string
+    neither: string
+  }>(
+    marketIds === null || marketIds === undefined
+      ? `${baseSql} ${groupBy}`
+      : `${baseSql} AND p."marketId" = ANY(:marketIds::text[]) ${groupBy}`,
+    {
+      replacements: marketIds && marketIds.length ? { marketIds } : { marketIds: marketIds ?? [] },
+      type: QueryTypes.SELECT,
+    },
+  )
 
   const stageMap: Record<string, AbandonedRow> = {}
   for (const r of rows) {
@@ -309,8 +310,6 @@ export async function getAbandonedLeadsMatrix(
   return ACTIVE_STAGES.map((s) => stageMap[s] ?? { stage: s, noDrip: 0, noTasks: 0, neither: 0 })
 }
 
-// ─── CEO Dashboard KPIs ─────────────────────────────────────────────────────
-
 export async function getCeoDashboardKpis(marketIds?: string[] | null) {
   const propertyScope = propertyMarketScope(marketIds)
   const now = new Date()
@@ -318,29 +317,33 @@ export async function getCeoDashboardKpis(marketIds?: string[] | null) {
 
   const [closedRevResult, closedDealsCount, pipelineRevResult, pipelineDealsCount] =
     await Promise.all([
-      prisma.property.aggregate({
-        where: { propertyStatus: 'SOLD', soldAt: { gte: startOfYear }, ...propertyScope },
-        _sum: { contractPrice: true, offerPrice: true },
+      Property.findOne({
+        where: { propertyStatus: 'SOLD', soldAt: { [Op.gte]: startOfYear }, ...propertyScope } as WhereOptions,
+        attributes: [
+          [fn('SUM', col('contractPrice')), 'sumContractPrice'],
+          [fn('SUM', col('offerPrice')), 'sumOfferPrice'],
+        ],
+        raw: true,
+      }) as unknown as Promise<{ sumContractPrice: string | null; sumOfferPrice: string | null }>,
+      Property.count({
+        where: { propertyStatus: 'SOLD', soldAt: { [Op.gte]: startOfYear }, ...propertyScope } as WhereOptions,
       }),
-      prisma.property.count({
-        where: { propertyStatus: 'SOLD', soldAt: { gte: startOfYear }, ...propertyScope },
-      }),
-      prisma.property.aggregate({
-        where: { propertyStatus: 'IN_TM', ...propertyScope },
-        _sum: { offerPrice: true },
-      }),
-      prisma.property.count({
-        where: { propertyStatus: 'IN_TM', ...propertyScope },
+      Property.findOne({
+        where: { propertyStatus: 'IN_TM', ...propertyScope } as WhereOptions,
+        attributes: [[fn('SUM', col('offerPrice')), 'sumOfferPrice']],
+        raw: true,
+      }) as unknown as Promise<{ sumOfferPrice: string | null }>,
+      Property.count({
+        where: { propertyStatus: 'IN_TM', ...propertyScope } as WhereOptions,
       }),
     ])
 
-  // Use contractPrice if available, fallback to offerPrice
   const closedRevenueYtd =
-    Number(closedRevResult._sum.contractPrice ?? 0) ||
-    Number(closedRevResult._sum.offerPrice ?? 0)
+    Number(closedRevResult?.sumContractPrice ?? 0) ||
+    Number(closedRevResult?.sumOfferPrice ?? 0)
   const closedDealsYtd = closedDealsCount
   const avgRevenuePerDeal = closedDealsYtd > 0 ? Math.round(closedRevenueYtd / closedDealsYtd) : 0
-  const pipelineRevenue = Number(pipelineRevResult._sum.offerPrice ?? 0)
+  const pipelineRevenue = Number(pipelineRevResult?.sumOfferPrice ?? 0)
   const pipelineDeals = pipelineDealsCount
   const totalRevenue = closedRevenueYtd + pipelineRevenue
   const totalDeals = closedDealsYtd + pipelineDeals
@@ -360,22 +363,20 @@ export async function getCeoDashboardKpis(marketIds?: string[] | null) {
 
 export async function getLeadSourceBreakdown(marketIds?: string[] | null) {
   const propertyScope = propertyMarketScope(marketIds)
-  const sources = await prisma.property.groupBy({
-    by: ['source'],
-    where: { source: { not: null }, ...propertyScope },
-    _count: { source: true },
-    orderBy: { _count: { source: 'desc' } },
-  })
-
-  return sources.map((s) => ({
+  const sources = await groupByProperty(
+    'source',
+    { source: { [Op.ne]: null }, ...propertyScope } as WhereOptions,
+    { orderByCountDesc: true },
+  )
+  return sources.map((s: any) => ({
     source: s.source ?? 'Unknown',
-    count: s._count.source,
+    count: s._count?.source ?? 0,
   }))
 }
 
 export async function getTeamPerformance(marketIds?: string[] | null) {
-  const taskScope = relatedPropertyMarketScope(marketIds)
-  const messageScope = relatedPropertyMarketScope(marketIds)
+  const taskScope = propertyJoinScope(marketIds)
+  const messageScope = propertyJoinScope(marketIds)
   const propertyScope = propertyMarketScope(marketIds)
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -383,29 +384,30 @@ export async function getTeamPerformance(marketIds?: string[] | null) {
   const users = await User.findAll({
     where: { status: 'ACTIVE' },
     attributes: ['id', 'name'],
+    raw: true,
   })
 
   const results = await Promise.all(
-    users.map(async (user) => {
+    users.map(async (user: any) => {
       const [leadsAssigned, tasksCompleted, callsMade] = await Promise.all([
-        prisma.property.count({
-          where: { assignedToId: user.id, ...propertyScope },
+        Property.count({
+          where: { assignedToId: user.id, ...propertyScope } as WhereOptions,
         }),
-        prisma.task.count({
+        Task.count({
           where: {
             assignedToId: user.id,
             status: 'COMPLETED',
-            completedAt: { gte: startOfMonth },
+            completedAt: { [Op.gte]: startOfMonth },
             ...taskScope,
-          },
+          } as WhereOptions,
         }),
-        prisma.message.count({
+        Message.count({
           where: {
             sentById: user.id,
             channel: 'CALL',
-            createdAt: { gte: startOfMonth },
+            createdAt: { [Op.gte]: startOfMonth },
             ...messageScope,
-          },
+          } as WhereOptions,
         }),
       ])
 
@@ -437,18 +439,18 @@ export async function getConversionFunnel(marketIds?: string[] | null) {
     inDispo,
     sold,
   ] = await Promise.all([
-    prisma.property.count({ where: { activeLeadStage: 'NEW_LEAD', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'DISCOVERY', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'INTERESTED_ADD_TO_FOLLOW_UP', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'APPOINTMENT_MADE', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'DUE_DILIGENCE', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'OFFER_MADE', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'OFFER_FOLLOW_UP', ...propertyScope } }),
-    prisma.property.count({ where: { activeLeadStage: 'UNDER_CONTRACT', ...propertyScope } }),
-    prisma.property.count({ where: { propertyStatus: 'IN_TM', ...propertyScope } }),
-    prisma.property.count({ where: { propertyStatus: 'IN_INVENTORY', ...propertyScope } }),
-    prisma.property.count({ where: { propertyStatus: 'IN_DISPO', ...propertyScope } }),
-    prisma.property.count({ where: { propertyStatus: 'SOLD', ...propertyScope } }),
+    Property.count({ where: { activeLeadStage: 'NEW_LEAD', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'DISCOVERY', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'INTERESTED_ADD_TO_FOLLOW_UP', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'APPOINTMENT_MADE', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'DUE_DILIGENCE', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'OFFER_MADE', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'OFFER_FOLLOW_UP', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { activeLeadStage: 'UNDER_CONTRACT', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { propertyStatus: 'IN_TM', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { propertyStatus: 'IN_INVENTORY', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { propertyStatus: 'IN_DISPO', ...propertyScope } as WhereOptions }),
+    Property.count({ where: { propertyStatus: 'SOLD', ...propertyScope } as WhereOptions }),
   ])
 
   return [
