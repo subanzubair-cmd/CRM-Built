@@ -126,12 +126,12 @@ class TelnyxClientImpl {
   private async connect(): Promise<void> {
     const credentials = await this.fetchCredentials()
 
-    // Pass remoteElement to the SDK so it auto-attaches the customer's
-    // audio stream to a hidden <audio> tag and plays it through the
-    // agent's speakers. Without this, we'd hear nothing — the SDK has
-    // the stream but doesn't auto-play. Done at SDK construction so
-    // it's wired BEFORE the peer connection is negotiated.
-    const remoteEl = ensureRemoteAudioElement()
+    // Eagerly create the hidden <audio> sink so it exists in the DOM
+    // before the peer connection negotiates. Audio attachment happens
+    // in useCallAudioPlayback via peer.ontrack — that's the canonical
+    // WebRTC event for inbound media and the only path that's
+    // SDK-version-independent.
+    ensureRemoteAudioElement()
 
     // Two registration modes for the SDK:
     //   - static: pass the SIP username + password directly (operator
@@ -143,13 +143,9 @@ class TelnyxClientImpl {
         ? new TelnyxRTC({
             login: credentials.sipUsername,
             password: credentials.sipPassword,
-            // @ts-ignore — SDK accepts both the element and its ID.
-            remoteElement: remoteEl ?? undefined,
           })
         : new TelnyxRTC({
             login_token: credentials.loginToken,
-            // @ts-ignore
-            remoteElement: remoteEl ?? undefined,
           })
 
     // Wire all SDK events through our pub/sub so consumers don't import
