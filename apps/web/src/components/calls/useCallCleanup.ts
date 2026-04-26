@@ -3,24 +3,29 @@
 import { useEffect, useRef } from 'react'
 
 /**
- * useCallCleanup — fire-and-forget hangup if the page unloads (refresh,
- * tab close, navigate away, network drop) while a call is active.
+ * useCallCleanup — fire-and-forget hangup ONLY if the page is actually
+ * unloading (refresh, tab close, hard navigation away, network drop).
  *
- * Wires three browser signals:
- *   1. `pagehide`       — fires on tab close / nav away / refresh on Safari
- *   2. `beforeunload`   — fires on tab close / nav away / refresh on Chrome+Firefox
- *   3. `visibilitychange` (hidden + close-via-visibility) — handles edge cases
+ * We deliberately listen to two events, NOT three:
+ *   1. `pagehide`     — only fires on real document teardown (close/nav)
+ *   2. `beforeunload` — only fires on real document teardown
  *
- * Uses `navigator.sendBeacon()` (NOT fetch) because:
- *   - sendBeacon is the ONLY HTTP method browsers guarantee will complete
- *     during unload — fetch and XMLHttpRequest are routinely cancelled.
- *   - It includes session cookies automatically, so the hangup endpoint
- *     can authenticate as normal.
- *   - It returns synchronously and queues the request.
+ * We do NOT listen for `visibilitychange → hidden` even though earlier
+ * versions did. That event fires when the user switches browser tabs,
+ * minimizes the window, or opens a target="_blank" link from the popup
+ * (focus shifts to the new tab → original tab becomes hidden). All of
+ * those are normal in-call interactions — agents look up the lead in
+ * another tab, take notes in another window, etc. — and dropping the
+ * call there is broken behavior.
  *
- * The server-side /api/calls/[id]/hangup is idempotent — if the user
- * properly hangs up first AND the beacon also fires, the second call
- * returns 200 alreadyCompleted: true.
+ * For pagehide: we additionally check `event.persisted` so hangup
+ * doesn't fire when the page is being moved into the bfcache (modern
+ * browsers preserve the page in memory; the call should keep running).
+ *
+ * sendBeacon is used over fetch because it's the only HTTP API browsers
+ * guarantee to complete during unload. The /api/calls/[id]/hangup route
+ * is idempotent so a redundant beacon after the user hangs up manually
+ * is harmless.
  *
  * Pass null when no call is active to disable the listeners cleanly.
  */
@@ -45,17 +50,18 @@ export function useCallCleanup(activeCallId: string | null): void {
         const blob = new Blob([''], { type: 'text/plain' })
         navigator.sendBeacon(`/api/calls/${id}/hangup`, blob)
       } catch {
-        // Last-resort fetch with keepalive (Chrome/Edge support it on
-        // unload too — Safari does not).
         try {
           fetch(`/api/calls/${id}/hangup`, { method: 'POST', keepalive: true }).catch(() => {})
         } catch {
-          // Nothing else we can do — browser will tear down imminently.
+          // Browser tearing down imminently — nothing else we can do.
         }
       }
     }
 
-    function onPageHide() {
+    function onPageHide(e: PageTransitionEvent) {
+      // bfcache: page is being preserved, NOT torn down. Skip hangup so
+      // the call survives a back/forward navigation.
+      if (e.persisted) return
       fireHangupBeacon()
     }
 
@@ -63,25 +69,12 @@ export function useCallCleanup(activeCallId: string | null): void {
       fireHangupBeacon()
     }
 
-    function onVisibilityChange() {
-      // Some mobile browsers fire visibilitychange→hidden as the only
-      // signal before being suspended. Only fire when the page is being
-      // permanently hidden (not just backgrounded), which we can't tell
-      // perfectly — but a redundant beacon is harmless thanks to the
-      // server-side idempotency.
-      if (document.visibilityState === 'hidden') {
-        fireHangupBeacon()
-      }
-    }
-
     window.addEventListener('pagehide', onPageHide)
     window.addEventListener('beforeunload', onBeforeUnload)
-    document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('beforeunload', onBeforeUnload)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
 }
