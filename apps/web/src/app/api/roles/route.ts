@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Role } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -15,9 +15,9 @@ export async function GET() {
   const deny = requirePermission(session, 'settings.view')
   if (deny) return deny
 
-  const roles = await prisma.role.findMany({
-    select: { id: true, name: true, description: true, permissions: true, isSystem: true },
-    orderBy: { name: 'asc' },
+  const roles = await Role.findAll({
+    attributes: ['id', 'name', 'description', 'permissions', 'isSystem'],
+    order: [['name', 'ASC']],
   })
   return NextResponse.json(roles)
 }
@@ -31,9 +31,9 @@ export async function POST(req: NextRequest) {
   const parsed = CreateRoleSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const existing = await prisma.role.findUnique({ where: { name: parsed.data.name } })
+  const existing = await Role.findOne({ where: { name: parsed.data.name } })
   if (existing) return NextResponse.json({ error: 'Role name already in use' }, { status: 409 })
 
-  const role = await prisma.role.create({ data: parsed.data })
+  const role = await Role.create(parsed.data)
   return NextResponse.json({ success: true, data: role }, { status: 201 })
 }

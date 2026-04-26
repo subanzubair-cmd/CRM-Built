@@ -1,39 +1,50 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
-// Prisma mock — still used for User, Role, Campaign etc. (not yet migrated).
+// Prisma mock — Campaign + LeadCampaign still on Prisma until Phase 4.
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    user: { findMany: vi.fn() },
-    role: { findMany: vi.fn() },
+    campaign: { findMany: vi.fn() },
+    leadCampaign: { findMany: vi.fn() },
   },
 }))
 
-// Sequelize mock — Market migrated to Sequelize in Phase 2. We mock the
-// model class's static `findAll` plus `toJSON()` on each row.
+// Sequelize mock — User, Role, UserRoleConfig, Market migrated to Sequelize.
 vi.mock('@crm/database', () => ({
-  Market: {
-    findAll: vi.fn(),
-  },
+  Market: { findAll: vi.fn() },
+  User: { findAll: vi.fn() },
+  Role: { findAll: vi.fn() },
+  UserRoleConfig: { findAll: vi.fn() },
+  literal: (sql: string) => sql,
 }))
 
-import { prisma } from '@/lib/prisma'
-import { Market } from '@crm/database'
+import { Market, User, Role, UserRoleConfig } from '@crm/database'
 import { getUserList, getMarketList, getRoleList } from '../settings'
 
 describe('getUserList', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns users with their role', async () => {
-    vi.mocked(prisma.user.findMany).mockResolvedValue([
-      { id: 'u1', name: 'Alice', email: 'alice@test.com', status: 'ACTIVE', role: { id: 'r1', name: 'Admin' } },
-    ] as any)
+    const userInstance = {
+      id: 'u1',
+      toJSON: () => ({
+        id: 'u1',
+        name: 'Alice',
+        email: 'alice@test.com',
+        status: 'ACTIVE',
+        role: { id: 'r1', name: 'Admin' },
+      }),
+    }
+    vi.mocked(User.findAll).mockResolvedValue([userInstance as any])
+    vi.mocked(UserRoleConfig.findAll).mockResolvedValue([])
     const result = await getUserList()
     expect(result).toHaveLength(1)
     expect(result[0].role.name).toBe('Admin')
+    expect(result[0].roleConfigs).toEqual([])
   })
 
   it('returns empty array when no users', async () => {
-    vi.mocked(prisma.user.findMany).mockResolvedValue([] as any)
+    vi.mocked(User.findAll).mockResolvedValue([])
+    vi.mocked(UserRoleConfig.findAll).mockResolvedValue([])
     const result = await getUserList()
     expect(result).toHaveLength(0)
   })
@@ -64,7 +75,7 @@ describe('getRoleList', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns roles ordered by name', async () => {
-    vi.mocked(prisma.role.findMany).mockResolvedValue([
+    vi.mocked(Role.findAll).mockResolvedValue([
       { id: 'r1', name: 'Admin' },
       { id: 'r2', name: 'Agent' },
     ] as any)

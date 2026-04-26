@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { ApiToken } from '@crm/database'
 import crypto from 'crypto'
 
 export async function GET(_req: NextRequest) {
@@ -14,9 +14,9 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const token = await prisma.apiToken.findFirst({
+  const token = await ApiToken.findOne({
     where: { userId },
-    orderBy: { createdAt: 'desc' },
+    order: [['createdAt', 'DESC']],
   })
 
   if (!token) {
@@ -45,7 +45,7 @@ export async function POST(_req: NextRequest) {
   }
 
   // Delete any existing tokens for this user
-  await prisma.apiToken.deleteMany({ where: { userId } })
+  await ApiToken.destroy({ where: { userId } })
 
   // Generate a random 32-char hex token
   const rawToken = crypto.randomBytes(16).toString('hex') // 32 hex chars
@@ -53,12 +53,10 @@ export async function POST(_req: NextRequest) {
   const prefix = `hp_${rawToken.slice(0, 8)}`
   const tokenHash = crypto.createHash('sha256').update(fullToken).digest('hex')
 
-  const apiToken = await prisma.apiToken.create({
-    data: {
-      userId,
-      tokenHash,
-      prefix,
-    },
+  const apiToken = await ApiToken.create({
+    userId,
+    tokenHash,
+    prefix,
   })
 
   return NextResponse.json({

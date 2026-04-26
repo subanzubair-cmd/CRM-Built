@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 import { z } from 'zod'
 import { addWhisperParticipant, addBargeParticipant } from '@/lib/twilio-calls'
 import { requirePermission } from '@/lib/auth-utils'
@@ -25,9 +26,8 @@ export async function POST(
   const supervisorId = ((session as any)?.user?.id ?? '') as string
   const { id } = await params
 
-  const supervisor = await prisma.user.findUnique({
-    where: { id: supervisorId },
-    select: { phone: true, name: true },
+  const supervisor = await User.findByPk(supervisorId, {
+    attributes: ['phone', 'name'],
   })
 
   if (!supervisor?.phone) {

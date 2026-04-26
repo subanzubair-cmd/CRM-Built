@@ -5,6 +5,7 @@ import { getRentalList } from '@/lib/archive'
 import { prisma } from '@/lib/prisma'
 import { ArchiveTable } from '@/components/archive/ArchiveTable'
 import { LeadFilters } from '@/components/leads/LeadFilters'
+import { User } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string }>
@@ -23,10 +24,10 @@ export default async function RentalPage({ searchParams }: PageProps) {
       assignedToId: sp.assignedToId,
       page: sp.page ? parseInt(sp.page) : 1,
     }),
-    prisma.user.findMany({
+    User.findAll({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
     }),
   ])
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { User, Role, Op } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { rateLimitMutation } from '@/lib/rate-limit'
 
@@ -35,8 +35,8 @@ export async function PATCH(
 
   // If email is being changed, check uniqueness
   if (parsed.data.email) {
-    const existing = await prisma.user.findFirst({
-      where: { email: parsed.data.email, id: { not: id } },
+    const existing = await User.findOne({
+      where: { email: parsed.data.email, id: { [Op.ne]: id } },
     })
     if (existing) {
       return NextResponse.json({ error: 'Email already in use' }, { status: 409 })
@@ -54,13 +54,14 @@ export async function PATCH(
   // changes propagate without breaking sessions. sessionVersion remains
   // available as a dormant kill-switch for future "force logout user X" flows.
 
-  const user = await prisma.user.update({
-    where: { id },
-    data,
-    include: { role: { select: { id: true, name: true, permissions: true } } },
+  const user = await User.findByPk(id)
+  if (!user) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await user.update(data)
+  const role = await Role.findByPk(user.roleId, {
+    attributes: ['id', 'name', 'permissions'],
   })
 
-  return NextResponse.json(user)
+  return NextResponse.json({ ...user.toJSON(), role: role?.toJSON() ?? null })
 }
 
 export async function DELETE(
@@ -80,18 +81,23 @@ export async function DELETE(
   }
 
   try {
-    await prisma.user.delete({ where: { id } })
+    const user = await User.findByPk(id)
+    if (user) await user.destroy()
   } catch (err: any) {
-    // If FK constraints prevent hard delete, fall back to soft delete
-    if (err?.code === 'P2003' || err?.code === 'P2014') {
-      await prisma.user.update({
-        where: { id },
-        data: {
+    // Postgres FK violation surfaces as `name === 'SequelizeForeignKeyConstraintError'`
+    // and SQLState 23503 — fall back to soft delete to preserve referential
+    // integrity (matches the previous Prisma-era behavior on P2003/P2014).
+    const isFkViolation =
+      err?.name === 'SequelizeForeignKeyConstraintError' || err?.parent?.code === '23503'
+    if (isFkViolation) {
+      const user = await User.findByPk(id)
+      if (user) {
+        await user.update({
           status: 'INACTIVE',
           email: `deleted-${id}@removed`,
           name: '[Removed]',
-        },
-      })
+        })
+      }
     } else {
       throw err
     }

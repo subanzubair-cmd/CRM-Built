@@ -8,6 +8,7 @@ import { PipelineTable } from '@/components/pipelines/PipelineTable'
 import { LeadFilters } from '@/components/leads/LeadFilters'
 import { ViewToggle } from '@/components/leads/ViewToggle'
 import { TmKanbanBoard } from '@/components/pipelines/TmKanbanBoard'
+import { User } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string; view?: string; sort?: string; order?: string }>
@@ -27,10 +28,10 @@ export default async function TmPage({ searchParams }: PageProps) {
       assignedToId: sp.assignedToId,
       page: sp.page ? parseInt(sp.page) : 1,
     }),
-    prisma.user.findMany({
+    User.findAll({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
     }),
   ])
 

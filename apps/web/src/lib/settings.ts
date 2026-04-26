@@ -1,20 +1,43 @@
 import { prisma } from '@/lib/prisma'
-import { Market, literal } from '@crm/database'
+import { Market, User, Role, UserRoleConfig, literal } from '@crm/database'
 
 export async function getUserList() {
-  return prisma.user.findMany({
-    include: {
-      role: { select: { id: true, name: true, permissions: true } },
-      // All UserRoleConfig entries so the table can render every role the
-      // user holds, not just the primary-label role on User.roleId.
-      roleConfigs: {
-        select: {
-          roleId: true,
-          role: { select: { id: true, name: true } },
-        },
-      },
-    },
-    orderBy: [{ status: 'asc' }, { name: 'asc' }],
+  // Two queries: users with their primary role, then all UserRoleConfig
+  // rows for the same users with their roles. Re-shape into the legacy
+  // Prisma response so the settings table doesn't need a frontend update.
+  const users = await User.findAll({
+    include: [{ model: Role, as: 'role', attributes: ['id', 'name', 'permissions'] }],
+    order: [
+      ['status', 'ASC'],
+      ['name', 'ASC'],
+    ],
+  })
+
+  const userIds = users.map((u) => u.id)
+  const configs =
+    userIds.length > 0
+      ? await UserRoleConfig.findAll({
+          where: { userId: userIds as any },
+          include: [{ model: Role, as: 'role', attributes: ['id', 'name'] }],
+        })
+      : []
+
+  const configsByUser = new Map<string, any[]>()
+  for (const c of configs) {
+    const json = c.toJSON() as any
+    if (!configsByUser.has(json.userId)) configsByUser.set(json.userId, [])
+    configsByUser.get(json.userId)!.push({
+      roleId: json.roleId,
+      role: json.role ? { id: json.role.id, name: json.role.name } : null,
+    })
+  }
+
+  return users.map((u) => {
+    const json = u.toJSON() as any
+    return {
+      ...json,
+      roleConfigs: configsByUser.get(u.id) ?? [],
+    }
   })
 }
 
@@ -67,8 +90,8 @@ export async function getMarketList() {
 }
 
 export async function getRoleList() {
-  return prisma.role.findMany({
-    select: { id: true, name: true, description: true, permissions: true, isSystem: true },
-    orderBy: { name: 'asc' },
+  return Role.findAll({
+    attributes: ['id', 'name', 'description', 'permissions', 'isSystem'],
+    order: [['name', 'ASC']],
   })
 }

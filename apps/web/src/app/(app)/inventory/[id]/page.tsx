@@ -20,6 +20,7 @@ import { AnalyticsTimeline } from '@/components/leads/AnalyticsTimeline'
 import { TeamCard } from '@/components/leads/TeamCard'
 import { DealCalculator } from '@/components/leads/DealCalculator'
 import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 
 type PageProps = {
   params: Promise<{ id: string }>
@@ -42,7 +43,7 @@ export default async function InventoryDetailPage({ params }: PageProps) {
   const { id } = await params
   const [property, users, messages] = await Promise.all([
     getPropertyById(id),
-    prisma.user.findMany({ where: { status: 'ACTIVE' }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    User.findAll({ where: { status: 'ACTIVE' }, attributes: ['id', 'name'], order: [['name', 'ASC']] }),
     getConversationMessages(id),
   ])
   if (!property) notFound()

@@ -5,6 +5,7 @@ import { getLeadList } from '@/lib/leads'
 import { prisma } from '@/lib/prisma'
 import { LeadTable } from '@/components/leads/LeadTable'
 import { LeadFilters } from '@/components/leads/LeadFilters'
+import { User } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string; sort?: string; order?: string; type?: string }>
@@ -30,10 +31,10 @@ export default async function LeadsReferredPage({ searchParams }: PageProps) {
       sort: sp.sort,
       order: sp.order as 'asc' | 'desc' | undefined,
     }),
-    prisma.user.findMany({
+    User.findAll({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
     }),
   ])
 

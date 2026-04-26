@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 
 const UpdateProfileSchema = z.object({
   name: z.string().min(1).optional(),
@@ -17,11 +17,14 @@ export async function PATCH(req: NextRequest) {
   const parsed = UpdateProfileSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const user = await prisma.user.update({
-    where: { id: ((session as any)?.user?.id ?? '') as string },
-    data: parsed.data as any,
-    select: { id: true, name: true, phone: true, email: true },
+  const id = ((session as any)?.user?.id ?? '') as string
+  const user = await User.findByPk(id)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  await user.update(parsed.data as any)
+  return NextResponse.json({
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    email: user.email,
   })
-
-  return NextResponse.json(user)
 }

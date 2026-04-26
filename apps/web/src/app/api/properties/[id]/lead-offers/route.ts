@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { User, Op } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -27,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   // Get user names for createdById
   const userIds = [...new Set(offers.map((o) => o.createdById).filter(Boolean))] as string[]
   const users = userIds.length > 0
-    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+    ? await User.findAll({ where: { id: { [Op.in]: userIds } }, attributes: ['id', 'name'] })
     : []
   const userMap = Object.fromEntries(users.map((u) => [u.id, u.name]))
 

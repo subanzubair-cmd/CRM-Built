@@ -2,7 +2,7 @@ import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import type { Permission } from '@crm/shared'
-import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 import authConfig from './auth.config'
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -16,7 +16,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
 
-        const user = await prisma.user.findUnique({
+        const user = await User.findOne({
           where: { email: credentials.email as string },
         })
 
@@ -65,15 +65,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       const shouldRefresh = trigger === 'update' || now - last > 15 * 60 * 1000
       if (!shouldRefresh) return token
 
-      const dbUser = await prisma.user.findUnique({
-        where: { id: token.userId as string },
-        select: {
-          sessionVersion: true,
-          permissions: true,
-          marketIds: true,
-          status: true,
-          roleId: true,
-        },
+      const dbUser = await User.findByPk(token.userId as string, {
+        attributes: ['sessionVersion', 'permissions', 'marketIds', 'status', 'roleId'],
       })
       const tokenVersion = (token.sessionVersion as number | undefined) ?? 0
       if (

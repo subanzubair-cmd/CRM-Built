@@ -8,6 +8,7 @@ import { PipelineTable } from '@/components/pipelines/PipelineTable'
 import { InventoryKanbanBoard } from '@/components/pipelines/InventoryKanbanBoard'
 import { LeadFilters } from '@/components/leads/LeadFilters'
 import { ViewToggle } from '@/components/leads/ViewToggle'
+import { User } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string; view?: string; sort?: string; order?: string }>
@@ -30,10 +31,10 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       page: sp.page ? parseInt(sp.page) : 1,
       pageSize: isBoardView ? 500 : 50,
     }),
-    prisma.user.findMany({
+    User.findAll({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
     }),
   ])
 

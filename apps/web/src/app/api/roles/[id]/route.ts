@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Role } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -22,12 +22,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateRoleSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const role = await prisma.role.findUnique({ where: { id } })
+  const role = await Role.findByPk(id)
   if (!role) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (role.isSystem) return NextResponse.json({ error: 'System roles cannot be modified' }, { status: 403 })
 
-  const updated = await prisma.role.update({ where: { id }, data: parsed.data })
-  return NextResponse.json({ success: true, data: updated })
+  await role.update(parsed.data)
+  return NextResponse.json({ success: true, data: role })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -37,10 +37,10 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const role = await prisma.role.findUnique({ where: { id } })
+  const role = await Role.findByPk(id)
   if (!role) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (role.isSystem) return NextResponse.json({ error: 'System roles cannot be deleted' }, { status: 403 })
 
-  await prisma.role.delete({ where: { id } })
+  await role.destroy()
   return NextResponse.json({ success: true })
 }

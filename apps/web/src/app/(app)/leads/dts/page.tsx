@@ -9,6 +9,7 @@ import { SavedFilterChips } from '@/components/leads/SavedFilterChips'
 import { NewLeadButton } from '@/components/leads/NewLeadButton'
 import { KanbanBoard } from '@/components/leads/KanbanBoard'
 import { ViewToggle } from '@/components/leads/ViewToggle'
+import { User } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; stage?: string; assignedToId?: string; isHot?: string; page?: string; view?: string; sort?: string; order?: string }>
@@ -33,10 +34,10 @@ export default async function LeadsDtsPage({ searchParams }: PageProps) {
       sort: sp.sort,
       order: sp.order as 'asc' | 'desc' | undefined,
     }),
-    prisma.user.findMany({
+    User.findAll({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
     }),
   ])
 

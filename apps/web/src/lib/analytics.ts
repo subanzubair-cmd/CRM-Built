@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 
 /**
  * Build a property-scoped Prisma where fragment for the user's markets.
@@ -379,9 +380,9 @@ export async function getTeamPerformance(marketIds?: string[] | null) {
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
-  const users = await prisma.user.findMany({
+  const users = await User.findAll({
     where: { status: 'ACTIVE' },
-    select: { id: true, name: true },
+    attributes: ['id', 'name'],
   })
 
   const results = await Promise.all(

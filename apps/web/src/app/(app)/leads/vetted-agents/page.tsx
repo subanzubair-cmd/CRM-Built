@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { LeadTable } from '@/components/leads/LeadTable'
 import { LeadFilters } from '@/components/leads/LeadFilters'
+import { User } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string; sort?: string; order?: string }>
@@ -59,10 +60,10 @@ export default async function VettedAgentsPage({ searchParams }: PageProps) {
       take: pageSize,
     }),
     prisma.property.count({ where }),
-    prisma.user.findMany({
+    User.findAll({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
     }),
   ])
 

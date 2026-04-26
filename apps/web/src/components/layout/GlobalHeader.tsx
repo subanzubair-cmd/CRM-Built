@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 import { AddLeadButton } from '@/components/leads/AddLeadButton'
 import { NotificationBell } from '@/components/layout/NotificationBell'
 import { getUnreadNotifications } from '@/lib/notifications'
@@ -14,9 +14,8 @@ export async function GlobalHeader() {
 
   // Pull avatar + email from DB (session may not have all fields)
   const userRow = userId
-    ? await prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true, email: true, avatarUrl: true },
+    ? await User.findByPk(userId, {
+        attributes: ['name', 'email', 'avatarUrl'],
       })
     : null
 

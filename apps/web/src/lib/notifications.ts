@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { User, Role, Op } from '@crm/database'
 
 type NotificationType = 'NEW_LEAD' | 'MESSAGE_RECEIVED' | 'TASK_DUE' | 'STAGE_CHANGE' | 'MENTION' | 'SYSTEM'
 
@@ -42,37 +43,46 @@ async function resolveRecipients(
   userId: string,
   contextRoleId?: string,
 ): Promise<string[]> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, vacationMode: true, roleId: true },
+  const user = await User.findByPk(userId, {
+    attributes: ['id', 'vacationMode', 'roleId'],
   })
 
   if (!user) return [userId]
   if (!user.vacationMode) return [user.id]
 
   const peerRoleId = contextRoleId ?? user.roleId
-  const peers = await prisma.user.findMany({
+  const peers = await User.findAll({
     where: {
       roleId: peerRoleId,
-      id: { not: user.id },
+      id: { [Op.ne]: user.id },
       vacationMode: false,
       status: 'ACTIVE',
     },
-    select: { id: true },
+    attributes: ['id'],
   })
 
   let recipients: string[] = peers.map((p) => p.id)
 
   if (recipients.length === 0) {
-    const fallbackUsers = await prisma.user.findMany({
-      where: {
-        role: { name: { in: FALLBACK_ROLE_NAMES } },
-        vacationMode: false,
-        status: 'ACTIVE',
-      },
-      select: { id: true },
+    // Fallback: any active non-vacationing user holding one of the fallback
+    // role names. Two-step query because the original Prisma version used
+    // a relation filter (`role: { name: { in: ... } }`) and Sequelize doesn't
+    // do those without an `include` join.
+    const fallbackRoles = await Role.findAll({
+      where: { name: { [Op.in]: FALLBACK_ROLE_NAMES } },
+      attributes: ['id'],
     })
-    recipients = fallbackUsers.map((u) => u.id)
+    if (fallbackRoles.length > 0) {
+      const fallbackUsers = await User.findAll({
+        where: {
+          roleId: { [Op.in]: fallbackRoles.map((r) => r.id) },
+          vacationMode: false,
+          status: 'ACTIVE',
+        },
+        attributes: ['id'],
+      })
+      recipients = fallbackUsers.map((u) => u.id)
+    }
   }
 
   if (recipients.length === 0) {

@@ -23,8 +23,9 @@ export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
 //   - Market, TwilioNumber, ListStackSource (the ones the original list
 //     covered). LeadSource, Tag, AiConfiguration, GlobalFolder, GlobalFile,
 //     CommProviderConfig were never in this re-export, so no removal needed.
+// User, Role migrated in Phase 3 → exported from ./models below as classes.
 export type {
-  User, Role, Property, Contact, PropertyContact,
+  Property, Contact, PropertyContact,
   StageHistory, Conversation, Message, Note, Task, Appointment,
   Campaign, CampaignStep, CampaignEnrollment, Automation, AutomationAction,
   Buyer, BuyerCriteria, BuyerMatch, BuyerOffer, Vendor,

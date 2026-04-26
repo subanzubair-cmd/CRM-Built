@@ -1,10 +1,9 @@
 /**
  * Sequelize model registry — barrel file.
  *
- * As clusters migrate, each model class is exported from a sibling file
- * and re-exported here. The Sequelize singleton picks them up via
- * `addModels()` in the bootstrapper below. Then `_associations.ts`
- * (loaded LAST) wires cross-model relations to avoid circular imports.
+ * Order matters: classes that other classes have `@ForeignKey(() => X)`
+ * pointing at must be registered first. We register Phase 3's parent
+ * tables (User, Role) before the join/config tables that reference them.
  */
 import { sequelize } from '../sequelize'
 
@@ -19,29 +18,17 @@ import { GlobalFile } from './GlobalFile'
 import { ListStackSource } from './ListStackSource'
 import { CommProviderConfig } from './CommProviderConfig'
 
-// Register all migrated model classes with the Sequelize instance.
-// Order matters when using sequelize-typescript decorators that reference
-// other classes — children before parents. Phase 2 leaves are independent
-// (only GlobalFile → GlobalFolder, registered in that order below).
+// ── Phase 3: User & RBAC ────────────────────────────────────────────────────
+import { User } from './User'
+import { Role } from './Role'
+import { UserRoleConfig } from './UserRoleConfig'
+import { ApiToken } from './ApiToken'
+import { UserCampaignAssignment } from './UserCampaignAssignment'
+import { LeadCampaignRoleToggle } from './LeadCampaignRoleToggle'
+import { PropertyTeamAssignment } from './PropertyTeamAssignment'
+
 sequelize.addModels([
-  LeadSource,
-  TwilioNumber,
-  Tag,
-  Market,
-  AiConfiguration,
-  GlobalFolder, // before GlobalFile (FK target)
-  GlobalFile,
-  ListStackSource,
-  CommProviderConfig,
-])
-
-// Wire cross-model associations AFTER addModels (the registry must be
-// populated first). Importing this module is a side effect.
-import { wireAssociations } from './_associations'
-wireAssociations()
-
-// ── Public re-exports ───────────────────────────────────────────────────────
-export {
+  // Phase 2 leaves
   LeadSource,
   TwilioNumber,
   Tag,
@@ -51,4 +38,41 @@ export {
   GlobalFile,
   ListStackSource,
   CommProviderConfig,
+
+  // Phase 3: register parents first so @ForeignKey decorators on the
+  // children can resolve them.
+  Role,
+  User,
+  UserRoleConfig,
+  ApiToken,
+  UserCampaignAssignment,
+  LeadCampaignRoleToggle,
+  PropertyTeamAssignment,
+])
+
+// Wire cross-model associations AFTER addModels (the registry must be
+// populated first).
+import { wireAssociations } from './_associations'
+wireAssociations()
+
+// ── Public re-exports ───────────────────────────────────────────────────────
+export {
+  // Phase 2
+  LeadSource,
+  TwilioNumber,
+  Tag,
+  Market,
+  AiConfiguration,
+  GlobalFolder,
+  GlobalFile,
+  ListStackSource,
+  CommProviderConfig,
+  // Phase 3
+  User,
+  Role,
+  UserRoleConfig,
+  ApiToken,
+  UserCampaignAssignment,
+  LeadCampaignRoleToggle,
+  PropertyTeamAssignment,
 }

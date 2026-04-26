@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { User } from '@crm/database'
 import { z } from 'zod'
 import {
   makeConferenceCall,
@@ -33,9 +34,8 @@ export async function POST(req: NextRequest) {
 
   const userId = ((session as any)?.user?.id ?? '') as string
 
-  const agent = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, name: true, phone: true },
+  const agent = await User.findByPk(userId, {
+    attributes: ['id', 'name', 'phone'],
   })
 
   if (!agent?.phone) {

@@ -3,7 +3,7 @@ import { auth } from '@/auth'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
-import { prisma } from '@/lib/prisma'
+import { User, Role } from '@crm/database'
 import { getUserList } from '@/lib/settings'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   const parsed = InviteUserSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const existing = await prisma.user.findUnique({ where: { email: parsed.data.email } })
+  const existing = await User.findOne({ where: { email: parsed.data.email } })
   if (existing) return NextResponse.json({ error: 'Email already in use' }, { status: 409 })
 
   // Determine password handling
@@ -58,19 +58,19 @@ export async function POST(req: NextRequest) {
     status = 'INVITED'
   }
 
-  const user = await prisma.user.create({
-    data: {
-      name: parsed.data.name,
-      email: parsed.data.email,
-      phone: parsed.data.phone ?? null,
-      roleId: parsed.data.roleId,
-      permissions: parsed.data.permissions ?? [],
-      marketIds: parsed.data.marketIds ?? [],
-      passwordHash,
-      status,
-    },
-    include: { role: { select: { id: true, name: true } } },
+  const user = await User.create({
+    name: parsed.data.name,
+    email: parsed.data.email,
+    phone: parsed.data.phone ?? null,
+    roleId: parsed.data.roleId,
+    permissions: parsed.data.permissions ?? [],
+    marketIds: parsed.data.marketIds ?? [],
+    passwordHash,
+    status,
   })
+
+  // Eager-load role for the response (mirrors Prisma's `include`).
+  const role = await Role.findByPk(user.roleId, { attributes: ['id', 'name'] })
 
   // Build the invite link (the actual /set-password page is a future build).
   // For now we just return it so the admin UI can show it / log it.
@@ -83,5 +83,8 @@ export async function POST(req: NextRequest) {
     console.log(`[users] Invite link for ${parsed.data.email}: ${inviteLink}`)
   }
 
-  return NextResponse.json({ ...user, inviteLink }, { status: 201 })
+  return NextResponse.json(
+    { ...user.toJSON(), role: role?.toJSON() ?? null, inviteLink },
+    { status: 201 },
+  )
 }
