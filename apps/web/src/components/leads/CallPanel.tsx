@@ -351,7 +351,7 @@ export function CallPanel({
                 ))}
                 {twilioNumbers.length === 0 && (
                   <p className="text-xs text-gray-400 py-1">
-                    No Twilio numbers found
+                    No phone numbers found
                   </p>
                 )}
               </div>

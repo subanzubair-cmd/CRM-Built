@@ -202,7 +202,7 @@ export function PhoneNumbersPanel() {
         <div>
           <h3 className="text-sm font-semibold text-gray-800">Phone Numbers</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Every number across Twilio, Telnyx, and SignalHouse with their campaign linkage and 30-day activity.
+            Every number from your active SMS &amp; voice provider, with campaign linkage and 30-day activity.
           </p>
         </div>
         <button

@@ -47,7 +47,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
   {
     label: 'Marketing',
     cards: [
-      { key: 'sms-integration', title: 'SMS & Phone System Integration', description: 'Configure Twilio / provider credentials', icon: Plug, label: 'Integration' },
+      { key: 'sms-integration', title: 'SMS & Phone Number Integration', description: 'Configure your SMS & voice provider (Twilio, Telnyx, Signal House)', icon: Plug, label: 'Integration' },
       { key: 'phone-numbers', title: 'Phone Numbers', description: 'Buy / Manage phone numbers', icon: Phone, label: 'Phone Numbers' },
       { key: 'call-flow', title: 'Call Flow', description: 'Configure how incoming calls are routed', icon: PhoneCall, label: 'Call Flow' },
     ],
