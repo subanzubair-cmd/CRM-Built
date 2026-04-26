@@ -35,6 +35,13 @@ interface Message {
   /** ActiveCall.id reference for CALL messages — drives the inline
    *  recording player when present. */
   twilioSid?: string | null
+  /** Read-time enrichment from ActiveCall for CALL messages
+   *  (set by getConversationMessages — see lib/inbox.ts). */
+  callCost?: number | null
+  callCostCurrency?: string | null
+  callHasRecording?: boolean
+  callDurationSec?: number | null
+  callStatus?: string | null
   createdAt: Date
   sentBy: { name: string } | null
 }
@@ -198,14 +205,29 @@ export function MessageThread({ messages: initialMessages }: Props) {
                         <em className="opacity-60">No content</em>
                       )}
                     </div>
-                    {/* Inline recording player for CALL messages that
-                        have an ActiveCall.id linked. CallRecordingPlayer
-                        lazy-loads the audio via /api/calls/[id]/recording
-                        and shows nothing if no recording exists for the
-                        call. */}
+                    {/* CALL message extras — cost + recording player.
+                        Read-time enriched by getConversationMessages
+                        joining ActiveCall on twilioSid; no extra
+                        fetches per-message. */}
                     {msg.channel === 'CALL' && msg.twilioSid && (
-                      <div className={isOutbound ? 'self-end' : 'self-start'}>
-                        <CallRecordingPlayer callId={msg.twilioSid} />
+                      <div className={`flex flex-col gap-1 ${isOutbound ? 'items-end' : 'items-start'}`}>
+                        {/* Cost line — renders only when ActiveCall has a
+                            cost recorded. Sub-cent formats with 4 decimals. */}
+                        {typeof msg.callCost === 'number' && (
+                          <span className="text-[10px] text-gray-500 font-mono">
+                            Cost:{' '}
+                            <span className="text-emerald-700 font-semibold">
+                              {(msg.callCostCurrency ?? 'USD') === 'USD' ? '$' : ''}
+                              {msg.callCost < 0.01 ? msg.callCost.toFixed(4) : msg.callCost.toFixed(2)}
+                              {(msg.callCostCurrency ?? 'USD') !== 'USD' ? ` ${msg.callCostCurrency}` : ''}
+                            </span>
+                          </span>
+                        )}
+                        {/* Recording player — only when ActiveCall has a
+                            stored recording (recordingStorageKey set). */}
+                        {msg.callHasRecording && (
+                          <CallRecordingPlayer callId={msg.twilioSid} />
+                        )}
                       </div>
                     )}
                     <div className="flex items-center gap-1">

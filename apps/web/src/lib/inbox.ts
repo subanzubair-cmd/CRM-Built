@@ -159,7 +159,42 @@ export async function getConversationMessages(propertyId: string, limit = 200) {
     limit,
     raw: true,
     nest: true,
-  })
+  }) as any[]
+
+  // For CALL messages, join ActiveCall on twilioSid (= ActiveCall.id)
+  // and surface cost + recordingStorageKey + duration at read time.
+  // Done in a single follow-up query rather than a Sequelize include
+  // because the FK is conventional (twilioSid) rather than declared.
+  const callIds = Array.from(
+    new Set(
+      messages
+        .filter((m) => m.channel === 'CALL' && m.twilioSid)
+        .map((m) => m.twilioSid as string),
+    ),
+  )
+  if (callIds.length > 0) {
+    const { ActiveCall } = await import('@crm/database')
+    const calls = await ActiveCall.findAll({
+      where: { id: callIds },
+      attributes: ['id', 'cost', 'costCurrency', 'recordingStorageKey', 'startedAt', 'endedAt', 'status'],
+      raw: true,
+    }) as any[]
+    const byId = new Map<string, any>(calls.map((c) => [c.id, c]))
+    for (const m of messages) {
+      if (m.channel === 'CALL' && m.twilioSid) {
+        const c = byId.get(m.twilioSid)
+        if (c) {
+          m.callCost = c.cost != null ? Number(c.cost) : null
+          m.callCostCurrency = c.costCurrency ?? null
+          m.callHasRecording = !!c.recordingStorageKey
+          m.callDurationSec = c.startedAt && c.endedAt
+            ? Math.max(0, Math.round((new Date(c.endedAt).getTime() - new Date(c.startedAt).getTime()) / 1000))
+            : null
+          m.callStatus = c.status ?? null
+        }
+      }
+    }
+  }
   return messages
 }
 

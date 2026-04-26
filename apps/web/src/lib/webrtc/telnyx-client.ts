@@ -18,6 +18,30 @@ import { TelnyxRTC } from '@telnyx/webrtc'
 
 type Listener<T = any> = (data: T) => void
 
+const REMOTE_AUDIO_EL_ID = 'crm-call-remote-audio'
+
+/**
+ * Lazily create (and cache) a hidden <audio> element that the Telnyx
+ * SDK attaches the remote (customer) MediaStream to. Without this,
+ * the SDK negotiates the peer connection but the stream never plays
+ * through speakers — the agent hears nothing.
+ *
+ * Cached on globalThis so HMR doesn't multiply the element across
+ * dev reloads.
+ */
+function ensureRemoteAudioElement(): HTMLAudioElement | null {
+  if (typeof document === 'undefined') return null
+  const existing = document.getElementById(REMOTE_AUDIO_EL_ID) as HTMLAudioElement | null
+  if (existing) return existing
+  const el = document.createElement('audio')
+  el.id = REMOTE_AUDIO_EL_ID
+  el.autoplay = true
+  ;(el as any).playsInline = true
+  el.style.display = 'none'
+  document.body.appendChild(el)
+  return el
+}
+
 interface CredentialsResponseJwt {
   provider: 'telnyx'
   mode?: 'jwt'
@@ -102,6 +126,13 @@ class TelnyxClientImpl {
   private async connect(): Promise<void> {
     const credentials = await this.fetchCredentials()
 
+    // Pass remoteElement to the SDK so it auto-attaches the customer's
+    // audio stream to a hidden <audio> tag and plays it through the
+    // agent's speakers. Without this, we'd hear nothing — the SDK has
+    // the stream but doesn't auto-play. Done at SDK construction so
+    // it's wired BEFORE the peer connection is negotiated.
+    const remoteEl = ensureRemoteAudioElement()
+
     // Two registration modes for the SDK:
     //   - static: pass the SIP username + password directly (operator
     //             pasted them from a Telnyx Credentials-type SIP
@@ -112,9 +143,13 @@ class TelnyxClientImpl {
         ? new TelnyxRTC({
             login: credentials.sipUsername,
             password: credentials.sipPassword,
+            // @ts-ignore — SDK accepts both the element and its ID.
+            remoteElement: remoteEl ?? undefined,
           })
         : new TelnyxRTC({
             login_token: credentials.loginToken,
+            // @ts-ignore
+            remoteElement: remoteEl ?? undefined,
           })
 
     // Wire all SDK events through our pub/sub so consumers don't import

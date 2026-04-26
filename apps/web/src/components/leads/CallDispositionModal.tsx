@@ -349,43 +349,19 @@ export function CallDispositionModal({
         ? `${durationSecs}s`
         : `${Math.floor(durationSecs / 60)}m ${durationSecs % 60}s`
 
-    // Fetch per-call cost from ActiveCall, polling briefly because:
-    //   - Telnyx call.hangup webhook fires within a few hundred ms
-    //   - But cost may NOT be inline; CDR fallback adds another ~8s
-    //   - Agents commonly submit the disposition immediately after End
-    //     so the modal often beats both webhooks
-    // Wait up to 10s with 750ms intervals; bail the moment cost lands
-    // OR timeout silently (we save without it rather than block the
-    // agent forever).
-    let costLabel: string | null = null
-    if (callId) {
-      const deadline = Date.now() + 10_000
-      while (Date.now() < deadline) {
-        try {
-          const res = await fetch(`/api/calls/${callId}/cost`)
-          if (res.ok) {
-            const j = (await res.json()) as { cost: number | null; costCurrency: string | null }
-            if (j.cost != null) {
-              // Sub-cent calls show 4 decimals; otherwise 2.
-              const fixed = j.cost < 0.01 ? j.cost.toFixed(4) : j.cost.toFixed(2)
-              const isUsd = (j.costCurrency ?? 'USD') === 'USD'
-              costLabel = isUsd ? `$${fixed}` : `${fixed} ${j.costCurrency}`
-              break
-            }
-          }
-        } catch {
-          // Network blip — keep polling.
-        }
-        // Short delay between polls so we don't hammer the server.
-        await new Promise((r) => setTimeout(r, 750))
-      }
-    }
+    // Don't fetch cost inline — the disposition save shouldn't block
+    // on the Telnyx call.hangup webhook (which can be ~1s late on the
+    // inline cost path and ~8s late on the CDR fallback path). The
+    // /activity page + MessageThread join Message → ActiveCall on
+    // twilioSid (= ActiveCall.id) at READ time and pull cost from the
+    // ActiveCall row, so the cost surfaces whenever the user looks at
+    // the activity feed — no race, no waiting.
 
     const bodyParts = [
       connLabel && `${connLabel} (${outcomeLabel})`,
       enterReason,
       notes.trim(),
-      `(${durLabel}${costLabel ? ` · ${costLabel}` : ''})`,
+      `(${durLabel})`,
     ].filter(Boolean)
 
     try {
