@@ -23,19 +23,10 @@ export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
 //   - Market, TwilioNumber, ListStackSource (the ones the original list
 //     covered). LeadSource, Tag, AiConfiguration, GlobalFolder, GlobalFile,
 //     CommProviderConfig were never in this re-export, so no removal needed.
-// Migrated cluster type re-exports are removed; the Sequelize class
-// re-exported from ./models below serves both purposes.
-//   Phase 3: User, Role
-//   Phase 4: Campaign, CampaignStep, CampaignEnrollment, Automation,
-//            AutomationAction
-//   Phase 5: Contact, Buyer, BuyerCriteria, Vendor
-//   Phase 6: Property, PropertyContact, StageHistory, ActivityLog,
-//            Note, Task, Appointment, BuyerMatch, BuyerOffer
-//   Phase 7: Conversation, Message, Notification, EsignDocument,
-//            PropertyFile
-export type {
-  SavedFilter, AiLog, WebhookEvent,
-} from '../node_modules/.prisma/client'
+// All Prisma row-shape types previously re-exported here have moved to
+// Sequelize classes (Phase 2 through Phase 8 cumulative). Callers using
+// `import type { User, Property, ... } from '@crm/database'` now get the
+// Sequelize class, which is both runtime + type.
 
 // Prisma's runtime enums — kept for backwards compat. Prefer importing the
 // equivalents from `./enums` in new code.

@@ -44,6 +44,12 @@ import { Notification } from './Notification'
 import { EsignTemplate } from './EsignTemplate'
 import { EsignDocument } from './EsignDocument'
 import { PropertyFile } from './PropertyFile'
+import { AiLog } from './AiLog'
+import { SavedFilter } from './SavedFilter'
+import { FinancialGoal } from './FinancialGoal'
+import { FinancialAccount } from './FinancialAccount'
+import { FinancialTransaction } from './FinancialTransaction'
+import { AccountTag } from './AccountTag'
 
 export function wireAssociations(): void {
   // ── Phase 2: Independent leaves ───────────────────────────────────────────
@@ -282,4 +288,31 @@ export function wireAssociations(): void {
   // PropertyFile.
   Property.hasMany(PropertyFile, { foreignKey: 'propertyId', as: 'files' })
   PropertyFile.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  // ── Phase 8: Logs & analytics ─────────────────────────────────────────────
+  Property.hasMany(AiLog, { foreignKey: 'propertyId', as: 'aiLogs' })
+  AiLog.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  User.hasMany(SavedFilter, { foreignKey: 'userId', as: 'savedFilters' })
+  SavedFilter.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+
+  User.hasMany(FinancialGoal, { foreignKey: 'userId', as: 'financialGoals' })
+  FinancialGoal.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+
+  FinancialAccount.hasMany(FinancialTransaction, {
+    foreignKey: 'accountId',
+    as: 'transactions',
+  })
+  FinancialTransaction.belongsTo(FinancialAccount, {
+    foreignKey: 'accountId',
+    as: 'account',
+  })
+  AccountTag.hasMany(FinancialTransaction, {
+    foreignKey: 'categoryId',
+    as: 'transactions',
+  })
+  FinancialTransaction.belongsTo(AccountTag, {
+    foreignKey: 'categoryId',
+    as: 'category',
+  })
 }

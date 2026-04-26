@@ -65,6 +65,18 @@ import { EsignTemplate } from './EsignTemplate'
 import { EsignDocument } from './EsignDocument'
 import { PropertyFile } from './PropertyFile'
 
+// ── Phase 8: Logs & analytics ──────────────────────────────────────────────
+import { AiLog } from './AiLog'
+import { WebhookEvent } from './WebhookEvent'
+import { SavedFilter } from './SavedFilter'
+import { FinancialGoal } from './FinancialGoal'
+import { FinancialAccount } from './FinancialAccount'
+import { FinancialTransaction } from './FinancialTransaction'
+import { AccountTag } from './AccountTag'
+import { Webhook } from './Webhook'
+import { CustomFormConfig } from './CustomFormConfig'
+import { WebFormConfig } from './WebFormConfig'
+
 sequelize.addModels([
   // Phase 2 leaves (parents first)
   LeadSource,
@@ -124,6 +136,19 @@ sequelize.addModels([
   EsignTemplate,
   EsignDocument,
   PropertyFile,
+
+  // Phase 8 Logs & analytics (parents first: FinancialAccount + AccountTag
+  // before FinancialTransaction).
+  AiLog,
+  WebhookEvent,
+  SavedFilter,
+  FinancialGoal,
+  FinancialAccount,
+  AccountTag,
+  FinancialTransaction,
+  Webhook,
+  CustomFormConfig,
+  WebFormConfig,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -185,4 +210,15 @@ export {
   EsignTemplate,
   EsignDocument,
   PropertyFile,
+  // Phase 8
+  AiLog,
+  WebhookEvent,
+  SavedFilter,
+  FinancialGoal,
+  FinancialAccount,
+  AccountTag,
+  FinancialTransaction,
+  Webhook,
+  CustomFormConfig,
+  WebFormConfig,
 }
