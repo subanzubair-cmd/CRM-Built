@@ -1,5 +1,14 @@
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import {
+  Conversation,
+  Message,
+  Property,
+  PropertyContact,
+  Contact,
+  User,
+  Op,
+  literal,
+} from '@crm/database'
+import type { WhereOptions, Includeable } from '@crm/database'
 
 export type ChannelFilter = 'ALL' | 'SMS' | 'CALL' | 'NOTE'
 
@@ -22,86 +31,136 @@ export interface ConversationListFilter {
 export async function getConversationList(filter: ConversationListFilter) {
   const { unreadOnly, channel = 'ALL', page = 1, pageSize = 50, marketIds } = filter
 
-  const where: Prisma.ConversationWhereInput = {
-    ...(unreadOnly && { isRead: false }),
-    ...(channel !== 'ALL' && {
-      messages: {
-        some: { channel: channel === 'NOTE' ? 'NOTE' : channel === 'CALL' ? 'CALL' : 'SMS' },
+  // Build the conversation where. Channel filtering via "some" (Prisma) is
+  // handled with a literal EXISTS subquery — we want conversations that
+  // have at least one message of the chosen channel, but we DO NOT want to
+  // restrict the eager-loaded messages to only that channel (the UI shows
+  // the most recent message regardless).
+  const where: WhereOptions = {}
+  if (unreadOnly) (where as any).isRead = false
+  if (channel !== 'ALL') {
+    const channelCode = channel === 'NOTE' ? 'NOTE' : channel === 'CALL' ? 'CALL' : 'SMS'
+    ;(where as any).id = {
+      [Op.in]: literal(
+        `(SELECT DISTINCT "conversationId" FROM "Message" WHERE "channel" = '${channelCode}' AND "conversationId" IS NOT NULL)`,
+      ),
+    }
+  }
+
+  // Property scoping: when marketIds is null/undefined → no scope (admin
+  // sees everything). When [] → impossible filter (returns nothing). When
+  // [...ids] → restrict via include.where on Property.
+  const propertyInclude: Includeable = {
+    model: Property,
+    as: 'property',
+    attributes: [
+      'id',
+      'streetAddress',
+      'city',
+      'state',
+      'zip',
+      'leadType',
+      'propertyStatus',
+    ],
+    include: [
+      {
+        model: PropertyContact,
+        as: 'contacts',
+        where: { isPrimary: true },
+        required: false,
+        limit: 1,
+        include: [
+          {
+            model: Contact,
+            as: 'contact',
+            attributes: ['id', 'firstName', 'lastName', 'phone', 'email'],
+          },
+        ],
       },
-    }),
-    ...(marketIds !== null && marketIds !== undefined
-      ? { property: { marketId: marketIds.length > 0 ? { in: marketIds } : '__NO_MARKET__' } }
-      : {}),
+    ],
+  }
+  if (marketIds !== null && marketIds !== undefined) {
+    ;(propertyInclude as any).required = true
+    ;(propertyInclude as any).where =
+      marketIds.length > 0
+        ? { marketId: { [Op.in]: marketIds } }
+        : { marketId: '__NO_MARKET__' }
   }
 
   const [rows, total] = await Promise.all([
-    prisma.conversation.findMany({
+    Conversation.findAll({
       where,
-      include: {
-        property: {
-          select: {
-            id: true,
-            streetAddress: true,
-            city: true,
-            state: true,
-            zip: true,
-            leadType: true,
-            propertyStatus: true,
-            contacts: {
-              where: { isPrimary: true },
-              take: 1,
-              include: {
-                contact: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    phone: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-            _count: {
-              select: {
-                tasks: { where: { status: 'PENDING' } },
-              },
-            },
-          },
+      include: [
+        propertyInclude,
+        // Last message — "separate: true" runs a second query per
+        // conversation. Combined with limit:1 + reverse order this matches
+        // the original `messages: { orderBy: desc, take: 1 }`.
+        {
+          model: Message,
+          as: 'messages',
+          separate: true,
+          order: [['createdAt', 'DESC']],
+          limit: 1,
+          attributes: ['id', 'body', 'channel', 'createdAt'],
         },
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            id: true,
-            body: true,
-            channel: true,
-            createdAt: true,
-          },
-        },
-        _count: { select: { messages: true } },
+      ],
+      attributes: {
+        // Replace Prisma's `_count: { messages: true }` and
+        // `property._count.tasks` with correlated subqueries.
+        include: [
+          [
+            literal(
+              `(SELECT COUNT(*)::int FROM "Message" m WHERE m."conversationId" = "Conversation"."id")`,
+            ),
+            'messageCount',
+          ],
+          [
+            literal(
+              `(SELECT COUNT(*)::int FROM "Task" t WHERE t."propertyId" = "Conversation"."propertyId" AND t."status" = 'PENDING')`,
+            ),
+            'pendingTasksCount',
+          ],
+        ],
       },
-      orderBy: { lastMessageAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      order: [['lastMessageAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.conversation.count({ where }),
+    Conversation.count({ where, distinct: true, col: 'id' }),
   ])
 
-  return { rows, total, page, pageSize }
+  // Re-shape into the legacy `_count` envelope so the inbox UI doesn't
+  // need to change.
+  const shaped = rows.map((row) => {
+    const json = row.get({ plain: true }) as any
+    return {
+      ...json,
+      _count: { messages: Number(json.messageCount ?? 0) },
+      property: json.property
+        ? {
+            ...json.property,
+            _count: { tasks: Number(json.pendingTasksCount ?? 0) },
+          }
+        : null,
+    }
+  })
+
+  return { rows: shaped, total, page, pageSize }
 }
 
 export type ConversationRow = Awaited<ReturnType<typeof getConversationList>>['rows'][number]
 
 export async function getConversationMessages(propertyId: string, limit = 200) {
-  return prisma.message.findMany({
+  const messages = await Message.findAll({
     where: { propertyId },
-    include: {
-      sentBy: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
+    include: [{ model: User, as: 'sentBy', attributes: ['id', 'name'] }],
+    order: [['createdAt', 'ASC']],
+    limit,
+    raw: true,
+    nest: true,
   })
+  return messages
 }
 
 export type ConversationMessage = Awaited<ReturnType<typeof getConversationMessages>>[number]
@@ -110,46 +169,64 @@ export type ConversationMessage = Awaited<ReturnType<typeof getConversationMessa
  * Fetch context data for the right panel: property + contact + task/lead counts.
  */
 export async function getConversationContext(propertyId: string) {
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    select: {
-      id: true,
-      streetAddress: true,
-      city: true,
-      state: true,
-      zip: true,
-      propertyStatus: true,
-      leadType: true,
-      tmStage: true,
-      inventoryStage: true,
-      assignedTo: { select: { name: true } },
-      contacts: {
-        include: {
-          contact: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              phone: true,
-              phone2: true,
-              email: true,
-              type: true,
-            },
-          },
-        },
-        orderBy: { isPrimary: 'desc' },
-      },
-      _count: {
-        select: {
-          tasks: { where: { status: 'PENDING' } },
-          messages: true,
-          conversations: true,
-        },
-      },
+  const property = await Property.findByPk(propertyId, {
+    attributes: {
+      include: [
+        [
+          literal(
+            `(SELECT COUNT(*)::int FROM "Task" t WHERE t."propertyId" = "Property"."id" AND t."status" = 'PENDING')`,
+          ),
+          'pendingTasksCount',
+        ],
+        [
+          literal(
+            `(SELECT COUNT(*)::int FROM "Message" m WHERE m."propertyId" = "Property"."id")`,
+          ),
+          'messageCount',
+        ],
+        [
+          literal(
+            `(SELECT COUNT(*)::int FROM "Conversation" c WHERE c."propertyId" = "Property"."id")`,
+          ),
+          'conversationCount',
+        ],
+      ],
     },
+    include: [
+      { model: User, as: 'assignedTo', attributes: ['name'] },
+      {
+        model: PropertyContact,
+        as: 'contacts',
+        include: [
+          {
+            model: Contact,
+            as: 'contact',
+            attributes: [
+              'id',
+              'firstName',
+              'lastName',
+              'phone',
+              'phone2',
+              'email',
+              'type',
+            ],
+          },
+        ],
+        order: [['isPrimary', 'DESC']],
+      },
+    ],
   })
+  if (!property) return null
 
-  return property
+  const json = property.get({ plain: true }) as any
+  return {
+    ...json,
+    _count: {
+      tasks: Number(json.pendingTasksCount ?? 0),
+      messages: Number(json.messageCount ?? 0),
+      conversations: Number(json.conversationCount ?? 0),
+    },
+  }
 }
 
 export type ConversationContext = NonNullable<Awaited<ReturnType<typeof getConversationContext>>>
