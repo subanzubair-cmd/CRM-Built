@@ -5,11 +5,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property, PropertyFile } from '@crm/database'
 import { uploadFile, getPresignedUrl } from '@/lib/minio'
-import type { FileType } from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
+type FileTypeEnum = 'DOCUMENT' | 'IMAGE' | 'CONTRACT' | 'INSPECTION' | 'PHOTO' | 'OTHER'
 
 export async function GET(_req: NextRequest, { params }: Params) {
   const session = await auth()
@@ -17,9 +17,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const { id: propertyId } = await params
 
-  const files = await prisma.propertyFile.findMany({
+  const files = await PropertyFile.findAll({
     where: { propertyId },
-    orderBy: { createdAt: 'desc' },
+    order: [['createdAt', 'DESC']],
+    raw: true,
   })
 
   // Generate presigned download URLs (5-min expiry)
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { id: propertyId } = await params
   const sessionUser = (session as any)?.user ?? {}
 
-  const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true } })
+  const property = await Property.findByPk(propertyId, { attributes: ['id'] })
   if (!property) return NextResponse.json({ error: 'Property not found' }, { status: 404 })
 
   let formData: FormData
@@ -73,19 +74,17 @@ export async function POST(req: NextRequest, { params }: Params) {
     console.warn('[files] MinIO upload failed (continuing with DB record):', err)
   }
 
-  const fileType = inferFileType(mimeType, ext ?? '') as FileType
+  const fileType = inferFileType(mimeType, ext ?? '') as FileTypeEnum
 
-  const record = await prisma.propertyFile.create({
-    data: {
-      propertyId,
-      name: originalName,
-      mimeType,
-      size: buffer.length,
-      storageKey,
-      type: fileType,
-      uploadedById: sessionUser.id,
-      uploadedByName: sessionUser.name ?? undefined,
-    },
+  const record = await PropertyFile.create({
+    propertyId,
+    name: originalName,
+    mimeType,
+    size: buffer.length,
+    storageKey,
+    type: fileType,
+    uploadedById: sessionUser.id,
+    uploadedByName: sessionUser.name ?? null,
   })
 
   return NextResponse.json({ success: true, data: record }, { status: 201 })
@@ -93,8 +92,8 @@ export async function POST(req: NextRequest, { params }: Params) {
 
 function inferFileType(mimeType: string, ext: string): string {
   if (mimeType.startsWith('image/')) return 'IMAGE'
-  if (mimeType === 'application/pdf' || ext === 'pdf') return 'PDF'
+  if (mimeType === 'application/pdf' || ext === 'pdf') return 'DOCUMENT'
   if (ext === 'docx' || ext === 'doc') return 'DOCUMENT'
-  if (ext === 'xlsx' || ext === 'csv') return 'SPREADSHEET'
+  if (ext === 'xlsx' || ext === 'csv') return 'DOCUMENT'
   return 'OTHER'
 }

@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { PropertyFile } from '@crm/database'
 import { deleteFile } from '@/lib/minio'
 
 type Params = { params: Promise<{ id: string; fileId: string }> }
@@ -17,9 +17,8 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const { id: propertyId, fileId } = await params
 
-  const file = await prisma.propertyFile.findUnique({
-    where: { id: fileId },
-    select: { id: true, propertyId: true, storageKey: true },
+  const file = await PropertyFile.findByPk(fileId, {
+    attributes: ['id', 'propertyId', 'storageKey'],
   })
 
   if (!file) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -30,7 +29,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     console.warn('[files] MinIO delete failed (continuing):', err)
   })
 
-  await prisma.propertyFile.delete({ where: { id: fileId } })
+  await file.destroy()
 
   return NextResponse.json({ success: true })
 }

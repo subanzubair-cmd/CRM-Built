@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property, EsignDocument } from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const { id: propertyId } = await params
 
-  const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true } })
+  const property = await Property.findByPk(propertyId, { attributes: ['id'] })
   if (!property) return NextResponse.json({ error: 'Property not found' }, { status: 404 })
 
   const body = await req.json().catch(() => ({}))
@@ -28,13 +28,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Stub: log and create record
   console.log(`[esign] STUB request for property ${propertyId}: "${name}"`)
 
-  const doc = await (prisma as any).esignDocument.create({
-    data: {
-      propertyId,
-      name,
-      status: 'PENDING',
-      storageKey: body.fileId ? `file-ref:${body.fileId}` : undefined,
-    },
+  const doc = await EsignDocument.create({
+    propertyId,
+    name,
+    status: 'PENDING',
+    storageKey: body.fileId ? `file-ref:${body.fileId}` : null,
   })
 
   return NextResponse.json({ success: true, data: doc }, { status: 201 })
@@ -46,9 +44,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const { id: propertyId } = await params
 
-  const docs = await (prisma as any).esignDocument.findMany({
+  const docs = await EsignDocument.findAll({
     where: { propertyId },
-    orderBy: { createdAt: 'desc' },
+    order: [['createdAt', 'DESC']],
+    raw: true,
   })
 
   return NextResponse.json(docs)

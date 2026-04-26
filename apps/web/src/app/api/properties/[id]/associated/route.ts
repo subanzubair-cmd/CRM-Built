@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  PropertyContact,
+  Contact,
+  Property,
+  Op,
+  literal,
+} from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -10,49 +16,63 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  // Get all phone numbers from contacts on this property
-  const propertyContacts = await prisma.propertyContact.findMany({
+  // Pull all phone numbers belonging to contacts on THIS property.
+  const propertyContacts = await PropertyContact.findAll({
     where: { propertyId: id },
-    select: { contact: { select: { phone: true, phone2: true } } },
+    include: [
+      { model: Contact, as: 'contact', attributes: ['phone', 'phone2'] },
+    ],
+    raw: true,
+    nest: true,
   })
 
-  const phones = propertyContacts.flatMap((pc) =>
-    [pc.contact.phone, pc.contact.phone2].filter((p): p is string => Boolean(p))
-  )
+  const phones = (propertyContacts as unknown as Array<{ contact: { phone: string | null; phone2: string | null } }>)
+    .flatMap((pc) => [pc.contact?.phone, pc.contact?.phone2].filter((p): p is string => Boolean(p)))
 
   if (phones.length === 0) return NextResponse.json({ associated: [] })
 
-  // Find other properties that have any contact with a matching phone
-  const associated = await prisma.property.findMany({
+  // Use an EXISTS subquery on PropertyContact + Contact to find the OTHER
+  // properties whose contacts share any of these phone numbers. Replaces
+  // Prisma's nested `contacts: { some: { contact: { OR: ... } } }`.
+  const escapedPhones = phones.map((p) => `'${p.replace(/'/g, "''")}'`).join(',')
+  const associated = await Property.findAll({
     where: {
-      id: { not: id },
-      contacts: {
-        some: {
-          contact: {
-            OR: [
-              { phone: { in: phones } },
-              { phone2: { in: phones } },
-            ],
-          },
-        },
+      id: {
+        [Op.ne]: id,
+        [Op.in]: literal(
+          `(SELECT pc."propertyId" FROM "PropertyContact" pc JOIN "Contact" c ON c."id" = pc."contactId" WHERE c."phone" IN (${escapedPhones}) OR c."phone2" IN (${escapedPhones}))`,
+        ),
       },
     },
-    select: {
-      id: true,
-      streetAddress: true,
-      city: true,
-      state: true,
-      propertyStatus: true,
-      leadType: true,
-      activeLeadStage: true,
-      contacts: {
+    attributes: [
+      'id',
+      'streetAddress',
+      'city',
+      'state',
+      'propertyStatus',
+      'leadType',
+      'activeLeadStage',
+    ],
+    include: [
+      {
+        model: PropertyContact,
+        as: 'contacts',
         where: { isPrimary: true },
-        select: { contact: { select: { firstName: true, lastName: true, phone: true } } },
-        take: 1,
+        required: false,
+        limit: 1,
+        include: [
+          {
+            model: Contact,
+            as: 'contact',
+            attributes: ['firstName', 'lastName', 'phone'],
+          },
+        ],
       },
-    },
-    take: 10,
+    ],
+    limit: 10,
+    subQuery: false,
   })
 
-  return NextResponse.json({ associated })
+  const plain = associated.map((p) => p.get({ plain: true }))
+  return NextResponse.json({ associated: plain })
 }
