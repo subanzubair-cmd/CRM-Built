@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { CampaignStep, sequelize, Op } from '@crm/database'
 
 const CreateStepSchema = z.object({
   channel: z.enum(['SMS', 'CALL', 'RVM', 'EMAIL', 'NOTE', 'SYSTEM']),
@@ -31,16 +31,14 @@ export async function POST(
   const parsed = CreateStepSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const lastStep = await prisma.campaignStep.findFirst({
+  const lastStep = await CampaignStep.findOne({
     where: { campaignId },
-    orderBy: { order: 'desc' },
-    select: { order: true },
+    order: [['order', 'DESC']],
+    attributes: ['order'],
   })
   const order = (lastStep?.order ?? 0) + 1
 
-  const step = await prisma.campaignStep.create({
-    data: { campaignId, order, ...parsed.data },
-  })
+  const step = await CampaignStep.create({ campaignId, order, ...parsed.data })
 
   return NextResponse.json(step, { status: 201 })
 }
@@ -57,18 +55,20 @@ export async function PUT(
   const parsed = ReorderSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  await Promise.all(
-    parsed.data.orderedIds.map((id, idx) =>
-      prisma.campaignStep.updateMany({
-        where: { id, campaignId },
-        data: { order: idx + 1 },
-      })
-    )
+  await sequelize.transaction((t) =>
+    Promise.all(
+      parsed.data.orderedIds.map((id, idx) =>
+        CampaignStep.update(
+          { order: idx + 1 },
+          { where: { id, campaignId }, transaction: t },
+        ),
+      ),
+    ),
   )
 
-  const steps = await prisma.campaignStep.findMany({
+  const steps = await CampaignStep.findAll({
     where: { campaignId },
-    orderBy: { order: 'asc' },
+    order: [['order', 'ASC']],
   })
 
   return NextResponse.json(steps)
@@ -86,7 +86,7 @@ export async function DELETE(
   const parsed = DeleteStepSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  await prisma.campaignStep.deleteMany({
+  await CampaignStep.destroy({
     where: { id: parsed.data.stepId, campaignId },
   })
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import { Automation, AutomationAction, sequelize } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -31,9 +30,9 @@ export async function GET() {
   const deny = requirePermission(session, 'settings.view')
   if (deny) return deny
 
-  const automations = await prisma.automation.findMany({
-    include: { actions: { orderBy: { order: 'asc' } } },
-    orderBy: { createdAt: 'desc' },
+  const automations = await Automation.findAll({
+    include: [{ model: AutomationAction, as: 'actions', separate: true, order: [['order', 'ASC']] }],
+    order: [['createdAt', 'DESC']],
   })
   return NextResponse.json(automations)
 }
@@ -51,20 +50,30 @@ export async function POST(req: NextRequest) {
 
   const { actions, ...automationData } = parsed.data
 
-  const automation = await prisma.automation.create({
-    data: {
-      ...automationData,
-      conditions: automationData.conditions as Prisma.InputJsonValue,
-      actions: {
-        create: actions.map((a) => ({
+  // Sequelize doesn't natively do nested-create with the same shape as
+  // Prisma. Wrap in a transaction so the parent + actions either all
+  // commit or all roll back.
+  const automation = await sequelize.transaction(async (t) => {
+    const created = await Automation.create(automationData, { transaction: t })
+    if (actions.length > 0) {
+      await AutomationAction.bulkCreate(
+        actions.map((a) => ({
+          automationId: created.id,
           order: a.order,
           actionType: a.actionType,
-          config: a.config as Prisma.InputJsonValue,
+          config: a.config,
         })),
-      },
-    },
-    include: { actions: { orderBy: { order: 'asc' } } },
+        { transaction: t },
+      )
+    }
+    return created
   })
 
-  return NextResponse.json({ success: true, data: automation }, { status: 201 })
+  // Re-read with eager-loaded actions so the response matches the
+  // original Prisma `include`.
+  const fresh = await Automation.findByPk(automation.id, {
+    include: [{ model: AutomationAction, as: 'actions', separate: true, order: [['order', 'ASC']] }],
+  })
+
+  return NextResponse.json({ success: true, data: fresh }, { status: 201 })
 }

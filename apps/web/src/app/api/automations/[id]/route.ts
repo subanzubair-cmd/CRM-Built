@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import { Automation, AutomationAction, sequelize } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -34,9 +33,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const automation = await prisma.automation.findUnique({
-    where: { id },
-    include: { actions: { orderBy: { order: 'asc' } } },
+  const automation = await Automation.findByPk(id, {
+    include: [{ model: AutomationAction, as: 'actions', separate: true, order: [['order', 'ASC']] }],
   })
   if (!automation) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -50,8 +48,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const existing = await prisma.automation.findUnique({ where: { id } })
-  if (!existing) {
+  const automation = await Automation.findByPk(id)
+  if (!automation) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
@@ -63,35 +61,36 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { actions, conditions, ...fields } = parsed.data
 
-  const automation = await prisma.$transaction(async (tx) => {
+  await sequelize.transaction(async (t) => {
     if (actions !== undefined) {
-      await tx.automationAction.deleteMany({ where: { automationId: id } })
+      await AutomationAction.destroy({
+        where: { automationId: id },
+        transaction: t,
+      })
     }
 
-    return tx.automation.update({
-      where: { id },
-      data: {
-        ...fields,
-        ...(conditions !== undefined
-          ? { conditions: conditions as Prisma.InputJsonValue }
-          : {}),
-        ...(actions !== undefined
-          ? {
-              actions: {
-                create: actions.map((a) => ({
-                  order: a.order,
-                  actionType: a.actionType,
-                  config: a.config as Prisma.InputJsonValue,
-                })),
-              },
-            }
-          : {}),
-      },
-      include: { actions: { orderBy: { order: 'asc' } } },
-    })
+    await automation.update(
+      { ...fields, ...(conditions !== undefined ? { conditions } : {}) },
+      { transaction: t },
+    )
+
+    if (actions !== undefined && actions.length > 0) {
+      await AutomationAction.bulkCreate(
+        actions.map((a) => ({
+          automationId: id,
+          order: a.order,
+          actionType: a.actionType,
+          config: a.config,
+        })),
+        { transaction: t },
+      )
+    }
   })
 
-  return NextResponse.json({ success: true, data: automation })
+  const fresh = await Automation.findByPk(id, {
+    include: [{ model: AutomationAction, as: 'actions', separate: true, order: [['order', 'ASC']] }],
+  })
+  return NextResponse.json({ success: true, data: fresh })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -100,12 +99,12 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const existing = await prisma.automation.findUnique({ where: { id } })
-  if (!existing) {
+  const automation = await Automation.findByPk(id)
+  if (!automation) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  // Actions cascade-delete via schema onDelete: Cascade
-  await prisma.automation.delete({ where: { id } })
+  // Actions cascade-delete via the DB-level FK constraint (onDelete: Cascade).
+  await automation.destroy()
   return NextResponse.json({ success: true })
 }

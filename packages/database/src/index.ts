@@ -23,11 +23,14 @@ export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
 //   - Market, TwilioNumber, ListStackSource (the ones the original list
 //     covered). LeadSource, Tag, AiConfiguration, GlobalFolder, GlobalFile,
 //     CommProviderConfig were never in this re-export, so no removal needed.
-// User, Role migrated in Phase 3 → exported from ./models below as classes.
+// Migrated cluster type re-exports are removed; the Sequelize class
+// re-exported from ./models below serves both purposes.
+//   Phase 3: User, Role
+//   Phase 4: Campaign, CampaignStep, CampaignEnrollment, Automation,
+//            AutomationAction
 export type {
   Property, Contact, PropertyContact,
   StageHistory, Conversation, Message, Note, Task, Appointment,
-  Campaign, CampaignStep, CampaignEnrollment, Automation, AutomationAction,
   Buyer, BuyerCriteria, BuyerMatch, BuyerOffer, Vendor,
   PropertyFile, EsignDocument, Notification, ActivityLog,
   SavedFilter, AiLog, WebhookEvent,

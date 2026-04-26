@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { Campaign } from '@crm/database'
 import { getCampaignList } from '@/lib/campaigns'
 
 const CreateCampaignSchema = z.object({
@@ -41,8 +41,13 @@ export async function POST(req: NextRequest) {
 
   const { name, type, description, marketId, tags, leadTypes } = parsed.data
 
-  const campaign = await prisma.campaign.create({
-    data: { name, type, description, marketId, tags, leadTypes },
+  const campaign = await Campaign.create({
+    name,
+    type,
+    description,
+    marketId,
+    tags,
+    leadTypes,
   })
 
   return NextResponse.json(campaign, { status: 201 })

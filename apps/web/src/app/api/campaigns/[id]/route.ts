@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { Campaign } from '@crm/database'
 
 const UpdateCampaignSchema = z.object({
   name: z.string().min(1).optional(),
@@ -25,7 +25,9 @@ export async function PATCH(
   const parsed = UpdateCampaignSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const campaign = await prisma.campaign.update({ where: { id }, data: parsed.data })
+  const campaign = await Campaign.findByPk(id)
+  if (!campaign) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await campaign.update(parsed.data)
   return NextResponse.json(campaign)
 }
 
@@ -37,6 +39,8 @@ export async function DELETE(
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  await prisma.campaign.delete({ where: { id } })
+  const campaign = await Campaign.findByPk(id)
+  if (!campaign) return new NextResponse(null, { status: 204 })
+  await campaign.destroy()
   return new NextResponse(null, { status: 204 })
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { CampaignEnrollment } from '@crm/database'
 import { z } from 'zod'
 
 const PatchSchema = z.object({
@@ -27,6 +27,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         ? { pausedAt: null, isActive: true }
         : { isActive: false, completedAt: new Date() } // cancel
 
-  const updated = await prisma.campaignEnrollment.update({ where: { id }, data })
-  return NextResponse.json({ enrollment: updated })
+  const enrollment = await CampaignEnrollment.findByPk(id)
+  if (!enrollment) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await enrollment.update(data)
+  return NextResponse.json({ enrollment })
 }

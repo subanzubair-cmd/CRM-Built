@@ -2,8 +2,7 @@
  * Sequelize model registry — barrel file.
  *
  * Order matters: classes that other classes have `@ForeignKey(() => X)`
- * pointing at must be registered first. We register Phase 3's parent
- * tables (User, Role) before the join/config tables that reference them.
+ * pointing at must be registered first.
  */
 import { sequelize } from '../sequelize'
 
@@ -27,8 +26,20 @@ import { UserCampaignAssignment } from './UserCampaignAssignment'
 import { LeadCampaignRoleToggle } from './LeadCampaignRoleToggle'
 import { PropertyTeamAssignment } from './PropertyTeamAssignment'
 
+// ── Phase 4: Campaigns & enrollment ─────────────────────────────────────────
+import { LeadCampaign } from './LeadCampaign'
+import { LeadCampaignUser } from './LeadCampaignUser'
+import { Campaign } from './Campaign'
+import { CampaignStep } from './CampaignStep'
+import { CampaignEnrollment } from './CampaignEnrollment'
+import { Automation } from './Automation'
+import { AutomationAction } from './AutomationAction'
+import { StatusAutomation } from './StatusAutomation'
+import { Template } from './Template'
+import { DirectMailCampaign } from './DirectMailCampaign'
+
 sequelize.addModels([
-  // Phase 2 leaves
+  // Phase 2 leaves (parents first)
   LeadSource,
   TwilioNumber,
   Tag,
@@ -39,8 +50,7 @@ sequelize.addModels([
   ListStackSource,
   CommProviderConfig,
 
-  // Phase 3: register parents first so @ForeignKey decorators on the
-  // children can resolve them.
+  // Phase 3 RBAC (parents first)
   Role,
   User,
   UserRoleConfig,
@@ -48,10 +58,21 @@ sequelize.addModels([
   UserCampaignAssignment,
   LeadCampaignRoleToggle,
   PropertyTeamAssignment,
+
+  // Phase 4 campaigns (parents first: LeadCampaign before its dependents)
+  LeadCampaign,
+  LeadCampaignUser,
+  Campaign,
+  CampaignStep,
+  CampaignEnrollment,
+  Automation,
+  AutomationAction,
+  StatusAutomation,
+  Template,
+  DirectMailCampaign,
 ])
 
-// Wire cross-model associations AFTER addModels (the registry must be
-// populated first).
+// Wire cross-model associations AFTER addModels.
 import { wireAssociations } from './_associations'
 wireAssociations()
 
@@ -75,4 +96,15 @@ export {
   UserCampaignAssignment,
   LeadCampaignRoleToggle,
   PropertyTeamAssignment,
+  // Phase 4
+  LeadCampaign,
+  LeadCampaignUser,
+  Campaign,
+  CampaignStep,
+  CampaignEnrollment,
+  Automation,
+  AutomationAction,
+  StatusAutomation,
+  Template,
+  DirectMailCampaign,
 }

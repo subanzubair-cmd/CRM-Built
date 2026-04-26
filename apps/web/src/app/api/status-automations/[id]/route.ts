@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { StatusAutomation } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -20,8 +20,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const existing = await prisma.statusAutomation.findUnique({ where: { id } })
-  if (!existing) {
+  const automation = await StatusAutomation.findByPk(id)
+  if (!automation) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
@@ -31,11 +31,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const automation = await prisma.statusAutomation.update({
-    where: { id },
-    data: parsed.data,
-  })
-
+  await automation.update(parsed.data)
   return NextResponse.json({ success: true, data: automation })
 }
 
@@ -45,11 +41,11 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const existing = await prisma.statusAutomation.findUnique({ where: { id } })
-  if (!existing) {
+  const automation = await StatusAutomation.findByPk(id)
+  if (!automation) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  await prisma.statusAutomation.delete({ where: { id } })
+  await automation.destroy()
   return NextResponse.json({ success: true })
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { CampaignEnrollment } from '@crm/database'
 
 const EnrollSchema = z.object({ propertyId: z.string().min(1) })
 
@@ -17,11 +17,24 @@ export async function POST(
   const parsed = EnrollSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const enrollment = await prisma.campaignEnrollment.upsert({
-    where: { campaignId_propertyId: { campaignId, propertyId: parsed.data.propertyId } },
-    create: { campaignId, propertyId: parsed.data.propertyId, currentStep: 0, isActive: true },
-    update: { isActive: true, currentStep: 0, completedAt: null, pausedAt: null },
+  // Composite-unique upsert on (campaignId, propertyId).
+  const [enrollment, created] = await CampaignEnrollment.findOrCreate({
+    where: { campaignId, propertyId: parsed.data.propertyId },
+    defaults: {
+      campaignId,
+      propertyId: parsed.data.propertyId,
+      currentStep: 0,
+      isActive: true,
+    },
   })
+  if (!created) {
+    await enrollment.update({
+      isActive: true,
+      currentStep: 0,
+      completedAt: null,
+      pausedAt: null,
+    })
+  }
 
   return NextResponse.json(enrollment, { status: 201 })
 }
@@ -38,10 +51,10 @@ export async function DELETE(
   const parsed = EnrollSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  await prisma.campaignEnrollment.updateMany({
-    where: { campaignId, propertyId: parsed.data.propertyId },
-    data: { isActive: false },
-  })
+  await CampaignEnrollment.update(
+    { isActive: false },
+    { where: { campaignId, propertyId: parsed.data.propertyId } },
+  )
 
   return new NextResponse(null, { status: 204 })
 }

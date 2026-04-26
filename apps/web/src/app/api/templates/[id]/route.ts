@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Template } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -20,7 +20,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const template = await prisma.template.findUnique({ where: { id } })
+  const template = await Template.findByPk(id)
   if (!template) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
@@ -33,8 +33,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const existing = await prisma.template.findUnique({ where: { id } })
-  if (!existing) {
+  const template = await Template.findByPk(id)
+  if (!template) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
@@ -44,10 +44,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const template = await prisma.template.update({
-    where: { id },
-    data: parsed.data,
-  })
+  await template.update(parsed.data)
 
   return NextResponse.json({ success: true, data: template })
 }
@@ -58,11 +55,11 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const existing = await prisma.template.findUnique({ where: { id } })
-  if (!existing) {
+  const template = await Template.findByPk(id)
+  if (!template) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  await prisma.template.delete({ where: { id } })
+  await template.destroy()
   return NextResponse.json({ success: true })
 }

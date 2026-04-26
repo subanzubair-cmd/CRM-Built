@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { StatusAutomation } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -27,9 +27,9 @@ export async function GET(req: NextRequest) {
     ? (workspaceType as WorkspaceType)
     : undefined
 
-  const automations = await prisma.statusAutomation.findMany({
+  const automations = await StatusAutomation.findAll({
     where: wt ? { workspaceType: wt } : undefined,
-    orderBy: { createdAt: 'asc' },
+    order: [['createdAt', 'ASC']],
   })
 
   return NextResponse.json(automations)
@@ -46,22 +46,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const automation = await prisma.statusAutomation.upsert({
+  // Composite-unique upsert on (workspaceType, stageCode).
+  const [automation, created] = await StatusAutomation.findOrCreate({
     where: {
-      workspaceType_stageCode: {
-        workspaceType: parsed.data.workspaceType,
-        stageCode: parsed.data.stageCode,
-      },
+      workspaceType: parsed.data.workspaceType,
+      stageCode: parsed.data.stageCode,
     },
-    update: {
+    defaults: parsed.data,
+  })
+  if (!created) {
+    await automation.update({
       dripCampaignId: parsed.data.dripCampaignId ?? null,
       taskTemplateId: parsed.data.taskTemplateId ?? null,
       taskTitle: parsed.data.taskTitle ?? null,
       taskAssigneeId: parsed.data.taskAssigneeId ?? null,
       isActive: parsed.data.isActive,
-    },
-    create: parsed.data,
-  })
+    })
+  }
 
   return NextResponse.json({ success: true, data: automation }, { status: 201 })
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { CampaignStep } from '@crm/database'
 
 const UpdateStepSchema = z.object({
   channel: z.enum(['SMS', 'CALL', 'RVM', 'EMAIL', 'NOTE', 'SYSTEM']).optional(),
@@ -24,16 +24,15 @@ export async function PATCH(
   const parsed = UpdateStepSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const step = await prisma.campaignStep.updateMany({
+  const [count] = await CampaignStep.update(parsed.data, {
     where: { id: stepId, campaignId },
-    data: parsed.data,
   })
 
-  if (step.count === 0) {
+  if (count === 0) {
     return NextResponse.json({ error: 'Step not found' }, { status: 404 })
   }
 
-  const updated = await prisma.campaignStep.findUnique({ where: { id: stepId } })
+  const updated = await CampaignStep.findByPk(stepId)
   return NextResponse.json(updated)
 }
 
@@ -46,25 +45,25 @@ export async function DELETE(
 
   const { id: campaignId, stepId } = await params
 
-  const deleted = await prisma.campaignStep.deleteMany({
+  const deletedCount = await CampaignStep.destroy({
     where: { id: stepId, campaignId },
   })
 
-  if (deleted.count === 0) {
+  if (deletedCount === 0) {
     return NextResponse.json({ error: 'Step not found' }, { status: 404 })
   }
 
   // Re-order remaining steps
-  const remaining = await prisma.campaignStep.findMany({
+  const remaining = await CampaignStep.findAll({
     where: { campaignId },
-    orderBy: { order: 'asc' },
-    select: { id: true },
+    order: [['order', 'ASC']],
+    attributes: ['id'],
   })
 
   await Promise.all(
     remaining.map((s, idx) =>
-      prisma.campaignStep.update({ where: { id: s.id }, data: { order: idx + 1 } })
-    )
+      CampaignStep.update({ order: idx + 1 }, { where: { id: s.id } }),
+    ),
   )
 
   return new NextResponse(null, { status: 204 })

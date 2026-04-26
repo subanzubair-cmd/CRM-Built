@@ -1,5 +1,4 @@
-import { prisma } from '@/lib/prisma'
-import { Market, User, Role, UserRoleConfig, literal } from '@crm/database'
+import { Market, User, Role, UserRoleConfig, Campaign, LeadCampaign, Op, literal } from '@crm/database'
 
 export async function getUserList() {
   // Two queries: users with their primary role, then all UserRoleConfig
@@ -42,10 +41,10 @@ export async function getUserList() {
 }
 
 export async function getCampaignListSimple() {
-  return prisma.campaign.findMany({
-    select: { id: true, name: true, marketId: true, status: true },
-    where: { status: { in: ['ACTIVE', 'DRAFT'] } },
-    orderBy: { name: 'asc' },
+  return Campaign.findAll({
+    attributes: ['id', 'name', 'marketId', 'status'],
+    where: { status: { [Op.in]: ['ACTIVE', 'DRAFT'] } },
+    order: [['name', 'ASC']],
   })
 }
 
@@ -55,10 +54,10 @@ export async function getCampaignListSimple() {
  * EditUser/AddUser panels don't need a separate client-side fetch.
  */
 export async function getLeadCampaignListSimple() {
-  return prisma.leadCampaign.findMany({
-    select: { id: true, name: true, type: true },
+  return LeadCampaign.findAll({
+    attributes: ['id', 'name', 'type'],
     where: { isActive: true },
-    orderBy: { name: 'asc' },
+    order: [['name', 'ASC']],
   })
 }
 

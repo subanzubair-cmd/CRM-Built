@@ -2,8 +2,7 @@
  * Centralized association wiring for Sequelize models.
  *
  * Loaded LAST from `models/index.ts` so all classes are already in the
- * Sequelize registry. As clusters migrate, append a small block per
- * cluster.
+ * Sequelize registry. Append a small block per migrated cluster.
  */
 import { GlobalFile } from './GlobalFile'
 import { GlobalFolder } from './GlobalFolder'
@@ -14,6 +13,16 @@ import { ApiToken } from './ApiToken'
 import { UserCampaignAssignment } from './UserCampaignAssignment'
 import { LeadCampaignRoleToggle } from './LeadCampaignRoleToggle'
 import { PropertyTeamAssignment } from './PropertyTeamAssignment'
+import { LeadCampaign } from './LeadCampaign'
+import { LeadCampaignUser } from './LeadCampaignUser'
+import { Campaign } from './Campaign'
+import { CampaignStep } from './CampaignStep'
+import { CampaignEnrollment } from './CampaignEnrollment'
+import { Automation } from './Automation'
+import { AutomationAction } from './AutomationAction'
+import { LeadSource } from './LeadSource'
+import { TwilioNumber } from './TwilioNumber'
+import { Market } from './Market'
 
 export function wireAssociations(): void {
   // ── Phase 2: Independent leaves ───────────────────────────────────────────
@@ -21,33 +30,34 @@ export function wireAssociations(): void {
   GlobalFile.belongsTo(GlobalFolder, { foreignKey: 'folderId', as: 'folder' })
 
   // ── Phase 3: User & RBAC ──────────────────────────────────────────────────
-  // User <- Role (each user has exactly one primary role).
   Role.hasMany(User, { foreignKey: 'roleId', as: 'users' })
   User.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
 
-  // UserRoleConfig: per-(user, role) settings. Both onDelete: Cascade at
-  // the DB level — don't repeat here.
   User.hasMany(UserRoleConfig, { foreignKey: 'userId', as: 'roleConfigs' })
   UserRoleConfig.belongsTo(User, { foreignKey: 'userId', as: 'user' })
   Role.hasMany(UserRoleConfig, { foreignKey: 'roleId', as: 'userConfigs' })
   UserRoleConfig.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
 
-  // ApiToken: belongs to a User.
   User.hasMany(ApiToken, { foreignKey: 'userId', as: 'apiTokens' })
   ApiToken.belongsTo(User, { foreignKey: 'userId', as: 'user' })
 
-  // UserCampaignAssignment: only the User and Role sides for now.
-  // The LeadCampaign side gets wired in Phase 4 when LeadCampaign migrates.
-  User.hasMany(UserCampaignAssignment, { foreignKey: 'userId', as: 'campaignAssignments' })
+  User.hasMany(UserCampaignAssignment, {
+    foreignKey: 'userId',
+    as: 'campaignAssignments',
+  })
   UserCampaignAssignment.belongsTo(User, { foreignKey: 'userId', as: 'user' })
-  Role.hasMany(UserCampaignAssignment, { foreignKey: 'roleId', as: 'campaignAssignments' })
+  Role.hasMany(UserCampaignAssignment, {
+    foreignKey: 'roleId',
+    as: 'campaignAssignments',
+  })
   UserCampaignAssignment.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
 
-  // LeadCampaignRoleToggle: only the Role side; LeadCampaign in Phase 4.
-  Role.hasMany(LeadCampaignRoleToggle, { foreignKey: 'roleId', as: 'leadCampaignToggles' })
+  Role.hasMany(LeadCampaignRoleToggle, {
+    foreignKey: 'roleId',
+    as: 'leadCampaignToggles',
+  })
   LeadCampaignRoleToggle.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
 
-  // PropertyTeamAssignment: User + Role only; Property in Phase 6.
   User.hasMany(PropertyTeamAssignment, {
     foreignKey: 'userId',
     as: 'propertyTeamAssignments',
@@ -58,4 +68,72 @@ export function wireAssociations(): void {
     as: 'propertyTeamAssignments',
   })
   PropertyTeamAssignment.belongsTo(Role, { foreignKey: 'roleId', as: 'role' })
+
+  // ── Phase 4: Campaigns & enrollment ───────────────────────────────────────
+  // LeadCampaign 1:1 TwilioNumber (phoneNumberId is unique on LeadCampaign).
+  LeadCampaign.belongsTo(TwilioNumber, { foreignKey: 'phoneNumberId', as: 'phoneNumber' })
+  TwilioNumber.hasOne(LeadCampaign, { foreignKey: 'phoneNumberId', as: 'leadCampaign' })
+
+  // LeadCampaign N:1 LeadSource.
+  LeadCampaign.belongsTo(LeadSource, { foreignKey: 'leadSourceId', as: 'leadSource' })
+  LeadSource.hasMany(LeadCampaign, { foreignKey: 'leadSourceId', as: 'leadCampaigns' })
+
+  // LeadCampaign 1:N joins back to Phase 3 children.
+  LeadCampaign.hasMany(LeadCampaignRoleToggle, {
+    foreignKey: 'leadCampaignId',
+    as: 'roleToggles',
+  })
+  LeadCampaignRoleToggle.belongsTo(LeadCampaign, {
+    foreignKey: 'leadCampaignId',
+    as: 'leadCampaign',
+  })
+
+  LeadCampaign.hasMany(LeadCampaignUser, {
+    foreignKey: 'leadCampaignId',
+    as: 'assignedUsers',
+  })
+  LeadCampaignUser.belongsTo(LeadCampaign, {
+    foreignKey: 'leadCampaignId',
+    as: 'leadCampaign',
+  })
+  User.hasMany(LeadCampaignUser, {
+    foreignKey: 'userId',
+    as: 'leadCampaignAssignments',
+  })
+  LeadCampaignUser.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+
+  LeadCampaign.hasMany(UserCampaignAssignment, {
+    foreignKey: 'campaignId',
+    as: 'userAssignments',
+  })
+  UserCampaignAssignment.belongsTo(LeadCampaign, {
+    foreignKey: 'campaignId',
+    as: 'campaign',
+  })
+
+  // Campaign (drip/broadcast) → Market + steps + enrollments.
+  Campaign.belongsTo(Market, { foreignKey: 'marketId', as: 'market' })
+  Market.hasMany(Campaign, { foreignKey: 'marketId', as: 'campaigns' })
+
+  Campaign.hasMany(CampaignStep, { foreignKey: 'campaignId', as: 'steps' })
+  CampaignStep.belongsTo(Campaign, { foreignKey: 'campaignId', as: 'campaign' })
+
+  Campaign.hasMany(CampaignEnrollment, {
+    foreignKey: 'campaignId',
+    as: 'enrollments',
+  })
+  CampaignEnrollment.belongsTo(Campaign, {
+    foreignKey: 'campaignId',
+    as: 'campaign',
+  })
+
+  // Automation → AutomationAction.
+  Automation.hasMany(AutomationAction, {
+    foreignKey: 'automationId',
+    as: 'actions',
+  })
+  AutomationAction.belongsTo(Automation, {
+    foreignKey: 'automationId',
+    as: 'automation',
+  })
 }

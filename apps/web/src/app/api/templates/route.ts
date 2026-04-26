@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Template } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -26,9 +26,9 @@ export async function GET(req: NextRequest) {
     ? (templateType as TemplateType)
     : undefined
 
-  const templates = await prisma.template.findMany({
+  const templates = await Template.findAll({
     where: tt ? { templateType: tt } : undefined,
-    orderBy: { createdAt: 'desc' },
+    order: [['createdAt', 'DESC']],
   })
 
   return NextResponse.json({ data: templates })
@@ -45,9 +45,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const template = await prisma.template.create({
-    data: parsed.data,
-  })
+  const template = await Template.create(parsed.data)
 
   return NextResponse.json({ success: true, data: template }, { status: 201 })
 }
