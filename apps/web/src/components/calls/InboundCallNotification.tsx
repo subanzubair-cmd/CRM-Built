@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { Phone, PhoneOff, X, Minimize2, Maximize2, ExternalLink } from 'lucide-react'
 import { useCallCleanup } from '@/components/calls/useCallCleanup'
 import { useTelnyxCall } from '@/components/calls/useTelnyxCall'
+import { useTabTitleIndicator } from '@/components/calls/useTabTitleIndicator'
+import { useCrossTabCallSync } from '@/components/calls/useCrossTabCallSync'
 import { getTelnyxClient } from '@/lib/webrtc/telnyx-client'
 
 interface ActiveCall {
@@ -84,7 +86,38 @@ export function InboundCallNotification() {
   // sendBeacon a hangup so we don't leave a dangling call on the provider.
   useCallCleanup(activeCall?.id ?? null)
 
-  // Poll for inbound ringing calls
+  // Tracks whether THIS tab has answered the call. Used to switch the
+  // tab title indicator between 📞 (ringing) and 🟢 (on call).
+  const [answeredHere, setAnsweredHere] = useState<string | null>(null)
+
+  // 🟢 wins over 📞 — if this tab answered, we're "on call" even
+  // if a fresh inbound starts ringing too (rare but possible).
+  useTabTitleIndicator(answeredHere ? 'active' : activeCall ? 'ringing' : null)
+
+  // When ANY tab claims this call (Answer/Reject), every other tab
+  // dismisses its popup so only the claimer continues to show it.
+  // Polling would eventually catch up — broadcasting makes it instant.
+  const sync = useCrossTabCallSync({
+    onClaimedElsewhere(callId) {
+      setActiveCall((cur) => {
+        if (cur?.id !== callId) return cur
+        // Only suppress THIS popup if we didn't claim it. answeredHere
+        // is set in handleAnswer BEFORE the broadcast, so the claiming
+        // tab's onClaimedElsewhere is a no-op here.
+        if (answeredHere === callId) return cur
+        return null
+      })
+      setLookup(null)
+      setIncomingWebrtcCall(null)
+      setDismissed((prev) => new Set(prev).add(callId))
+    },
+  })
+
+  // Poll for inbound calls. Two things to track:
+  //   1. RINGING inbound → drives the popup
+  //   2. ACTIVE inbound that THIS tab answered → drives the 🟢 title
+  //      indicator until the call ends (server reports COMPLETED or
+  //      the row drops off the active list).
   useEffect(() => {
     let cancelled = false
 
@@ -94,16 +127,22 @@ export function InboundCallNotification() {
         const res = await fetch('/api/calls')
         if (!res.ok) return
         const json = await res.json()
-        const calls: ActiveCall[] = (json.data ?? []).filter(
-          (c: ActiveCall) =>
-            c.direction === 'INBOUND' && c.status === 'RINGING' && !dismissed.has(c.id)
+        const all = (json.data ?? []) as ActiveCall[]
+        const ringing = all.filter(
+          (c) => c.direction === 'INBOUND' && c.status === 'RINGING' && !dismissed.has(c.id),
         )
-        if (calls.length > 0 && !activeCall) {
-          setActiveCall(calls[0])
-        } else if (activeCall && !calls.find((c) => c.id === activeCall.id)) {
-          // call was answered/rejected elsewhere or ended
+        if (ringing.length > 0 && !activeCall) {
+          setActiveCall(ringing[0])
+        } else if (activeCall && !ringing.find((c) => c.id === activeCall.id)) {
+          // RINGING call gone — answered elsewhere, rejected, or aged out.
           setActiveCall(null)
           setLookup(null)
+        }
+        // Clear the local "answered here" marker once the server says
+        // the call we answered is no longer in the active set, so the
+        // 🟢 title indicator drops back to the default title.
+        if (answeredHere && !all.find((c) => c.id === answeredHere && c.status === 'ACTIVE')) {
+          setAnsweredHere(null)
         }
       } catch {
         // ignore
@@ -116,7 +155,7 @@ export function InboundCallNotification() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [activeCall, dismissed])
+  }, [activeCall, answeredHere, dismissed])
 
   // Lookup caller when a new call is detected
   useEffect(() => {
@@ -136,6 +175,12 @@ export function InboundCallNotification() {
 
   async function handleAnswer() {
     if (!activeCall) return
+    const callId = activeCall.id
+    // Mark this tab as the claimer FIRST, so the broadcast that
+    // comes back through useCrossTabCallSync is a no-op here.
+    setAnsweredHere(callId)
+    sync.broadcastClaim(callId)
+
     // If we have the WebRTC SDK call instance, accept via the peer
     // connection so the audio flows through this browser (and the
     // recorder hook attached inside useTelnyxCall starts capturing).
@@ -143,7 +188,7 @@ export function InboundCallNotification() {
     if (incomingWebrtcCall) {
       await tx.answer(incomingWebrtcCall)
     } else {
-      await fetch(`/api/calls/${activeCall.id}/answer`, { method: 'POST' })
+      await fetch(`/api/calls/${callId}/answer`, { method: 'POST' })
     }
     // Navigate to the first matching property if any
     const firstLead = lookup?.leadProperties[0]
@@ -160,24 +205,31 @@ export function InboundCallNotification() {
           : `/leads/${pipeline}`
       router.push(`${base}/${firstLead.id}`)
     }
+    // Pop the popup down — title indicator stays 🟢 because
+    // answeredHere is set; polling clears it once the server reports
+    // the call as no longer ACTIVE.
     setActiveCall(null)
     setLookup(null)
   }
 
   async function handleReject() {
     if (!activeCall) return
+    const callId = activeCall.id
+    // Broadcast first so other tabs dismiss instantly.
+    sync.broadcastClaim(callId)
     if (incomingWebrtcCall) {
       await tx.reject(incomingWebrtcCall)
     }
-    await fetch(`/api/calls/${activeCall.id}/reject`, {
+    await fetch(`/api/calls/${callId}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason: 'declined' }),
     })
-    setDismissed((prev) => new Set(prev).add(activeCall.id))
+    setDismissed((prev) => new Set(prev).add(callId))
     setActiveCall(null)
     setLookup(null)
     setIncomingWebrtcCall(null)
+    setAnsweredHere(null)
   }
 
   function handleClose() {
