@@ -2,8 +2,10 @@ import { auth } from '@/auth'
 import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { GlobalHeader } from '@/components/layout/GlobalHeader'
-import { InboundCallNotification } from '@/components/calls/InboundCallNotification'
-import { ActiveCallBar } from '@/components/calls/ActiveCallBar'
+import {
+  InboundCallNotificationClient,
+  ActiveCallBarClient,
+} from '@/components/calls/ClientCallShell'
 import { TimezoneProvider } from '@/components/providers/TimezoneProvider'
 import { getCompanySettings } from '@/lib/company-settings'
 
@@ -27,8 +29,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <TimezoneProvider timezone={timezone}>
       <div className="flex flex-col h-screen bg-slate-50" suppressHydrationWarning>
         {/* Persistent on-call header — only renders for the tab that
-            claimed the active call. Survives all client-side nav. */}
-        <ActiveCallBar />
+            claimed the active call. Survives all client-side nav.
+            Loaded with ssr:false to avoid browser-extension hydration
+            mismatch at the layout level. */}
+        <ActiveCallBarClient />
         <GlobalHeader />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar />
@@ -36,7 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {children}
           </main>
         </div>
-        <InboundCallNotification />
+        <InboundCallNotificationClient />
       </div>
     </TimezoneProvider>
   )
