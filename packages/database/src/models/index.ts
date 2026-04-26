@@ -76,6 +76,7 @@ import { AccountTag } from './AccountTag'
 import { Webhook } from './Webhook'
 import { CustomFormConfig } from './CustomFormConfig'
 import { WebFormConfig } from './WebFormConfig'
+import { CompanySettings } from './CompanySettings'
 
 sequelize.addModels([
   // Phase 2 leaves (parents first)
@@ -149,6 +150,7 @@ sequelize.addModels([
   Webhook,
   CustomFormConfig,
   WebFormConfig,
+  CompanySettings,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -221,4 +223,5 @@ export {
   Webhook,
   CustomFormConfig,
   WebFormConfig,
+  CompanySettings,
 }

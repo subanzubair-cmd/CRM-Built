@@ -36,6 +36,10 @@ import {
   up as recordingStorageKeyUp,
   down as recordingStorageKeyDown,
 } from './20260426030000-add-call-recording-storage-key'
+import {
+  up as companySettingsUp,
+  down as companySettingsDown,
+} from './20260426040000-add-company-settings'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -82,6 +86,13 @@ const migrations = [
       recordingStorageKeyUp({ name: '20260426030000-add-call-recording-storage-key', context }),
     down: ({ context }: { context: any }) =>
       recordingStorageKeyDown({ name: '20260426030000-add-call-recording-storage-key', context }),
+  },
+  {
+    name: '20260426040000-add-company-settings',
+    up: ({ context }: { context: any }) =>
+      companySettingsUp({ name: '20260426040000-add-company-settings', context }),
+    down: ({ context }: { context: any }) =>
+      companySettingsDown({ name: '20260426040000-add-company-settings', context }),
   },
 ]
 

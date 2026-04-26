@@ -71,6 +71,9 @@ export default async function ActivityPage() {
                       <> · {log.property.streetAddress ?? 'Unknown property'}</>
                     )}
                     {' · '}
+                    {/* Relative distance is epoch math — timezone-
+                        agnostic by definition. The TZ matters only
+                        when we render an absolute date format below. */}
                     {formatDistanceToNow(new Date(log.createdAt), { addSuffix: true })}
                   </p>
                 </div>

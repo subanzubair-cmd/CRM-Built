@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { formatDistanceToNow, format } from 'date-fns'
 import { Phone, Mail, MessageSquare, FileText, Volume2, Pencil, Trash2, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { useTz } from '@/components/providers/TimezoneProvider'
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   SMS:   <MessageSquare className="w-3.5 h-3.5" />,
@@ -112,6 +112,7 @@ function NoteActions({ msg, onDeleted }: { msg: Message; onDeleted: (id: string)
 
 export function MessageThread({ messages: initialMessages }: Props) {
   const [messages, setMessages] = useState(initialMessages)
+  const tz = useTz()
 
   if (messages.length === 0) {
     return (
@@ -126,7 +127,7 @@ export function MessageThread({ messages: initialMessages }: Props) {
   }
 
   const grouped = messages.reduce<Array<{ date: string; msgs: Message[] }>>((acc, msg) => {
-    const dateKey = format(new Date(msg.createdAt), 'MMMM d, yyyy')
+    const dateKey = tz.format(new Date(msg.createdAt), 'MMMM d, yyyy')
     const last = acc[acc.length - 1]
     if (last?.date === dateKey) {
       last.msgs.push(msg)
@@ -195,7 +196,7 @@ export function MessageThread({ messages: initialMessages }: Props) {
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-gray-400">
-                        {formatDistanceToNow(new Date(msg.createdAt), { addSuffix: true })}
+                        {tz.formatRelative(new Date(msg.createdAt))}
                       </span>
                       {/* Edit/Delete for notes */}
                       {isNote && <NoteActions msg={msg} onDeleted={handleDeleted} />}

@@ -12,7 +12,18 @@
  */
 import 'reflect-metadata'
 import { Sequelize } from 'sequelize-typescript'
+import { literal } from 'sequelize'
 import type { SequelizeOptions } from 'sequelize-typescript'
+import { types as pgTypes } from 'pg'
+
+// pg type OID 1114 = TIMESTAMP (without time zone). The default parser
+// treats the naive value as the host's local time, which on US/Central
+// machines causes every read to shift +5h vs the actual stored value
+// (raw '2026-04-26 11:45:36' → local CDT → ISO '2026-04-26T16:45:36Z').
+// Our schema stores TIMESTAMP for createdAt/updatedAt — so we override
+// the parser to assume UTC, matching how the writer hook + Postgres
+// NOW() actually populate them.
+pgTypes.setTypeParser(1114, (raw: string) => new Date(`${raw}Z`))
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -43,30 +54,35 @@ const sequelizeOptions: SequelizeOptions = {
     // bypasses the broken @Default(DataType.NOW) evaluator and
     // guarantees the value is the actual current epoch.
     hooks: {
-      // Stamp timestamps with Node's `new Date()` on every create.
-      // Sequelize-typescript's @Default(DataType.NOW) was producing
-      // values ~5h in the future on US/Central hosts (likely a TZ
-      // double-conversion in v2.1.6), and Postgres NOW() in a column
-      // default would be more reliable but our migrations don't set
-      // it. This hook overwrites whatever DataType.NOW produced with
-      // a fresh JS Date so all timestamps match wall-clock UTC.
+      // Stamp timestamps with Postgres `NOW()` on every create/update.
+      //
+      // Sequelize-typescript v2.1.6 + Sequelize v6.37 mishandle JS
+      // Dates on US/Central hosts: passing `new Date()` (= correct
+      // UTC ms internally) results in stored TIMESTAMPTZ values that
+      // are 5h ahead of wall-clock. Root cause is a TZ double-
+      // conversion somewhere in the prepared-statement path; we tried
+      // `timezone: '+00:00'` already and it didn't help.
+      //
+      // Side-stepping the bug entirely by using `literal('NOW()')` —
+      // Postgres evaluates that server-side using its own clock (which
+      // we've confirmed is correct UTC), so the value can't be
+      // mis-shifted on the way in.
       beforeCreate(instance: any) {
         try {
-          const now = new Date()
           if (instance != null && typeof instance.set === 'function') {
             const attrs = (instance.constructor as any)?.rawAttributes ?? {}
-            if ('createdAt' in attrs) instance.set('createdAt', now)
-            if ('updatedAt' in attrs) instance.set('updatedAt', now)
+            if ('createdAt' in attrs) instance.set('createdAt', literal('NOW()'))
+            if ('updatedAt' in attrs) instance.set('updatedAt', literal('NOW()'))
           }
         } catch {
-          // Silent — never block a write because the timestamp hook misfired.
+          // Silent — never block a write.
         }
       },
       beforeUpdate(instance: any) {
         try {
           if (instance != null && typeof instance.set === 'function') {
             const attrs = (instance.constructor as any)?.rawAttributes ?? {}
-            if ('updatedAt' in attrs) instance.set('updatedAt', new Date())
+            if ('updatedAt' in attrs) instance.set('updatedAt', literal('NOW()'))
           }
         } catch {
           // Silent.
@@ -95,6 +111,32 @@ const globalForSequelize = globalThis as unknown as { sequelize?: Sequelize }
 
 export const sequelize: Sequelize =
   globalForSequelize.sequelize ?? new Sequelize(databaseUrl ?? '', sequelizeOptions)
+
+// Belt-and-suspenders: also register the timestamp hook directly on
+// the Sequelize instance. Sequelize-typescript adds models later via
+// addModels(), and define.hooks doesn't always propagate to those —
+// adding here too guarantees the hook fires for every model.
+sequelize.addHook('beforeCreate', (instance: any) => {
+  try {
+    if (instance != null && typeof instance.set === 'function') {
+      const attrs = (instance.constructor as any)?.rawAttributes ?? {}
+      if ('createdAt' in attrs) instance.set('createdAt', literal('NOW()'))
+      if ('updatedAt' in attrs) instance.set('updatedAt', literal('NOW()'))
+    }
+  } catch {
+    // Silent.
+  }
+})
+sequelize.addHook('beforeUpdate', (instance: any) => {
+  try {
+    if (instance != null && typeof instance.set === 'function') {
+      const attrs = (instance.constructor as any)?.rawAttributes ?? {}
+      if ('updatedAt' in attrs) instance.set('updatedAt', literal('NOW()'))
+    }
+  } catch {
+    // Silent.
+  }
+})
 
 if (process.env.NODE_ENV !== 'production') {
   globalForSequelize.sequelize = sequelize

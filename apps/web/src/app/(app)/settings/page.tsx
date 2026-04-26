@@ -2,7 +2,7 @@ import { auth } from '@/auth'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import {
-  Users, Phone, PhoneCall, Plug, Zap, GitBranch, FileText, Tag, List, ArrowLeft,
+  Users, Phone, PhoneCall, Plug, Zap, GitBranch, FileText, Tag, List, ArrowLeft, Globe2,
 } from 'lucide-react'
 import { getUserList, getRoleList, getCampaignListSimple, getLeadCampaignListSimple } from '@/lib/settings'
 import { AutomationsPanel } from '@/components/settings/AutomationsPanel'
@@ -13,6 +13,8 @@ import { TagsPanel } from '@/components/settings/TagsPanel'
 import { CommProviderForm } from '@/components/settings/CommProviderForm'
 import { LeadSourcesPanel } from '@/components/settings/LeadSourcesPanel'
 import { PhoneNumbersPanel } from '@/components/settings/PhoneNumbersPanel'
+import { GeneralSettingsPanel } from '@/components/settings/GeneralSettingsPanel'
+import { hasPermission } from '@/lib/auth-utils'
 
 interface PageProps {
   searchParams: Promise<{ tab?: string }>
@@ -42,6 +44,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
     label: 'General',
     cards: [
       { key: 'users', title: 'Manage Users', description: 'Add/Manage Users, Permissions & Profile', icon: Users, label: 'Users' },
+      { key: 'general', title: 'General Settings', description: 'Company timezone — applies to every user regardless of where they’re working from', icon: Globe2, label: 'General' },
     ],
   },
   {
@@ -166,6 +169,10 @@ export default async function SettingsPage({ searchParams }: PageProps) {
           leadCampaigns={leadCampaigns as any}
           currentUserId={currentUserId}
         />
+      )}
+
+      {tab === 'general' && (
+        <GeneralSettingsPanel canEdit={hasPermission(session, 'settings.manage')} />
       )}
 
       {tab === 'sms-integration' && <CommProviderForm />}
