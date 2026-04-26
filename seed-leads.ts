@@ -1,8 +1,12 @@
-import { createRequire } from 'module'
-const require = createRequire(new URL('.', import.meta.url).pathname + 'packages/database/')
-const { PrismaClient } = require('@prisma/client')
-
-const p = new PrismaClient()
+/**
+ * Quick-fire seed: 10 ready-to-edit Property rows (5 DTS + 5 DTA) with
+ * common attributes. Skips contacts/stage history — use scripts/seed-leads.ts
+ * for a richer seed.
+ *
+ * Usage: npx tsx seed-leads.ts
+ */
+import 'reflect-metadata'
+import { sequelize, User, Market, Property } from './packages/database/src'
 
 const leads = [
   // 5 DTS leads
@@ -20,9 +24,12 @@ const leads = [
 ]
 
 async function main() {
-  const user = await p.user.findFirst({ where: { status: 'ACTIVE' } })
-  const market = await p.market.findFirst()
-  if (!user) { console.log('No active user'); process.exit(1) }
+  const user = await User.findOne({ where: { status: 'ACTIVE' }, raw: true }) as any
+  const market = await Market.findOne({ raw: true }) as any
+  if (!user) {
+    console.log('No active user')
+    process.exit(1)
+  }
 
   const month = new Date().toISOString().slice(0, 7).replace('-', '')
   let count = 0
@@ -30,21 +37,20 @@ async function main() {
     count++
     const leadNumber = `HP-${month}-${String(count).padStart(4, '0')}`
     const na = `${lead.streetAddress} ${lead.city} ${lead.state}`.toLowerCase().replace(/[^a-z0-9]/g, '')
-    await p.property.create({
-      data: {
-        ...lead,
-        leadStatus: 'ACTIVE',
-        propertyStatus: 'LEAD',
-        leadNumber,
-        normalizedAddress: na,
-        assignedToId: user.id,
-        createdById: user.id,
-        marketId: market?.id ?? null,
-      },
-    })
+    await Property.create({
+      ...lead,
+      leadStatus: 'ACTIVE',
+      propertyStatus: 'LEAD',
+      leadNumber,
+      normalizedAddress: na,
+      assignedToId: user.id,
+      createdById: user.id,
+      marketId: market?.id ?? null,
+    } as any)
   }
   console.log(`${count} leads created (5 DTS + 5 DTA)`)
-  await p.$disconnect()
 }
 
 main()
+  .catch((e) => { console.error(e); process.exit(1) })
+  .finally(() => sequelize.close())

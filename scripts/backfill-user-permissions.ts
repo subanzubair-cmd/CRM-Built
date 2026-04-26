@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Copy Role.permissions → User.permissions for any user whose user.permissions
  * is empty. Run after the auth.ts change that removed the role-fallback at
@@ -6,26 +5,23 @@
  *
  * Bumps sessionVersion on each backfilled user so their next JWT revalidation
  * picks up the new permissions without waiting for token expiry.
+ *
+ * Usage: npx tsx scripts/backfill-user-permissions.ts
  */
-
-import { PrismaClient } from '../packages/database/node_modules/.prisma/client/index.js'
-
-const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL })
+import 'reflect-metadata'
+import { sequelize, User, Role, literal } from '../packages/database/src'
 
 async function main() {
-  const users = await prisma.user.findMany({
-    select: {
-      id: true,
-      email: true,
-      permissions: true,
-      role: { select: { name: true, permissions: true } },
-    },
+  const userRows = await User.findAll({
+    attributes: ['id', 'email', 'permissions'],
+    include: [{ model: Role, as: 'role', attributes: ['name', 'permissions'] }],
   })
+  const users = userRows.map((u) => u.get({ plain: true }) as any)
 
   let updated = 0
   let skipped = 0
   for (const u of users) {
-    if (u.permissions.length > 0) {
+    if ((u.permissions ?? []).length > 0) {
       skipped++
       continue
     }
@@ -34,13 +30,13 @@ async function main() {
       skipped++
       continue
     }
-    await prisma.user.update({
-      where: { id: u.id },
-      data: {
+    await User.update(
+      {
         permissions: u.role.permissions,
-        sessionVersion: { increment: 1 },
-      },
-    })
+        sessionVersion: literal('"sessionVersion" + 1') as any,
+      } as any,
+      { where: { id: u.id } },
+    )
     console.log(`[ok]   ${u.email} — ${u.role.permissions.length} perms from role ${u.role.name}`)
     updated++
   }
@@ -53,5 +49,5 @@ main()
     process.exit(1)
   })
   .finally(async () => {
-    await prisma.$disconnect()
+    await sequelize.close()
   })

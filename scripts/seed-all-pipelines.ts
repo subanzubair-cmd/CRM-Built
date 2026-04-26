@@ -14,13 +14,35 @@
  *   9. Sold      (propertyStatus=SOLD, soldAt + soldPrice)
  *  10. Rental    (propertyStatus=RENTAL, rentalAt)
  *
- * Usage: DATABASE_URL=... node scripts/seed-all-pipelines.mjs
+ * Usage: DATABASE_URL=... npx tsx scripts/seed-all-pipelines.ts
  */
-import { PrismaClient } from '../packages/database/node_modules/.prisma/client/index.js'
+import 'reflect-metadata'
+import {
+  sequelize,
+  User,
+  Property,
+  Contact,
+  PropertyContact,
+  StageHistory,
+  ActivityLog,
+  Market,
+  LeadCampaign,
+  BuyerOffer,
+  BuyerMatch,
+  LeadOffer,
+  PropertyFile,
+  Appointment,
+  Task,
+  Message,
+  Conversation,
+  Note,
+  PropertyTeamAssignment,
+  CampaignEnrollment,
+  ActiveCall,
+  AiLog,
+} from '../packages/database/src'
 
-const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL })
-
-function normalizeAddress(street, city, state, zip) {
+function normalizeAddress(street: string, city: string, state: string, zip: string): string {
   return [street, city, state, zip]
     .filter(Boolean)
     .join(' ')
@@ -30,9 +52,7 @@ function normalizeAddress(street, city, state, zip) {
     .trim()
 }
 
-// Distinct addresses so `normalizedAddress` unique checks never collide.
-// 50 total leads = 10 pipelines × 5.
-const ADDRESSES = [
+const ADDRESSES: Array<[string, string, string, string]> = [
   // DTS (0-4)
   ['4500 Cedar Springs Rd', 'Dallas', 'TX', '75219'],
   ['1100 Harry Hines Blvd', 'Dallas', 'TX', '75235'],
@@ -95,7 +115,7 @@ const ADDRESSES = [
   ['1050 Preston Trail', 'Dallas', 'TX', '75230'],
 ]
 
-const CONTACTS = [
+const CONTACTS: Array<{ first: string; last: string; phone: string }> = [
   // DTS sellers
   { first: 'James', last: 'Patterson',  phone: '(214) 555-0101' },
   { first: 'Maria', last: 'Garcia',     phone: '(214) 555-0202' },
@@ -161,20 +181,50 @@ const CONTACTS = [
 const ACTIVE_STAGES = ['NEW_LEAD', 'DISCOVERY', 'INTERESTED_ADD_TO_FOLLOW_UP', 'OFFER_MADE', 'UNDER_CONTRACT']
 const TM_STAGES = ['NEW_CONTRACT', 'MARKETING_TO_BUYERS', 'SHOWING_TO_BUYERS', 'EVALUATING_OFFERS', 'ACCEPTED_OFFER']
 const INV_STAGES = ['NEW_INVENTORY', 'GETTING_ESTIMATES', 'UNDER_REHAB', 'LISTED_FOR_SALE', 'UNDER_CONTRACT']
-const DISPO_STAGES = ['POTENTIAL_BUYER', 'COLD_BUYER', 'WARM_BUYER', 'HOT_BUYER', 'DISPO_OFFER_RECEIVED']
+
+interface PipelineConfig {
+  idx: number
+  pipeline: string
+  contactType: 'SELLER' | 'AGENT'
+  leadType: 'DIRECT_TO_SELLER' | 'DIRECT_TO_AGENT'
+  leadStatus: string
+  propertyStatus: string
+  activeLeadStage: string | null
+  tmStage?: string
+  inventoryStage?: string
+  exitStrategy?: string
+  inDispo?: boolean
+  underContractAt?: Date
+  underContractPrice?: number
+  contractPrice?: number
+  arv?: number
+  repairEstimate?: number
+  askingPrice?: number
+  soldAt?: Date
+  soldPrice?: number
+  offerPrice?: number
+  rentalAt?: Date
+  warmAt?: Date
+  deadAt?: Date
+  referredAt?: Date
+  leadCampaignId: string
+  campaignName: string
+}
 
 async function main() {
-  const admin = await prisma.user.findFirst({ where: { status: 'ACTIVE' } })
+  const admin = await User.findOne({ where: { status: 'ACTIVE' }, raw: true }) as any
   if (!admin) throw new Error('No active user found')
 
-  const [dtsCampaign, dtaCampaign] = await Promise.all([
-    prisma.leadCampaign.findFirst({ where: { type: 'DTS', isActive: true } }),
-    prisma.leadCampaign.findFirst({ where: { type: 'DTA', isActive: true } }),
+  const [dtsCampaignRow, dtaCampaignRow] = await Promise.all([
+    LeadCampaign.findOne({ where: { type: 'DTS', isActive: true }, raw: true }) as Promise<any>,
+    LeadCampaign.findOne({ where: { type: 'DTA', isActive: true }, raw: true }) as Promise<any>,
   ])
+  const dtsCampaign = dtsCampaignRow
+  const dtaCampaign = dtaCampaignRow
   if (!dtsCampaign) throw new Error('No active DTS campaign found')
   if (!dtaCampaign) throw new Error('No active DTA campaign found')
 
-  const market = await prisma.market.findFirst({ where: { isActive: true } })
+  const market = await Market.findOne({ where: { isActive: true }, raw: true }) as any
   const marketId = market?.id ?? null
 
   console.log(`Admin:    ${admin.name} (${admin.id})`)
@@ -185,33 +235,31 @@ async function main() {
 
   // ── Wipe all existing leads ────────────────────────────────────────────────
   console.log('Wiping existing lead data…')
-  await prisma.buyerOffer.deleteMany()
-  await prisma.buyerMatch.deleteMany()
-  await prisma.leadOffer.deleteMany()
-  await prisma.stageHistory.deleteMany()
-  await prisma.activityLog.deleteMany()
-  await prisma.propertyFile.deleteMany()
-  await prisma.appointment.deleteMany()
-  await prisma.task.deleteMany()
-  await prisma.message.deleteMany()
-  await prisma.conversation.deleteMany()
-  await prisma.note.deleteMany()
-  await prisma.propertyContact.deleteMany()
-  // PropertyTeamAssignment rows cascade-delete when the property goes away,
-  // but we'll delete explicitly if the model exists (defensive).
-  try { await prisma.propertyTeamAssignment.deleteMany() } catch {}
-  try { await prisma.campaignEnrollment.deleteMany() } catch {}
-  try { await prisma.activeCall.deleteMany() } catch {}
-  try { await prisma.aiLog.deleteMany() } catch {}
-  await prisma.property.deleteMany()
+  await BuyerOffer.destroy({ where: {} })
+  await BuyerMatch.destroy({ where: {} })
+  await LeadOffer.destroy({ where: {} })
+  await StageHistory.destroy({ where: {} })
+  await ActivityLog.destroy({ where: {} })
+  await PropertyFile.destroy({ where: {} })
+  await Appointment.destroy({ where: {} })
+  await Task.destroy({ where: {} })
+  await Message.destroy({ where: {} })
+  await Conversation.destroy({ where: {} })
+  await Note.destroy({ where: {} })
+  await PropertyContact.destroy({ where: {} })
+  try { await PropertyTeamAssignment.destroy({ where: {} }) } catch {}
+  try { await CampaignEnrollment.destroy({ where: {} }) } catch {}
+  try { await ActiveCall.destroy({ where: {} }) } catch {}
+  try { await AiLog.destroy({ where: {} }) } catch {}
+  await Property.destroy({ where: {} })
   // Orphan contacts are left in place — they may be linked to Buyer/Vendor/Conversation
   // rows and deleting them cascades unpredictably. Seed creates fresh contacts below.
   console.log('  ✓ All existing property data deleted\n')
 
   // ── Pipeline configs ───────────────────────────────────────────────────────
-  const pipelines = [
+  const pipelines: PipelineConfig[] = [
     // DTS — active seller leads
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: i,
       pipeline: 'dts',
       contactType: 'SELLER',
@@ -223,7 +271,7 @@ async function main() {
       campaignName: dtsCampaign.name,
     })),
     // DTA — active agent leads
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 5 + i,
       pipeline: 'dta',
       contactType: 'AGENT',
@@ -235,7 +283,7 @@ async function main() {
       campaignName: dtaCampaign.name,
     })),
     // Warm — alternating DTS/DTA
-    ...Array.from({ length: 5 }, (_, i) => {
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => {
       const isDts = i % 2 === 0
       return {
         idx: 10 + i,
@@ -251,7 +299,7 @@ async function main() {
       }
     }),
     // Dead — mostly DTS
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 15 + i,
       pipeline: 'dead',
       contactType: 'SELLER',
@@ -263,8 +311,8 @@ async function main() {
       leadCampaignId: dtsCampaign.id,
       campaignName: dtsCampaign.name,
     })),
-    // Referred — DTA makes more sense here, but allow mix
-    ...Array.from({ length: 5 }, (_, i) => {
+    // Referred — DTA-leaning
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => {
       const isDta = i % 2 === 0
       return {
         idx: 20 + i,
@@ -279,8 +327,8 @@ async function main() {
         campaignName: isDta ? dtaCampaign.name : dtsCampaign.name,
       }
     }),
-    // TM — all DTS-origin (transaction management of a signed contract)
-    ...Array.from({ length: 5 }, (_, i) => ({
+    // TM — all DTS-origin
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 25 + i,
       pipeline: 'tm',
       contactType: 'SELLER',
@@ -297,7 +345,7 @@ async function main() {
       campaignName: dtsCampaign.name,
     })),
     // Inventory — DTS-origin properties being rehabbed / flipped
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 30 + i,
       pipeline: 'inventory',
       contactType: 'SELLER',
@@ -315,7 +363,7 @@ async function main() {
       campaignName: dtsCampaign.name,
     })),
     // Dispo — DTS-origin being marketed to buyers
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 35 + i,
       pipeline: 'dispo',
       contactType: 'SELLER',
@@ -333,7 +381,7 @@ async function main() {
       campaignName: dtsCampaign.name,
     })),
     // Sold — closed deals
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 40 + i,
       pipeline: 'sold',
       contactType: 'SELLER',
@@ -349,7 +397,7 @@ async function main() {
       campaignName: dtsCampaign.name,
     })),
     // Rental — held for rent
-    ...Array.from({ length: 5 }, (_, i) => ({
+    ...Array.from({ length: 5 }, (_, i): PipelineConfig => ({
       idx: 45 + i,
       pipeline: 'rental',
       contactType: 'SELLER',
@@ -367,80 +415,81 @@ async function main() {
   // ── Create leads ──────────────────────────────────────────────────────────
   const yearMonth = new Date().toISOString().slice(0, 7).replace('-', '')
   let created = 0
-  const perPipelineCount = {}
+  const perPipelineCount: Record<string, number> = {}
 
   for (const config of pipelines) {
     const [street, city, state, zip] = ADDRESSES[config.idx]
     const contact = CONTACTS[config.idx]
     const leadNumber = `HP-${yearMonth}-${String(created + 1).padStart(4, '0')}`
 
-    const data = {
-      streetAddress: street,
-      city,
-      state,
-      zip,
-      normalizedAddress: normalizeAddress(street, city, state, zip),
-      leadType: config.leadType,
-      leadStatus: config.leadStatus,
-      propertyStatus: config.propertyStatus,
-      activeLeadStage: config.activeLeadStage,
-      tmStage: config.tmStage ?? null,
-      inventoryStage: config.inventoryStage ?? null,
-      exitStrategy: config.exitStrategy ?? null,
-      inDispo: config.inDispo ?? false,
-      soldAt: config.soldAt ?? null,
-      soldPrice: config.soldPrice ?? null,
-      offerPrice: config.offerPrice ?? null,
-      askingPrice: config.askingPrice ?? null,
-      arv: config.arv ?? null,
-      repairEstimate: config.repairEstimate ?? null,
-      underContractAt: config.underContractAt ?? null,
-      underContractPrice: config.underContractPrice ?? null,
-      contractPrice: config.contractPrice ?? null,
-      rentalAt: config.rentalAt ?? null,
-      deadAt: config.deadAt ?? null,
-      warmAt: config.warmAt ?? null,
-      referredAt: config.referredAt ?? null,
-      leadCampaignId: config.leadCampaignId,
-      campaignName: config.campaignName,
-      marketId,
-      createdById: admin.id,
-      leadNumber,
-      contacts: {
-        create: {
-          isPrimary: true,
-          contact: {
-            create: {
-              type: config.contactType,
-              firstName: contact.first,
-              lastName: contact.last,
-              phone: contact.phone,
-            },
-          },
-        },
-      },
-      stageHistory: {
-        create: {
-          pipeline: config.pipeline,
-          toStage:
-            config.activeLeadStage ??
-            config.tmStage ??
-            config.inventoryStage ??
-            config.propertyStatus,
-          changedById: admin.id,
-          changedByName: admin.name,
-        },
-      },
-      activityLogs: {
-        create: {
-          userId: admin.id,
-          action: 'LEAD_CREATED',
-          detail: { description: `Seeded ${config.pipeline} pipeline lead` },
-        },
-      },
-    }
+    await sequelize.transaction(async (tx) => {
+      const property = await Property.create({
+        streetAddress: street,
+        city,
+        state,
+        zip,
+        normalizedAddress: normalizeAddress(street, city, state, zip),
+        leadType: config.leadType,
+        leadStatus: config.leadStatus,
+        propertyStatus: config.propertyStatus,
+        activeLeadStage: config.activeLeadStage,
+        tmStage: config.tmStage ?? null,
+        inventoryStage: config.inventoryStage ?? null,
+        exitStrategy: config.exitStrategy ?? null,
+        inDispo: config.inDispo ?? false,
+        soldAt: config.soldAt ?? null,
+        soldPrice: config.soldPrice ?? null,
+        offerPrice: config.offerPrice ?? null,
+        askingPrice: config.askingPrice ?? null,
+        arv: config.arv ?? null,
+        repairEstimate: config.repairEstimate ?? null,
+        underContractAt: config.underContractAt ?? null,
+        underContractPrice: config.underContractPrice ?? null,
+        contractPrice: config.contractPrice ?? null,
+        rentalAt: config.rentalAt ?? null,
+        deadAt: config.deadAt ?? null,
+        warmAt: config.warmAt ?? null,
+        referredAt: config.referredAt ?? null,
+        leadCampaignId: config.leadCampaignId,
+        campaignName: config.campaignName,
+        marketId,
+        createdById: admin.id,
+        leadNumber,
+      } as any, { transaction: tx })
 
-    await prisma.property.create({ data })
+      const newContact = await Contact.create({
+        type: config.contactType,
+        firstName: contact.first,
+        lastName: contact.last,
+        phone: contact.phone,
+      } as any, { transaction: tx })
+
+      await PropertyContact.create({
+        propertyId: property.id,
+        contactId: newContact.id,
+        isPrimary: true,
+      } as any, { transaction: tx })
+
+      await StageHistory.create({
+        propertyId: property.id,
+        pipeline: config.pipeline,
+        toStage:
+          config.activeLeadStage ??
+          config.tmStage ??
+          config.inventoryStage ??
+          config.propertyStatus,
+        changedById: admin.id,
+        changedByName: admin.name,
+      } as any, { transaction: tx })
+
+      await ActivityLog.create({
+        propertyId: property.id,
+        userId: admin.id,
+        action: 'LEAD_CREATED',
+        detail: { description: `Seeded ${config.pipeline} pipeline lead` },
+      } as any, { transaction: tx })
+    })
+
     created++
     perPipelineCount[config.pipeline] = (perPipelineCount[config.pipeline] ?? 0) + 1
     console.log(`  [${config.pipeline.padEnd(9)}] ${street}, ${city} — ${contact.first} ${contact.last}`)
@@ -454,4 +503,4 @@ async function main() {
 
 main()
   .catch((e) => { console.error(e); process.exit(1) })
-  .finally(() => prisma.$disconnect())
+  .finally(() => sequelize.close())

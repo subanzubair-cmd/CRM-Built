@@ -1,6 +1,10 @@
-import { PrismaClient } from '../packages/database/node_modules/.prisma/client/index.js'
-
-const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL })
+/**
+ * Idempotent: create the Co-Owner role if it doesn't exist.
+ *
+ * Usage: npx tsx scripts/add-co-owner-role.ts
+ */
+import 'reflect-metadata'
+import { sequelize, Role } from '../packages/database/src'
 
 const ALL_PERMISSIONS = [
   'admin.all',
@@ -18,23 +22,23 @@ const ALL_PERMISSIONS = [
 ]
 
 async function main() {
-  const existing = await prisma.role.findUnique({ where: { name: 'Co-Owner' } })
+  const existing = await Role.findOne({ where: { name: 'Co-Owner' }, raw: true }) as any
   if (existing) {
     console.log('Co-Owner role already exists. Skipping.')
   } else {
-    const created = await prisma.role.create({
-      data: {
-        name: 'Co-Owner',
-        description: 'Co-owner with full operational access',
-        permissions: ALL_PERMISSIONS,
-        isSystem: true,
-      },
-    })
+    const created = await Role.create({
+      name: 'Co-Owner',
+      description: 'Co-owner with full operational access',
+      permissions: ALL_PERMISSIONS,
+      isSystem: true,
+    } as any)
     console.log('Created Co-Owner role:', created.id)
   }
 
-  const count = await prisma.role.count()
+  const count = await Role.count()
   console.log(`Total roles: ${count}`)
 }
 
-main().catch((e) => { console.error(e); process.exit(1) }).finally(() => prisma.$disconnect())
+main()
+  .catch((e) => { console.error(e); process.exit(1) })
+  .finally(() => sequelize.close())

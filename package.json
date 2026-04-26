@@ -7,15 +7,19 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "db:migrate": "pnpm --filter @crm/database run db:migrate",
-    "db:migrate:sequelize": "pnpm --filter @crm/database run db:migrate:sequelize",
-    "db:migrate:sequelize:status": "pnpm --filter @crm/database run db:migrate:sequelize:status",
-    "db:migrate:sequelize:up": "pnpm --filter @crm/database run db:migrate:sequelize:up",
-    "db:migrate:sequelize:down": "pnpm --filter @crm/database run db:migrate:sequelize:down",
+    "db:migrate:status": "pnpm --filter @crm/database run db:migrate:status",
+    "db:migrate:up": "pnpm --filter @crm/database run db:migrate:up",
+    "db:migrate:down": "pnpm --filter @crm/database run db:migrate:down",
     "db:migrate:check": "bash scripts/check-migrations.sh",
     "db:seed": "pnpm --filter @crm/database run db:seed",
-    "db:studio": "pnpm --filter @crm/database run db:studio"
+    "seed:leads": "tsx scripts/seed-leads.ts",
+    "seed:dts-dta-leads": "tsx scripts/seed-dts-dta-leads.ts",
+    "seed:all-pipelines": "tsx scripts/seed-all-pipelines.ts",
+    "seed:lead-sources": "tsx scripts/seed-lead-sources.ts",
+    "seed:comm-provider": "tsx scripts/seed-comm-provider.ts"
   },
   "devDependencies": {
+    "tsx": "^4.19.0",
     "turbo": "^2.5.0",
     "typescript": "^5.8.0"
   },

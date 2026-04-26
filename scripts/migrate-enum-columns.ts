@@ -1,51 +1,55 @@
-#!/usr/bin/env node
 /**
  * Convert Template.templateType and StatusAutomation.workspaceType from
  * free-form strings to Postgres enums. Idempotent — no-ops if the types
  * are already enums.
  *
- * Run BEFORE `prisma db push` when rolling out the enum schema change.
+ * Run BEFORE applying the enum schema change via `pnpm db:migrate`.
+ *
+ * Usage: npx tsx scripts/migrate-enum-columns.ts
  */
+import 'reflect-metadata'
+import { sequelize, QueryTypes } from '../packages/database/src'
 
-import { PrismaClient } from '../packages/database/node_modules/.prisma/client/index.js'
-
-const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL })
-
-async function columnIsEnum(table, column) {
-  const rows = await prisma.$queryRawUnsafe(
-    `SELECT data_type, udt_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
-    table,
-    column,
+async function columnIsEnum(table: string, column: string): Promise<boolean> {
+  const rows = await sequelize.query<{ data_type: string; udt_name: string }>(
+    `SELECT data_type, udt_name FROM information_schema.columns WHERE table_name = :table AND column_name = :column`,
+    { replacements: { table, column }, type: QueryTypes.SELECT },
   )
   return rows[0]?.data_type === 'USER-DEFINED'
 }
 
-async function typeExists(typeName) {
-  const rows = await prisma.$queryRawUnsafe(
-    `SELECT 1 FROM pg_type WHERE typname = $1`,
-    typeName,
+async function typeExists(typeName: string): Promise<boolean> {
+  const rows = await sequelize.query(
+    `SELECT 1 FROM pg_type WHERE typname = :typeName`,
+    { replacements: { typeName }, type: QueryTypes.SELECT },
   )
   return rows.length > 0
 }
 
-async function ensureEnum(typeName, values) {
+async function ensureEnum(typeName: string, values: string[]): Promise<void> {
   if (!(await typeExists(typeName))) {
     const valsSql = values.map((v) => `'${v}'`).join(', ')
-    await prisma.$executeRawUnsafe(`CREATE TYPE "${typeName}" AS ENUM (${valsSql})`)
+    await sequelize.query(`CREATE TYPE "${typeName}" AS ENUM (${valsSql})`)
     console.log(`✓ Created enum ${typeName}`)
   } else {
     console.log(`= Enum ${typeName} already exists`)
   }
 }
 
-async function inspectColumnValues(table, column) {
-  const rows = await prisma.$queryRawUnsafe(
+async function inspectColumnValues(table: string, column: string): Promise<string[]> {
+  const rows = await sequelize.query<{ v: string | null }>(
     `SELECT DISTINCT "${column}" AS v FROM "${table}"`,
+    { type: QueryTypes.SELECT },
   )
-  return rows.map((r) => r.v).filter((v) => v != null)
+  return rows.map((r) => r.v).filter((v): v is string => v != null)
 }
 
-async function migrateColumn(table, column, typeName, allowedValues) {
+async function migrateColumn(
+  table: string,
+  column: string,
+  typeName: string,
+  allowedValues: string[],
+): Promise<void> {
   if (await columnIsEnum(table, column)) {
     console.log(`= ${table}.${column} is already an enum`)
     return
@@ -59,7 +63,7 @@ async function migrateColumn(table, column, typeName, allowedValues) {
     )
     process.exit(1)
   }
-  await prisma.$executeRawUnsafe(
+  await sequelize.query(
     `ALTER TABLE "${table}" ALTER COLUMN "${column}" TYPE "${typeName}" USING "${column}"::"${typeName}"`,
   )
   console.log(`✓ Migrated ${table}.${column} to ${typeName}`)
@@ -79,5 +83,5 @@ main()
     process.exit(1)
   })
   .finally(async () => {
-    await prisma.$disconnect()
+    await sequelize.close()
   })

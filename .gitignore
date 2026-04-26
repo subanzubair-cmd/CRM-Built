@@ -121,6 +121,7 @@ tmp/
 .claude/sessions/
 .claude/settings.local.json
 .claude/*.local.json
+.claude/scheduled_tasks.lock
 # Per-session Claude tooling scratch (brainstorm html previews, pids, etc.)
 .superpowers/
 

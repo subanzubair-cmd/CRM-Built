@@ -9,13 +9,37 @@
  * This mirrors what the UI would produce if you opened Add Lead, picked
  * the campaign, and let the form auto-fill source + outbound number.
  *
- * Usage: DATABASE_URL=... node scripts/seed-dts-dta-leads.mjs
+ * Usage: DATABASE_URL=... npx tsx scripts/seed-dts-dta-leads.ts
  */
-import { PrismaClient } from '../packages/database/node_modules/.prisma/client/index.js'
+import 'reflect-metadata'
+import {
+  sequelize,
+  User,
+  Property,
+  Contact,
+  PropertyContact,
+  StageHistory,
+  ActivityLog,
+  Market,
+  LeadCampaign,
+  LeadSource,
+  TwilioNumber,
+  BuyerOffer,
+  BuyerMatch,
+  LeadOffer,
+  PropertyFile,
+  Appointment,
+  Task,
+  Message,
+  Conversation,
+  Note,
+  PropertyTeamAssignment,
+  CampaignEnrollment,
+  ActiveCall,
+  AiLog,
+} from '../packages/database/src'
 
-const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL })
-
-function normalizeAddress(street, city, state, zip) {
+function normalizeAddress(street: string, city: string, state: string, zip: string): string {
   return [street, city, state, zip]
     .filter(Boolean)
     .join(' ')
@@ -28,7 +52,7 @@ function normalizeAddress(street, city, state, zip) {
 const ACTIVE_STAGES = [
   'NEW_LEAD', 'DISCOVERY', 'INTERESTED_ADD_TO_FOLLOW_UP',
   'DUE_DILIGENCE', 'OFFER_MADE', 'OFFER_FOLLOW_UP', 'UNDER_CONTRACT',
-  'NEW_LEAD', 'DISCOVERY', 'OFFER_MADE', // repeat to pad to 10
+  'NEW_LEAD', 'DISCOVERY', 'OFFER_MADE',
 ]
 
 const DTS_LEADS = [
@@ -57,36 +81,96 @@ const DTA_LEADS = [
   { street: '8333 Douglas Ave',        city: 'Dallas',     state: 'TX', zip: '75225', contact: { first: 'Jack',    last: 'Lopez',      phone: '(972) 555-1410' } },
 ]
 
+interface CampaignContext {
+  id: string
+  name: string
+  leadSource: { name: string }
+  phoneNumber: { number: string; friendlyName: string }
+}
+
+async function loadCampaign(type: 'DTS' | 'DTA'): Promise<CampaignContext> {
+  const row = await LeadCampaign.findOne({
+    where: { type, isActive: true },
+    include: [
+      { model: LeadSource, as: 'leadSource' },
+      { model: TwilioNumber, as: 'phoneNumber' },
+    ],
+  })
+  if (!row) throw new Error(`No active ${type} campaign`)
+  const plain = row.get({ plain: true }) as any
+  if (!plain.leadSource) throw new Error(`${type} campaign "${plain.name}" has no lead source`)
+  if (!plain.phoneNumber) throw new Error(`${type} campaign "${plain.name}" has no phone number`)
+  return plain as CampaignContext
+}
+
+async function createLead(
+  lead: { street: string; city: string; state: string; zip: string; contact: { first: string; last: string; phone: string } },
+  stage: string,
+  leadType: 'DIRECT_TO_SELLER' | 'DIRECT_TO_AGENT',
+  contactType: 'SELLER' | 'AGENT',
+  pipeline: 'dts' | 'dta',
+  leadNumber: string,
+  campaign: CampaignContext,
+  marketId: string | null,
+  admin: { id: string; name: string },
+) {
+  await sequelize.transaction(async (tx) => {
+    const property = await Property.create({
+      streetAddress: lead.street,
+      city: lead.city,
+      state: lead.state,
+      zip: lead.zip,
+      normalizedAddress: normalizeAddress(lead.street, lead.city, lead.state, lead.zip),
+      leadType,
+      leadStatus: 'ACTIVE',
+      propertyStatus: 'LEAD',
+      activeLeadStage: stage,
+      leadCampaignId: campaign.id,
+      campaignName: campaign.name,
+      source: campaign.leadSource.name,
+      defaultOutboundNumber: campaign.phoneNumber.number,
+      marketId,
+      createdById: admin.id,
+      leadNumber,
+    } as any, { transaction: tx })
+
+    const contact = await Contact.create({
+      type: contactType,
+      firstName: lead.contact.first,
+      lastName: lead.contact.last,
+      phone: lead.contact.phone,
+    } as any, { transaction: tx })
+
+    await PropertyContact.create({
+      propertyId: property.id,
+      contactId: contact.id,
+      isPrimary: true,
+    } as any, { transaction: tx })
+
+    await StageHistory.create({
+      propertyId: property.id,
+      pipeline,
+      toStage: stage,
+      changedById: admin.id,
+      changedByName: admin.name,
+    } as any, { transaction: tx })
+
+    await ActivityLog.create({
+      propertyId: property.id,
+      userId: admin.id,
+      action: 'LEAD_CREATED',
+      detail: { description: `Seeded ${pipeline.toUpperCase()} lead on ${campaign.name}` },
+    } as any, { transaction: tx })
+  })
+}
+
 async function main() {
-  const admin = await prisma.user.findFirst({ where: { status: 'ACTIVE' } })
+  const admin = await User.findOne({ where: { status: 'ACTIVE' }, raw: true }) as any
   if (!admin) throw new Error('No active user found')
 
-  const [dtsCampaign, dtaCampaign] = await Promise.all([
-    prisma.leadCampaign.findFirst({
-      where: { type: 'DTS', isActive: true },
-      include: {
-        leadSource: true,
-        phoneNumber: true,
-      },
-    }),
-    prisma.leadCampaign.findFirst({
-      where: { type: 'DTA', isActive: true },
-      include: {
-        leadSource: true,
-        phoneNumber: true,
-      },
-    }),
-  ])
-
-  if (!dtsCampaign) throw new Error('No active DTS campaign')
-  if (!dtaCampaign) throw new Error('No active DTA campaign')
-
-  if (!dtsCampaign.leadSource) throw new Error(`DTS campaign "${dtsCampaign.name}" has no lead source`)
-  if (!dtaCampaign.leadSource) throw new Error(`DTA campaign "${dtaCampaign.name}" has no lead source`)
-  if (!dtsCampaign.phoneNumber) throw new Error(`DTS campaign "${dtsCampaign.name}" has no phone number`)
-  if (!dtaCampaign.phoneNumber) throw new Error(`DTA campaign "${dtaCampaign.name}" has no phone number`)
-
-  const market = await prisma.market.findFirst({ where: { isActive: true } })
+  const [dtsCampaign, dtaCampaign] = await Promise.all([loadCampaign('DTS'), loadCampaign('DTA')])
+  const market = await Market.findOne({ where: { isActive: true }, raw: true }) as any
+  const marketId = market?.id ?? null
 
   console.log(`Admin:      ${admin.name} (${admin.id})`)
   console.log(`DTS campaign: ${dtsCampaign.name}`)
@@ -97,28 +181,26 @@ async function main() {
   console.log(`  phone:      ${dtaCampaign.phoneNumber.number} (${dtaCampaign.phoneNumber.friendlyName})`)
   console.log(`Market:       ${market?.name ?? '(none)'}\n`)
 
-  // ── Wipe existing leads ────────────────────────────────────────────────────
   console.log('Wiping existing lead data…')
-  await prisma.buyerOffer.deleteMany()
-  await prisma.buyerMatch.deleteMany()
-  await prisma.leadOffer.deleteMany()
-  await prisma.stageHistory.deleteMany()
-  await prisma.activityLog.deleteMany()
-  await prisma.propertyFile.deleteMany()
-  await prisma.appointment.deleteMany()
-  await prisma.task.deleteMany()
-  await prisma.message.deleteMany()
-  await prisma.conversation.deleteMany()
-  await prisma.note.deleteMany()
-  await prisma.propertyContact.deleteMany()
-  try { await prisma.propertyTeamAssignment.deleteMany() } catch {}
-  try { await prisma.campaignEnrollment.deleteMany() } catch {}
-  try { await prisma.activeCall.deleteMany() } catch {}
-  try { await prisma.aiLog.deleteMany() } catch {}
-  await prisma.property.deleteMany()
+  await BuyerOffer.destroy({ where: {} })
+  await BuyerMatch.destroy({ where: {} })
+  await LeadOffer.destroy({ where: {} })
+  await StageHistory.destroy({ where: {} })
+  await ActivityLog.destroy({ where: {} })
+  await PropertyFile.destroy({ where: {} })
+  await Appointment.destroy({ where: {} })
+  await Task.destroy({ where: {} })
+  await Message.destroy({ where: {} })
+  await Conversation.destroy({ where: {} })
+  await Note.destroy({ where: {} })
+  await PropertyContact.destroy({ where: {} })
+  try { await PropertyTeamAssignment.destroy({ where: {} }) } catch {}
+  try { await CampaignEnrollment.destroy({ where: {} }) } catch {}
+  try { await ActiveCall.destroy({ where: {} }) } catch {}
+  try { await AiLog.destroy({ where: {} }) } catch {}
+  await Property.destroy({ where: {} })
   console.log('  ✓ All existing property data deleted\n')
 
-  // ── Create DTS leads ───────────────────────────────────────────────────────
   const yearMonth = new Date().toISOString().slice(0, 7).replace('-', '')
   let created = 0
 
@@ -127,112 +209,17 @@ async function main() {
     const lead = DTS_LEADS[i]
     const stage = ACTIVE_STAGES[i]
     const leadNumber = `HP-${yearMonth}-${String(created + 1).padStart(4, '0')}`
-    await prisma.property.create({
-      data: {
-        streetAddress: lead.street,
-        city: lead.city,
-        state: lead.state,
-        zip: lead.zip,
-        normalizedAddress: normalizeAddress(lead.street, lead.city, lead.state, lead.zip),
-        leadType: 'DIRECT_TO_SELLER',
-        leadStatus: 'ACTIVE',
-        propertyStatus: 'LEAD',
-        activeLeadStage: stage,
-        leadCampaignId: dtsCampaign.id,
-        campaignName: dtsCampaign.name,
-        source: dtsCampaign.leadSource.name,
-        defaultOutboundNumber: dtsCampaign.phoneNumber.number,
-        marketId: market?.id ?? null,
-        createdById: admin.id,
-        leadNumber,
-        contacts: {
-          create: {
-            isPrimary: true,
-            contact: {
-              create: {
-                type: 'SELLER',
-                firstName: lead.contact.first,
-                lastName: lead.contact.last,
-                phone: lead.contact.phone,
-              },
-            },
-          },
-        },
-        stageHistory: {
-          create: {
-            pipeline: 'dts',
-            toStage: stage,
-            changedById: admin.id,
-            changedByName: admin.name,
-          },
-        },
-        activityLogs: {
-          create: {
-            userId: admin.id,
-            action: 'LEAD_CREATED',
-            detail: { description: `Seeded DTS lead on ${dtsCampaign.name}` },
-          },
-        },
-      },
-    })
+    await createLead(lead, stage, 'DIRECT_TO_SELLER', 'SELLER', 'dts', leadNumber, dtsCampaign, marketId, admin)
     created++
     console.log(`  [DTS #${i + 1}] ${lead.street}, ${lead.city} — ${lead.contact.first} ${lead.contact.last} (${stage})`)
   }
 
-  // ── Create DTA leads ───────────────────────────────────────────────────────
   console.log(`\nCreating 10 DTA leads on "${dtaCampaign.name}"…`)
   for (let i = 0; i < DTA_LEADS.length; i++) {
     const lead = DTA_LEADS[i]
     const stage = ACTIVE_STAGES[i]
     const leadNumber = `HP-${yearMonth}-${String(created + 1).padStart(4, '0')}`
-    await prisma.property.create({
-      data: {
-        streetAddress: lead.street,
-        city: lead.city,
-        state: lead.state,
-        zip: lead.zip,
-        normalizedAddress: normalizeAddress(lead.street, lead.city, lead.state, lead.zip),
-        leadType: 'DIRECT_TO_AGENT',
-        leadStatus: 'ACTIVE',
-        propertyStatus: 'LEAD',
-        activeLeadStage: stage,
-        leadCampaignId: dtaCampaign.id,
-        campaignName: dtaCampaign.name,
-        source: dtaCampaign.leadSource.name,
-        defaultOutboundNumber: dtaCampaign.phoneNumber.number,
-        marketId: market?.id ?? null,
-        createdById: admin.id,
-        leadNumber,
-        contacts: {
-          create: {
-            isPrimary: true,
-            contact: {
-              create: {
-                type: 'AGENT',
-                firstName: lead.contact.first,
-                lastName: lead.contact.last,
-                phone: lead.contact.phone,
-              },
-            },
-          },
-        },
-        stageHistory: {
-          create: {
-            pipeline: 'dta',
-            toStage: stage,
-            changedById: admin.id,
-            changedByName: admin.name,
-          },
-        },
-        activityLogs: {
-          create: {
-            userId: admin.id,
-            action: 'LEAD_CREATED',
-            detail: { description: `Seeded DTA lead on ${dtaCampaign.name}` },
-          },
-        },
-      },
-    })
+    await createLead(lead, stage, 'DIRECT_TO_AGENT', 'AGENT', 'dta', leadNumber, dtaCampaign, marketId, admin)
     created++
     console.log(`  [DTA #${i + 1}] ${lead.street}, ${lead.city} — ${lead.contact.first} ${lead.contact.last} (${stage})`)
   }
@@ -244,4 +231,4 @@ async function main() {
 
 main()
   .catch((e) => { console.error(e); process.exit(1) })
-  .finally(() => prisma.$disconnect())
+  .finally(() => sequelize.close())

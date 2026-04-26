@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Reset User.sessionVersion = 0 for every user.
  *
@@ -13,18 +12,18 @@
  * callback, and pull fresh permissions from DB on the next revalidation.
  *
  * Idempotent: safe to run multiple times.
+ *
+ * Usage: npx tsx scripts/reset-session-versions.ts
  */
-
-import { PrismaClient } from '../packages/database/node_modules/.prisma/client/index.js'
-
-const prisma = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL })
+import 'reflect-metadata'
+import { sequelize, User, Op } from '../packages/database/src'
 
 async function main() {
-  const result = await prisma.user.updateMany({
-    where: { sessionVersion: { not: 0 } },
-    data: { sessionVersion: 0 },
-  })
-  console.log(`[reset-session-versions] ${result.count} user(s) reset to sessionVersion=0`)
+  const [count] = await User.update(
+    { sessionVersion: 0 } as any,
+    { where: { sessionVersion: { [Op.ne]: 0 } } },
+  )
+  console.log(`[reset-session-versions] ${count} user(s) reset to sessionVersion=0`)
 }
 
 main()
@@ -33,5 +32,5 @@ main()
     process.exit(1)
   })
   .finally(async () => {
-    await prisma.$disconnect()
+    await sequelize.close()
   })
