@@ -41,13 +41,27 @@ export async function POST() {
       if (!config.apiKey) {
         return NextResponse.json({ ok: false, error: 'Telnyx API key missing' }, { status: 400 })
       }
-      const res = await fetch('https://api.telnyx.com/v2/profile', {
+      // /v2/profile doesn't exist on Telnyx (404). /v2/phone_numbers
+      // with page[size]=1 is a cheap auth-check that exercises the same
+      // permissions the CRM actually needs.
+      const res = await fetch('https://api.telnyx.com/v2/phone_numbers?page[size]=1', {
         headers: { Authorization: `Bearer ${config.apiKey}` },
       })
       if (!res.ok) {
-        return NextResponse.json({ ok: false, error: `Telnyx auth failed (${res.status})` }, { status: 400 })
+        const txt = await res.text().catch(() => '')
+        return NextResponse.json(
+          { ok: false, error: `Telnyx auth failed (${res.status})${txt ? `: ${txt.slice(0, 160)}` : ''}` },
+          { status: 400 },
+        )
       }
-      return NextResponse.json({ ok: true, provider: 'telnyx' })
+      const data = await res.json().catch(() => ({}))
+      const numberCount = (data?.meta?.total_results as number | undefined) ?? null
+      return NextResponse.json({
+        ok: true,
+        provider: 'telnyx',
+        accountFriendlyName:
+          numberCount !== null ? `${numberCount} number${numberCount === 1 ? '' : 's'} on this account` : 'authenticated',
+      })
     }
 
     if (config.providerName === 'signalhouse') {

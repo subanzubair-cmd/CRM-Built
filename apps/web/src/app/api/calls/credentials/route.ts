@@ -46,11 +46,17 @@ export async function GET() {
       { status: 400 },
     )
   }
-  if (!config.voiceConnectionId) {
+  // A Voice API Application IS a Credential Connection in Telnyx — its
+  // ID serves both roles. We accept voiceConnectionId as an override for
+  // advanced setups (separate SIP Connection just for WebRTC) but default
+  // to voiceApplicationId when it isn't set, since most operators only
+  // have the Voice API Application ID.
+  const connectionId = config.voiceConnectionId || config.voiceApplicationId
+  if (!connectionId) {
     return NextResponse.json(
       {
         error:
-          'Voice Connection ID is not configured. Open Settings → SMS & Phone Number Integration and paste your Telnyx SIP Connection UUID.',
+          'Voice Application ID is not configured. Open Settings → SMS & Phone Number Integration and paste your Telnyx Voice API Application ID.',
       },
       { status: 422 },
     )
@@ -65,7 +71,7 @@ export async function GET() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        connection_id: config.voiceConnectionId,
+        connection_id: connectionId,
         // Tag with the user's id so we can audit which agent registered.
         tag: ((session as any)?.user?.id as string | undefined) ?? 'unknown',
       }),
