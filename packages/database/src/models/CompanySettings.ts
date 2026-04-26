@@ -26,6 +26,17 @@ export class CompanySettings extends Model<Partial<CompanySettingsAttributes>, P
   @Column(DataType.TEXT)
   declare timezone: string
 
+  /**
+   * How the inbound-call Reject button behaves.
+   *   'soft' — only dismiss the CRM popup; caller keeps ringing
+   *   'hard' — also tell the provider to hang up so the caller's
+   *            device disconnects immediately
+   */
+  @AllowNull(false)
+  @Default('soft')
+  @Column(DataType.TEXT)
+  declare rejectMode: 'soft' | 'hard'
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -40,6 +51,7 @@ export class CompanySettings extends Model<Partial<CompanySettingsAttributes>, P
 export interface CompanySettingsAttributes {
   id: string
   timezone: string
+  rejectMode: 'soft' | 'hard'
   createdAt: Date
   updatedAt: Date
 }

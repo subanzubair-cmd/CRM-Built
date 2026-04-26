@@ -8,6 +8,7 @@ import {
 } from '@crm/database'
 import { requirePermission, hasPermission } from '@/lib/auth-utils'
 import { getActiveCommConfig } from '@/lib/comm-provider'
+import { getCompanySettings } from '@/lib/company-settings'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -72,14 +73,19 @@ export async function POST(req: NextRequest, { params }: Params) {
     )
   }
 
-  // Tell the provider to actually hang up. Without this, the caller's
-  // phone keeps ringing for the full Telnyx timeout (~30s) even though
-  // we marked the call REJECTED in our DB. We use the conferenceName
-  // column — for Telnyx that's the call_control_id; for Twilio that's
-  // the conference SID. Fire-and-forget so the API call doesn't block
-  // the rejection response.
+  // Honor the rejectMode CompanySetting:
+  //   'soft' → only mark REJECTED in our DB; the caller keeps ringing
+  //            until Telnyx times out (~30s). Acts as a "snooze" so the
+  //            caller can still leave a voicemail.
+  //   'hard' → also POST a hangup to the provider so the caller's
+  //            device disconnects immediately, just like a normal
+  //            mobile-phone reject.
+  // We use the conferenceName column — for Telnyx that's the
+  // call_control_id; for Twilio that's the conference SID. Fire-and-
+  // forget so the API call doesn't block the rejection response.
+  const { rejectMode } = await getCompanySettings()
   const conferenceName = (call as any).conferenceName as string | null
-  if (conferenceName) {
+  if (rejectMode === 'hard' && conferenceName) {
     const config = await getActiveCommConfig()
     if (config?.providerName === 'telnyx' && config.apiKey) {
       void fetch(

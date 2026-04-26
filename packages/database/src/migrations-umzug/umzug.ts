@@ -40,6 +40,10 @@ import {
   up as companySettingsUp,
   down as companySettingsDown,
 } from './20260426040000-add-company-settings'
+import {
+  up as rejectModeUp,
+  down as rejectModeDown,
+} from './20260426050000-add-reject-mode'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -93,6 +97,13 @@ const migrations = [
       companySettingsUp({ name: '20260426040000-add-company-settings', context }),
     down: ({ context }: { context: any }) =>
       companySettingsDown({ name: '20260426040000-add-company-settings', context }),
+  },
+  {
+    name: '20260426050000-add-reject-mode',
+    up: ({ context }: { context: any }) =>
+      rejectModeUp({ name: '20260426050000-add-reject-mode', context }),
+    down: ({ context }: { context: any }) =>
+      rejectModeDown({ name: '20260426050000-add-reject-mode', context }),
   },
 ]
 

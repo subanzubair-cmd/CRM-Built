@@ -14,6 +14,7 @@ import { CommProviderForm } from '@/components/settings/CommProviderForm'
 import { LeadSourcesPanel } from '@/components/settings/LeadSourcesPanel'
 import { PhoneNumbersPanel } from '@/components/settings/PhoneNumbersPanel'
 import { GeneralSettingsPanel } from '@/components/settings/GeneralSettingsPanel'
+import { CallFlowPanel } from '@/components/settings/CallFlowPanel'
 import { hasPermission } from '@/lib/auth-utils'
 
 interface PageProps {
@@ -180,25 +181,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
       {tab === 'phone-numbers' && <PhoneNumbersPanel />}
 
       {tab === 'call-flow' && (
-        <div className="max-w-3xl">
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-800 mb-2">Call Flow</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              Define how incoming calls are routed — business hours, IVR menus, agent queues, and
-              multi-agent ringing for the WebRTC softphone.
-            </p>
-            <div className="border border-dashed border-gray-200 rounded-lg p-6 text-center">
-              <PhoneCall className="w-6 h-6 text-gray-300 mx-auto mb-2" />
-              <p className="text-sm text-gray-500">Call flow configuration coming soon.</p>
-              <p className="text-[11px] text-gray-400 mt-2 max-w-md mx-auto leading-relaxed">
-                Includes per-agent SIP credentials so inbound calls can ring multiple browsers in
-                parallel — first agent to answer takes the call. Requires changes to
-                <code className="mx-1 px-1 bg-gray-100 rounded">/api/calls/credentials</code>
-                to mint a credential per agent (today it&rsquo;s a single shared credential).
-              </p>
-            </div>
-          </div>
-        </div>
+        <CallFlowPanel canEdit={hasPermission(session, 'settings.manage')} />
       )}
 
       {tab === 'automations' && <AutomationsPanel />}

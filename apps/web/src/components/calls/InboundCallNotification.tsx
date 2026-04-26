@@ -7,6 +7,7 @@ import { useCallCleanup } from '@/components/calls/useCallCleanup'
 import { useTelnyxCall } from '@/components/calls/useTelnyxCall'
 import { useTabTitleIndicator } from '@/components/calls/useTabTitleIndicator'
 import { useCrossTabCallSync } from '@/components/calls/useCrossTabCallSync'
+import { useIncomingCallRingtone } from '@/components/calls/useIncomingCallRingtone'
 import { getTelnyxClient } from '@/lib/webrtc/telnyx-client'
 
 interface ActiveCall {
@@ -93,6 +94,13 @@ export function InboundCallNotification() {
   // 🟢 wins over 📞 — if this tab answered, we're "on call" even
   // if a fresh inbound starts ringing too (rare but possible).
   useTabTitleIndicator(answeredHere ? 'active' : activeCall ? 'ringing' : null)
+
+  // Audible ringtone while the popup is showing AND we haven't answered
+  // yet on this tab. Stops the moment the call moves to ACTIVE here, is
+  // dismissed, or rejected.
+  useIncomingCallRingtone({
+    active: !!activeCall && !answeredHere,
+  })
 
   // When ANY tab claims this call (Answer/Reject), every other tab
   // dismisses its popup so only the claimer continues to show it.
