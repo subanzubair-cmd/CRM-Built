@@ -31,9 +31,9 @@ export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
 //   Phase 5: Contact, Buyer, BuyerCriteria, Vendor
 //   Phase 6: Property, PropertyContact, StageHistory, ActivityLog,
 //            Note, Task, Appointment, BuyerMatch, BuyerOffer
+//   Phase 7: Conversation, Message, Notification, EsignDocument,
+//            PropertyFile
 export type {
-  Conversation, Message,
-  PropertyFile, EsignDocument, Notification,
   SavedFilter, AiLog, WebhookEvent,
 } from '../node_modules/.prisma/client'
 

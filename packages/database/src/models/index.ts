@@ -56,6 +56,15 @@ import { BuyerMatch } from './BuyerMatch'
 import { BuyerOffer } from './BuyerOffer'
 import { LeadOffer } from './LeadOffer'
 
+// ── Phase 7: Conversations & Messages ──────────────────────────────────────
+import { Conversation } from './Conversation'
+import { Message } from './Message'
+import { ActiveCall } from './ActiveCall'
+import { Notification } from './Notification'
+import { EsignTemplate } from './EsignTemplate'
+import { EsignDocument } from './EsignDocument'
+import { PropertyFile } from './PropertyFile'
+
 sequelize.addModels([
   // Phase 2 leaves (parents first)
   LeadSource,
@@ -106,6 +115,15 @@ sequelize.addModels([
   BuyerMatch,
   BuyerOffer,
   LeadOffer,
+
+  // Phase 7 Conversations & Messages (Conversation before Message)
+  Conversation,
+  Message,
+  ActiveCall,
+  Notification,
+  EsignTemplate,
+  EsignDocument,
+  PropertyFile,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -159,4 +177,12 @@ export {
   BuyerMatch,
   BuyerOffer,
   LeadOffer,
+  // Phase 7
+  Conversation,
+  Message,
+  ActiveCall,
+  Notification,
+  EsignTemplate,
+  EsignDocument,
+  PropertyFile,
 }

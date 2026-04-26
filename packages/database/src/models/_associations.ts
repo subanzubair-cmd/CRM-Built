@@ -37,6 +37,13 @@ import { Appointment } from './Appointment'
 import { BuyerMatch } from './BuyerMatch'
 import { BuyerOffer } from './BuyerOffer'
 import { LeadOffer } from './LeadOffer'
+import { Conversation } from './Conversation'
+import { Message } from './Message'
+import { ActiveCall } from './ActiveCall'
+import { Notification } from './Notification'
+import { EsignTemplate } from './EsignTemplate'
+import { EsignDocument } from './EsignDocument'
+import { PropertyFile } from './PropertyFile'
 
 export function wireAssociations(): void {
   // ── Phase 2: Independent leaves ───────────────────────────────────────────
@@ -234,4 +241,45 @@ export function wireAssociations(): void {
     foreignKey: 'propertyId',
     as: 'property',
   })
+
+  // ── Phase 7: Conversations & Messages ────────────────────────────────────
+  // Conversation per (Property, Contact) pair.
+  Property.hasMany(Conversation, { foreignKey: 'propertyId', as: 'conversations' })
+  Conversation.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  Contact.hasMany(Conversation, { foreignKey: 'contactId', as: 'conversations' })
+  Conversation.belongsTo(Contact, { foreignKey: 'contactId', as: 'contact' })
+
+  // Message belongs to a Conversation, optionally to Property/Contact/User.
+  Conversation.hasMany(Message, { foreignKey: 'conversationId', as: 'messages' })
+  Message.belongsTo(Conversation, { foreignKey: 'conversationId', as: 'conversation' })
+  Property.hasMany(Message, { foreignKey: 'propertyId', as: 'messages' })
+  Message.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  User.hasMany(Message, { foreignKey: 'sentById', as: 'sentMessages' })
+  Message.belongsTo(User, { foreignKey: 'sentById', as: 'sentBy' })
+  Contact.hasMany(Message, { foreignKey: 'contactId', as: 'messages' })
+  Message.belongsTo(Contact, { foreignKey: 'contactId', as: 'contact' })
+  LeadCampaign.hasMany(Message, { foreignKey: 'leadCampaignId', as: 'messages' })
+  Message.belongsTo(LeadCampaign, { foreignKey: 'leadCampaignId', as: 'leadCampaign' })
+
+  // ActiveCall — Twilio conference rows.
+  Property.hasMany(ActiveCall, { foreignKey: 'propertyId', as: 'activeCalls' })
+  ActiveCall.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  LeadCampaign.hasMany(ActiveCall, { foreignKey: 'leadCampaignId', as: 'activeCalls' })
+  ActiveCall.belongsTo(LeadCampaign, { foreignKey: 'leadCampaignId', as: 'leadCampaign' })
+  User.hasMany(ActiveCall, { foreignKey: 'agentUserId', as: 'agentActiveCalls' })
+  ActiveCall.belongsTo(User, { foreignKey: 'agentUserId', as: 'agent' })
+
+  // Notification.
+  User.hasMany(Notification, { foreignKey: 'userId', as: 'notifications' })
+  Notification.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+
+  // E-sign template + document.
+  EsignTemplate.hasMany(EsignDocument, { foreignKey: 'templateId', as: 'documents' })
+  EsignDocument.belongsTo(EsignTemplate, { foreignKey: 'templateId', as: 'template' })
+  Property.hasMany(EsignDocument, { foreignKey: 'propertyId', as: 'esignDocuments' })
+  EsignDocument.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  // PropertyFile.
+  Property.hasMany(PropertyFile, { foreignKey: 'propertyId', as: 'files' })
+  PropertyFile.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
 }
