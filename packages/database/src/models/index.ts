@@ -44,6 +44,18 @@ import { Buyer } from './Buyer'
 import { BuyerCriteria } from './BuyerCriteria'
 import { Vendor } from './Vendor'
 
+// ── Phase 6: Property hub ───────────────────────────────────────────────────
+import { Property } from './Property'
+import { PropertyContact } from './PropertyContact'
+import { StageHistory } from './StageHistory'
+import { ActivityLog } from './ActivityLog'
+import { Note } from './Note'
+import { Task } from './Task'
+import { Appointment } from './Appointment'
+import { BuyerMatch } from './BuyerMatch'
+import { BuyerOffer } from './BuyerOffer'
+import { LeadOffer } from './LeadOffer'
+
 sequelize.addModels([
   // Phase 2 leaves (parents first)
   LeadSource,
@@ -82,6 +94,18 @@ sequelize.addModels([
   Buyer,
   BuyerCriteria,
   Vendor,
+
+  // Phase 6 Property hub (Property before its child join/audit tables)
+  Property,
+  PropertyContact,
+  StageHistory,
+  ActivityLog,
+  Note,
+  Task,
+  Appointment,
+  BuyerMatch,
+  BuyerOffer,
+  LeadOffer,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -124,4 +148,15 @@ export {
   Buyer,
   BuyerCriteria,
   Vendor,
+  // Phase 6
+  Property,
+  PropertyContact,
+  StageHistory,
+  ActivityLog,
+  Note,
+  Task,
+  Appointment,
+  BuyerMatch,
+  BuyerOffer,
+  LeadOffer,
 }

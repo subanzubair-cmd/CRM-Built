@@ -27,6 +27,16 @@ import { Contact } from './Contact'
 import { Buyer } from './Buyer'
 import { BuyerCriteria } from './BuyerCriteria'
 import { Vendor } from './Vendor'
+import { Property } from './Property'
+import { PropertyContact } from './PropertyContact'
+import { StageHistory } from './StageHistory'
+import { ActivityLog } from './ActivityLog'
+import { Note } from './Note'
+import { Task } from './Task'
+import { Appointment } from './Appointment'
+import { BuyerMatch } from './BuyerMatch'
+import { BuyerOffer } from './BuyerOffer'
+import { LeadOffer } from './LeadOffer'
 
 export function wireAssociations(): void {
   // ── Phase 2: Independent leaves ───────────────────────────────────────────
@@ -151,4 +161,77 @@ export function wireAssociations(): void {
   // Buyer 1:N BuyerCriteria.
   Buyer.hasMany(BuyerCriteria, { foreignKey: 'buyerId', as: 'criteria' })
   BuyerCriteria.belongsTo(Buyer, { foreignKey: 'buyerId', as: 'buyer' })
+
+  // ── Phase 6: Property hub ─────────────────────────────────────────────────
+  Property.belongsTo(Market, { foreignKey: 'marketId', as: 'market' })
+  Market.hasMany(Property, { foreignKey: 'marketId', as: 'properties' })
+
+  Property.belongsTo(User, { foreignKey: 'assignedToId', as: 'assignedTo' })
+  Property.belongsTo(User, { foreignKey: 'createdById', as: 'createdBy' })
+  Property.belongsTo(User, { foreignKey: 'dispoAssigneeId', as: 'dispoAssignee' })
+  User.hasMany(Property, { foreignKey: 'assignedToId', as: 'assignedProperties' })
+  User.hasMany(Property, { foreignKey: 'createdById', as: 'createdProperties' })
+  User.hasMany(Property, { foreignKey: 'dispoAssigneeId', as: 'dispoProperties' })
+
+  Property.belongsTo(LeadCampaign, { foreignKey: 'leadCampaignId', as: 'leadCampaign' })
+  LeadCampaign.hasMany(Property, { foreignKey: 'leadCampaignId', as: 'properties' })
+
+  // Property 1:N children.
+  Property.hasMany(PropertyContact, { foreignKey: 'propertyId', as: 'contacts' })
+  PropertyContact.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  Contact.hasMany(PropertyContact, { foreignKey: 'contactId', as: 'properties' })
+  PropertyContact.belongsTo(Contact, { foreignKey: 'contactId', as: 'contact' })
+
+  Property.hasMany(StageHistory, { foreignKey: 'propertyId', as: 'stageHistory' })
+  StageHistory.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  Property.hasMany(ActivityLog, { foreignKey: 'propertyId', as: 'activityLogs' })
+  ActivityLog.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  User.hasMany(ActivityLog, { foreignKey: 'userId', as: 'activityLogs' })
+  ActivityLog.belongsTo(User, { foreignKey: 'userId', as: 'user' })
+
+  Property.hasMany(Note, { foreignKey: 'propertyId', as: 'notes' })
+  Note.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  Property.hasMany(Task, { foreignKey: 'propertyId', as: 'tasks' })
+  Task.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  User.hasMany(Task, { foreignKey: 'assignedToId', as: 'assignedTasks' })
+  Task.belongsTo(User, { foreignKey: 'assignedToId', as: 'assignedTo' })
+  User.hasMany(Task, { foreignKey: 'createdById', as: 'createdTasks' })
+  Task.belongsTo(User, { foreignKey: 'createdById', as: 'createdBy' })
+
+  Property.hasMany(Appointment, { foreignKey: 'propertyId', as: 'appointments' })
+  Appointment.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  Property.hasMany(BuyerMatch, { foreignKey: 'propertyId', as: 'buyerMatches' })
+  BuyerMatch.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  Buyer.hasMany(BuyerMatch, { foreignKey: 'buyerId', as: 'matches' })
+  BuyerMatch.belongsTo(Buyer, { foreignKey: 'buyerId', as: 'buyer' })
+
+  Property.hasMany(BuyerOffer, { foreignKey: 'propertyId', as: 'offers' })
+  BuyerOffer.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+  Buyer.hasMany(BuyerOffer, { foreignKey: 'buyerId', as: 'offers' })
+  BuyerOffer.belongsTo(Buyer, { foreignKey: 'buyerId', as: 'buyer' })
+
+  Property.hasMany(LeadOffer, { foreignKey: 'propertyId', as: 'leadOffers' })
+  LeadOffer.belongsTo(Property, { foreignKey: 'propertyId', as: 'property' })
+
+  // Tie back the deferred Phase-3/4 sides that pointed at Property.
+  Property.hasMany(PropertyTeamAssignment, {
+    foreignKey: 'propertyId',
+    as: 'teamAssignments',
+  })
+  PropertyTeamAssignment.belongsTo(Property, {
+    foreignKey: 'propertyId',
+    as: 'property',
+  })
+
+  Property.hasMany(CampaignEnrollment, {
+    foreignKey: 'propertyId',
+    as: 'campaignEnrollments',
+  })
+  CampaignEnrollment.belongsTo(Property, {
+    foreignKey: 'propertyId',
+    as: 'property',
+  })
 }
