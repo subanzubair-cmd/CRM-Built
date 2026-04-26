@@ -1,4 +1,16 @@
-import { prisma } from '@/lib/prisma'
+import {
+  LeadCampaign,
+  LeadCampaignRoleToggle,
+  UserCampaignAssignment,
+  UserRoleConfig,
+  PropertyTeamAssignment,
+  Property,
+  Role,
+  User,
+  Op,
+  literal,
+  sequelize,
+} from '@crm/database'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 
 /**
@@ -7,76 +19,78 @@ import { emitEvent, DomainEvents } from '@/lib/domain-events'
  */
 interface CampaignEligibility {
   enabledRoleToggles: Array<{ roleId: string; roleName: string }>
-  eligibleByRole: Map<string, string[]> // roleId → candidate userIds
-  loadByUserRole: Map<string, number>   // `userId:roleId` → recent assignment count
+  eligibleByRole: Map<string, string[]>
+  loadByUserRole: Map<string, number>
 }
 
-/**
- * Load campaign config + eligibility in the minimum number of queries.
- * This is the hot path — both single-property autoPopulateTeam and the
- * campaign-wide batch version share this. Three queries total.
- */
 async function loadCampaignEligibility(leadCampaignId: string): Promise<CampaignEligibility | null> {
-  const campaign = await prisma.leadCampaign.findUnique({
-    where: { id: leadCampaignId },
-    select: {
-      roleToggles: {
-        where: { enabled: true },
-        select: { roleId: true, role: { select: { name: true } } },
-      },
-      userAssignments: {
-        where: {
-          assignNewLeads: true,
-          user: { vacationMode: false, status: 'ACTIVE' },
-        },
-        select: { userId: true, roleId: true },
-      },
-    },
+  const toggleRows = await LeadCampaignRoleToggle.findAll({
+    where: { leadCampaignId, enabled: true },
+    include: [{ model: Role, as: 'role', attributes: ['name'] }],
+    raw: true,
+    nest: true,
   })
-  if (!campaign || campaign.roleToggles.length === 0) return null
+  if (toggleRows.length === 0) return null
 
-  const enabledRoleIds = new Set(campaign.roleToggles.map((t) => t.roleId))
-  const enabledRoleToggles = campaign.roleToggles.map((t) => ({
-    roleId: t.roleId,
-    roleName: t.role.name,
+  const enabledRoleIds = new Set(toggleRows.map((t: any) => t.roleId))
+  const enabledRoleToggles = toggleRows.map((t: any) => ({
+    roleId: t.roleId as string,
+    roleName: (t.role?.name ?? '') as string,
   }))
 
-  const candidatePairs = campaign.userAssignments.filter((a) => enabledRoleIds.has(a.roleId))
-  if (candidatePairs.length === 0) {
+  const candidatePairs = await UserCampaignAssignment.findAll({
+    where: { campaignId: leadCampaignId, assignNewLeads: true },
+    include: [
+      {
+        model: User,
+        as: 'user',
+        where: { vacationMode: false, status: 'ACTIVE' },
+        attributes: [],
+        required: true,
+      },
+    ],
+    attributes: ['userId', 'roleId'],
+    raw: true,
+  }) as unknown as Array<{ userId: string; roleId: string }>
+
+  const filteredPairs = candidatePairs.filter((p) => enabledRoleIds.has(p.roleId))
+  if (filteredPairs.length === 0) {
     return { enabledRoleToggles, eligibleByRole: new Map(), loadByUserRole: new Map() }
   }
 
-  // Intersect with UserRoleConfig.leadAccessEnabled in a single query.
-  const roleConfigs = await (prisma as any).userRoleConfig.findMany({
+  const roleConfigs = await UserRoleConfig.findAll({
     where: {
-      OR: candidatePairs.map((p) => ({ userId: p.userId, roleId: p.roleId })),
+      [Op.or]: filteredPairs.map((p) => ({ userId: p.userId, roleId: p.roleId })),
       leadAccessEnabled: true,
     },
-    select: { userId: true, roleId: true },
-  }) as Array<{ userId: string; roleId: string }>
+    attributes: ['userId', 'roleId'],
+    raw: true,
+  }) as unknown as Array<{ userId: string; roleId: string }>
   const enabledSet = new Set(roleConfigs.map((r) => `${r.userId}:${r.roleId}`))
 
   const eligibleByRole = new Map<string, string[]>()
-  for (const a of candidatePairs) {
+  for (const a of filteredPairs) {
     if (!enabledSet.has(`${a.userId}:${a.roleId}`)) continue
     const list = eligibleByRole.get(a.roleId) ?? []
     list.push(a.userId)
     eligibleByRole.set(a.roleId, list)
   }
 
-  // Least-loaded round-robin: load recent assignment counts for all candidate users in one query.
   const allCandidateUserIds = Array.from(new Set(Array.from(eligibleByRole.values()).flat()))
   const loadByUserRole = new Map<string, number>()
   if (allCandidateUserIds.length > 0) {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    const recent = await (prisma as any).propertyTeamAssignment.findMany({
+    const recent = await PropertyTeamAssignment.findAll({
       where: {
-        userId: { in: allCandidateUserIds },
-        createdAt: { gte: since },
-        property: { leadCampaignId },
+        userId: { [Op.in]: allCandidateUserIds },
+        createdAt: { [Op.gte]: since },
+        propertyId: {
+          [Op.in]: literal(`(SELECT id FROM "Property" WHERE "leadCampaignId" = ${sequelize.escape(leadCampaignId)})`),
+        },
       },
-      select: { userId: true, roleId: true },
-    }) as Array<{ userId: string; roleId: string }>
+      attributes: ['userId', 'roleId'],
+      raw: true,
+    }) as unknown as Array<{ userId: string; roleId: string }>
     for (const r of recent) {
       const k = `${r.userId}:${r.roleId}`
       loadByUserRole.set(k, (loadByUserRole.get(k) ?? 0) + 1)
@@ -86,7 +100,6 @@ async function loadCampaignEligibility(leadCampaignId: string): Promise<Campaign
   return { enabledRoleToggles, eligibleByRole, loadByUserRole }
 }
 
-/** Pick the least-loaded candidate for a role, then bump the in-memory load. */
 function pickLeastLoadedInMemory(
   eligibility: CampaignEligibility,
   roleId: string,
@@ -104,16 +117,6 @@ function pickLeastLoadedInMemory(
   return picked
 }
 
-/**
- * Auto-populate PropertyTeamAssignment rows for every enabled role on the
- * property's LeadCampaign where at least one eligible user exists.
- *
- * Fast path: one createMany for all fills, 4 total queries regardless of
- * how many roles are enabled.
- *
- * Preserves existing assignments (idempotent — safe to re-run).
- * Fire-and-forget safe: swallows errors to avoid blocking the caller.
- */
 export async function autoPopulateTeam(
   propertyId: string,
   leadCampaignId: string,
@@ -122,9 +125,10 @@ export async function autoPopulateTeam(
   try {
     const [eligibility, existing] = await Promise.all([
       loadCampaignEligibility(leadCampaignId),
-      (prisma as any).propertyTeamAssignment.findMany({
+      PropertyTeamAssignment.findAll({
         where: { propertyId },
-        select: { roleId: true },
+        attributes: ['roleId'],
+        raw: true,
       }) as Promise<Array<{ roleId: string }>>,
     ])
     if (!eligibility) return
@@ -142,10 +146,7 @@ export async function autoPopulateTeam(
     }
     if (rowsToCreate.length === 0) return
 
-    await (prisma as any).propertyTeamAssignment.createMany({
-      data: rowsToCreate,
-      skipDuplicates: true,
-    })
+    await PropertyTeamAssignment.bulkCreate(rowsToCreate, { ignoreDuplicates: true })
 
     for (const e of events) {
       void emitEvent({
@@ -161,12 +162,6 @@ export async function autoPopulateTeam(
   }
 }
 
-/**
- * Campaign-wide batch version. Loads campaign config + eligibility ONCE
- * and fans out across all properties in a single bulk insert. Fixed query
- * cost regardless of property count — designed for the backfill path
- * triggered by role-configs save.
- */
 export async function autoPopulateTeamForCampaign(
   leadCampaignId: string,
   actorUserId: string,
@@ -177,27 +172,32 @@ export async function autoPopulateTeamForCampaign(
       return { propertiesScanned: 0, slotsFilled: 0 }
     }
 
-    // One query pulls every property + its existing team assignments on this campaign.
-    const properties = await prisma.property.findMany({
+    const properties = await Property.findAll({
       where: { leadCampaignId },
-      select: {
-        id: true,
-        teamAssignments: { select: { roleId: true } },
-      },
+      attributes: ['id'],
+      include: [
+        {
+          model: PropertyTeamAssignment,
+          as: 'teamAssignments',
+          attributes: ['roleId'],
+          required: false,
+        },
+      ],
     })
 
     const rowsToCreate: Array<{ propertyId: string; roleId: string; userId: string }> = []
     const events: Array<{ propertyId: string; roleId: string; roleName: string; userId: string }> = []
 
     for (const p of properties) {
-      const assignedRoleIds = new Set(p.teamAssignments.map((t) => t.roleId))
+      const plain = p.get({ plain: true }) as any
+      const assignedRoleIds = new Set((plain.teamAssignments ?? []).map((t: any) => t.roleId))
       for (const toggle of eligibility.enabledRoleToggles) {
         if (assignedRoleIds.has(toggle.roleId)) continue
         const picked = pickLeastLoadedInMemory(eligibility, toggle.roleId)
         if (!picked) continue
-        rowsToCreate.push({ propertyId: p.id, roleId: toggle.roleId, userId: picked })
+        rowsToCreate.push({ propertyId: plain.id as string, roleId: toggle.roleId, userId: picked })
         events.push({
-          propertyId: p.id,
+          propertyId: plain.id as string,
           roleId: toggle.roleId,
           roleName: toggle.roleName,
           userId: picked,
@@ -209,10 +209,7 @@ export async function autoPopulateTeamForCampaign(
       return { propertiesScanned: properties.length, slotsFilled: 0 }
     }
 
-    await (prisma as any).propertyTeamAssignment.createMany({
-      data: rowsToCreate,
-      skipDuplicates: true,
-    })
+    await PropertyTeamAssignment.bulkCreate(rowsToCreate, { ignoreDuplicates: true })
 
     for (const evt of events) {
       void emitEvent({
@@ -231,14 +228,6 @@ export async function autoPopulateTeamForCampaign(
   }
 }
 
-/**
- * Re-evaluate team when a property's leadCampaignId changes. Drops
- * assignments that are no longer valid under the new campaign (role disabled
- * OR user no longer on new campaign), then fills any vacancies via
- * autoPopulateTeam.
- *
- * Fire-and-forget safe.
- */
 export async function reEvaluateTeam(
   propertyId: string,
   oldCampaignId: string | null | undefined,
@@ -248,15 +237,16 @@ export async function reEvaluateTeam(
   try {
     if (oldCampaignId === newCampaignId) return
 
-    const existing = await (prisma as any).propertyTeamAssignment.findMany({
+    const existing = await PropertyTeamAssignment.findAll({
       where: { propertyId },
-      select: { id: true, roleId: true, userId: true, role: { select: { name: true } } },
-    }) as Array<{ id: string; roleId: string; userId: string; role: { name: string } }>
+      include: [{ model: Role, as: 'role', attributes: ['name'] }],
+      raw: true,
+      nest: true,
+    }) as unknown as Array<{ id: string; roleId: string; userId: string; role: { name: string } }>
 
-    // If the campaign was cleared, remove everything auto-derived.
     if (!newCampaignId) {
       if (existing.length === 0) return
-      await (prisma as any).propertyTeamAssignment.deleteMany({ where: { propertyId } })
+      await PropertyTeamAssignment.destroy({ where: { propertyId } })
       for (const row of existing) {
         void emitEvent({
           type: DomainEvents.TEAM_MEMBER_REMOVED,
@@ -274,24 +264,29 @@ export async function reEvaluateTeam(
       return
     }
 
-    // Single fetch for the new campaign's enabled roles + user assignments.
-    const newCampaign = await prisma.leadCampaign.findUnique({
-      where: { id: newCampaignId },
-      select: {
-        roleToggles: {
+    const newCampaign = await LeadCampaign.findByPk(newCampaignId, {
+      include: [
+        {
+          model: LeadCampaignRoleToggle,
+          as: 'roleToggles',
           where: { enabled: true },
-          select: { roleId: true },
+          required: false,
+          attributes: ['roleId'],
         },
-        userAssignments: {
-          select: { userId: true, roleId: true },
+        {
+          model: UserCampaignAssignment,
+          as: 'userAssignments',
+          attributes: ['userId', 'roleId'],
+          required: false,
         },
-      },
+      ],
     })
     if (!newCampaign) return
 
-    const enabledRoleIds = new Set(newCampaign.roleToggles.map((t) => t.roleId))
+    const plain = newCampaign.get({ plain: true }) as any
+    const enabledRoleIds = new Set((plain.roleToggles ?? []).map((t: any) => t.roleId))
     const newUserRoleSet = new Set(
-      newCampaign.userAssignments.map((u) => `${u.userId}:${u.roleId}`),
+      (plain.userAssignments ?? []).map((u: any) => `${u.userId}:${u.roleId}`),
     )
 
     const rowsToDrop = existing.filter((row) => {
@@ -301,8 +296,8 @@ export async function reEvaluateTeam(
     })
 
     if (rowsToDrop.length > 0) {
-      await (prisma as any).propertyTeamAssignment.deleteMany({
-        where: { id: { in: rowsToDrop.map((r) => r.id) } },
+      await PropertyTeamAssignment.destroy({
+        where: { id: { [Op.in]: rowsToDrop.map((r) => r.id) } },
       })
       for (const row of rowsToDrop) {
         void emitEvent({

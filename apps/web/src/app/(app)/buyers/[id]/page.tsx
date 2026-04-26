@@ -52,7 +52,7 @@ export default async function BuyerDetailPage({ params }: Params) {
         </div>
         {buyer.preferredMarkets.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-3">
-            {buyer.preferredMarkets.map((m) => (
+            {buyer.preferredMarkets.map((m: string) => (
               <span key={m} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded-full">{m}</span>
             ))}
           </div>

@@ -49,7 +49,7 @@ export * from './models'
 // out of `apps/web`'s direct deps — they import from `@crm/database`
 // just like the model classes.
 export { Op, fn, col, literal, where, cast, QueryTypes } from 'sequelize'
-export type { Transaction, FindOptions, WhereOptions, Includeable } from 'sequelize'
+export type { Transaction, FindOptions, WhereOptions, Includeable, OrderItem, Order, Attributes, ModelStatic } from 'sequelize'
 
 // ── Group 3: TS-union enums (Sequelize-friendly, no Prisma dep) ─────────────
 // Renamed exports avoid clashing with Group 1's Prisma enum runtime values.

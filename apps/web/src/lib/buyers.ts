@@ -1,5 +1,19 @@
-import { prisma } from '@/lib/prisma'
-import { Prisma } from '@crm/database'
+import {
+  Buyer,
+  BuyerCriteria,
+  BuyerMatch,
+  BuyerOffer,
+  Contact,
+  Campaign,
+  CampaignStep,
+  CampaignEnrollment,
+  Message,
+  Property,
+  Op,
+  literal,
+  sequelize,
+} from '@crm/database'
+import type { WhereOptions } from '@crm/database'
 
 export interface BuyerListFilter {
   search?: string
@@ -9,67 +23,89 @@ export interface BuyerListFilter {
   marketScope?: string[] | null
 }
 
-const BUYER_LIST_INCLUDE = {
-  contact: {
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      phone: true,
-      email: true,
-    },
-  },
-  _count: {
-    select: {
-      criteria: true,
-      matches: true,
-      offers: true,
-    },
-  },
-  // Deals = buyer matches in SOLD stage of dispo pipeline
-  matches: {
-    where: { dispoStage: 'SOLD' },
-    select: { propertyId: true, dispoOfferAmount: true },
-  },
-} satisfies Prisma.BuyerInclude
-
 export async function getBuyerList(filter: BuyerListFilter) {
   const { search, activeOnly, page = 1, pageSize = 50, marketScope } = filter
 
-  const where: Prisma.BuyerWhereInput = {
+  const where: Record<string, unknown> = {
     ...(activeOnly && { isActive: true }),
-    ...(marketScope !== null && marketScope !== undefined && (
-      marketScope.length > 0
-        ? { markets: { hasSome: marketScope } }
-        // Prisma does not support `hasSome: []` on scalar list fields — it would
-        // throw a runtime error. Use an impossible id to guarantee zero results
-        // when the user has no market access (empty scope).
-        : { id: '' }
-    )),
-    ...(search && {
-      contact: {
-        OR: [
-          { firstName: { contains: search, mode: 'insensitive' } },
-          { lastName: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search } },
-        ],
-      },
-    }),
+  }
+
+  if (marketScope !== null && marketScope !== undefined) {
+    if (marketScope.length === 0) {
+      where.id = ''
+    } else {
+      const escapedArr = marketScope.map((m) => `'${m.replace(/'/g, "''")}'`).join(',')
+      where.id = {
+        [Op.in]: literal(`(SELECT id FROM "Buyer" WHERE "preferredMarkets" && ARRAY[${escapedArr}]::text[])`),
+      }
+    }
+  }
+
+  const contactInclude: any = {
+    model: Contact,
+    as: 'contact',
+    attributes: ['id', 'firstName', 'lastName', 'phone', 'email'],
+  }
+
+  if (search) {
+    const like = `%${search}%`
+    contactInclude.where = {
+      [Op.or]: [
+        { firstName: { [Op.iLike]: like } },
+        { lastName: { [Op.iLike]: like } },
+        { email: { [Op.iLike]: like } },
+        { phone: { [Op.like]: `%${search}%` } },
+      ],
+    }
+    contactInclude.required = true
   }
 
   const [rows, total] = await Promise.all([
-    prisma.buyer.findMany({
-      where,
-      include: BUYER_LIST_INCLUDE,
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+    Buyer.findAll({
+      where: where as WhereOptions,
+      attributes: {
+        include: [
+          [literal(`(SELECT COUNT(*) FROM "BuyerCriteria" bc WHERE bc."buyerId" = "Buyer"."id")`), '_count_criteria'],
+          [literal(`(SELECT COUNT(*) FROM "BuyerMatch" bm WHERE bm."buyerId" = "Buyer"."id")`), '_count_matches'],
+          [literal(`(SELECT COUNT(*) FROM "BuyerOffer" bo WHERE bo."buyerId" = "Buyer"."id")`), '_count_offers'],
+        ],
+      },
+      include: [
+        contactInclude,
+        {
+          model: BuyerMatch,
+          as: 'matches',
+          where: { dispoStage: 'SOLD' },
+          required: false,
+          attributes: ['propertyId', 'dispoOfferAmount'],
+          separate: true,
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.buyer.count({ where }),
+    Buyer.count({
+      where: where as WhereOptions,
+      ...(search ? { include: [{ ...contactInclude, attributes: [] }], distinct: true, col: 'id' } : {}),
+    }),
   ])
 
-  return { rows, total, page, pageSize }
+  const plain = rows.map((row) => {
+    const obj = row.get({ plain: true }) as Record<string, any>
+    obj._count = {
+      criteria: Number(obj._count_criteria ?? 0),
+      matches: Number(obj._count_matches ?? 0),
+      offers: Number(obj._count_offers ?? 0),
+    }
+    delete obj._count_criteria
+    delete obj._count_matches
+    delete obj._count_offers
+    return obj
+  })
+
+  return { rows: plain, total, page, pageSize }
 }
 
 export async function getBuyerDashboardStats() {
@@ -80,30 +116,31 @@ export async function getBuyerDashboardStats() {
     withPhone,
     activeBuyers,
   ] = await Promise.all([
-    prisma.contact.count({ where: { type: 'BUYER' } }),
-    prisma.contact.count({ where: { type: 'AGENT' } }),
-    prisma.contact.count({
+    Contact.count({ where: { type: 'BUYER' } }),
+    Contact.count({ where: { type: 'AGENT' } }),
+    Contact.count({
       where: {
-        type: { in: ['BUYER', 'AGENT'] },
-        email: { not: null },
-      },
+        type: { [Op.in]: ['BUYER', 'AGENT'] },
+        email: { [Op.ne]: null },
+      } as WhereOptions,
     }),
-    prisma.contact.count({
+    Contact.count({
       where: {
-        type: { in: ['BUYER', 'AGENT'] },
-        phone: { not: null },
-      },
+        type: { [Op.in]: ['BUYER', 'AGENT'] },
+        phone: { [Op.ne]: null },
+      } as WhereOptions,
     }),
-    prisma.buyer.count({ where: { isActive: true } }),
+    Buyer.count({ where: { isActive: true } }),
   ])
 
   const totalContacts = totalBuyers + totalAgents
 
-  // Count contacts with at least one offer (via buyerProfile)
-  const withDeals = await prisma.buyer.count({
+  const withDeals = await Buyer.count({
     where: {
-      offers: { some: {} },
-    },
+      id: {
+        [Op.in]: literal(`(SELECT DISTINCT "buyerId" FROM "BuyerOffer")`),
+      },
+    } as WhereOptions,
   })
 
   return {
@@ -118,35 +155,39 @@ export async function getBuyerDashboardStats() {
 }
 
 export async function getTopBuyers(limit = 5) {
-  // Deals = buyer matches in SOLD stage of dispo pipeline
-  const buyers = await prisma.buyer.findMany({
+  const buyers = await Buyer.findAll({
     where: {
-      matches: { some: { dispoStage: 'SOLD' } },
-    },
-    include: {
-      contact: {
-        select: {
-          firstName: true,
-          lastName: true,
-        },
+      id: {
+        [Op.in]: literal(`(SELECT DISTINCT "buyerId" FROM "BuyerMatch" WHERE "dispoStage" = 'SOLD')`),
       },
-      matches: {
+    } as WhereOptions,
+    include: [
+      { model: Contact, as: 'contact', attributes: ['firstName', 'lastName'] },
+      {
+        model: BuyerMatch,
+        as: 'matches',
         where: { dispoStage: 'SOLD' },
-        select: {
-          dispoOfferAmount: true,
-        },
+        required: false,
+        attributes: ['dispoOfferAmount'],
+        separate: true,
       },
-    },
-    take: 50,
+    ],
+    limit: 50,
   })
 
   const sorted = buyers
-    .map((b) => ({
-      id: b.id,
-      name: [b.contact.firstName, b.contact.lastName].filter(Boolean).join(' '),
-      dealsCount: b.matches.length,
-      totalOfferAmount: b.matches.reduce((sum, m) => sum + (m.dispoOfferAmount ? Number(m.dispoOfferAmount) : 0), 0),
-    }))
+    .map((b) => {
+      const plain = b.get({ plain: true }) as any
+      return {
+        id: plain.id as string,
+        name: [plain.contact?.firstName, plain.contact?.lastName].filter(Boolean).join(' '),
+        dealsCount: (plain.matches ?? []).length,
+        totalOfferAmount: (plain.matches ?? []).reduce(
+          (sum: number, m: any) => sum + (m.dispoOfferAmount ? Number(m.dispoOfferAmount) : 0),
+          0,
+        ),
+      }
+    })
     .sort((a, b) => b.dealsCount - a.dealsCount)
     .slice(0, limit)
 
@@ -154,106 +195,114 @@ export async function getTopBuyers(limit = 5) {
 }
 
 export async function getRecentBuyerMessages(limit = 20) {
-  const messages = await prisma.message.findMany({
-    where: {
-      contact: {
-        type: { in: ['BUYER', 'AGENT'] },
+  const messages = await Message.findAll({
+    include: [
+      {
+        model: Contact,
+        as: 'contact',
+        where: { type: { [Op.in]: ['BUYER', 'AGENT'] } },
+        required: true,
+        attributes: ['id', 'firstName', 'lastName'],
+        include: [
+          { model: Buyer, as: 'buyerProfile', attributes: ['id'] },
+        ],
       },
-    },
-    include: {
-      contact: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          buyerProfile: { select: { id: true } },
-        },
-      },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: limit,
+    ],
+    order: [['createdAt', 'DESC']],
+    limit,
   })
 
-  return messages.map((m) => ({
-    id: m.id,
-    buyerName: [m.contact?.firstName, m.contact?.lastName].filter(Boolean).join(' '),
-    buyerId: m.contact?.buyerProfile?.id ?? null,
-    body: m.body,
-    channel: m.channel,
-    direction: m.direction,
-    createdAt: m.createdAt,
-  }))
+  return messages.map((m) => {
+    const plain = m.get({ plain: true }) as any
+    return {
+      id: plain.id as string,
+      buyerName: [plain.contact?.firstName, plain.contact?.lastName].filter(Boolean).join(' '),
+      buyerId: plain.contact?.buyerProfile?.id ?? null,
+      body: plain.body,
+      channel: plain.channel,
+      direction: plain.direction,
+      createdAt: plain.createdAt,
+    }
+  })
 }
 
 export async function getBuyerCampaigns() {
-  const campaigns = await prisma.campaign.findMany({
+  const campaigns = await Campaign.findAll({
     where: {
-      status: { not: 'DRAFT' },
+      status: { [Op.ne]: 'DRAFT' },
+    } as WhereOptions,
+    attributes: {
+      include: [
+        [literal(`(SELECT COUNT(*) FROM "CampaignEnrollment" ce WHERE ce."campaignId" = "Campaign"."id")`), '_count_enrollments'],
+      ],
     },
-    include: {
-      _count: {
-        select: { enrollments: true },
-      },
-      steps: {
+    include: [
+      {
+        model: CampaignStep,
+        as: 'steps',
         where: { channel: 'SMS' },
-        select: { id: true },
+        required: false,
+        attributes: ['id'],
+        separate: true,
       },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
+    ],
+    order: [['createdAt', 'DESC']],
+    limit: 20,
   })
 
-  // Only return campaigns that have at least one SMS step
   return campaigns
-    .filter((c) => c.steps.length > 0)
+    .map((c) => c.get({ plain: true }) as any)
+    .filter((c) => (c.steps ?? []).length > 0)
     .map((c) => ({
-      id: c.id,
-      name: c.name,
-      status: c.status,
-      type: c.type,
-      createdAt: c.createdAt,
-      recipients: c._count.enrollments,
+      id: c.id as string,
+      name: c.name as string,
+      status: c.status as string,
+      type: c.type as string,
+      createdAt: c.createdAt as Date,
+      recipients: Number(c._count_enrollments ?? 0),
     }))
 }
 
 export async function getBuyerById(id: string) {
-  return prisma.buyer.findUnique({
-    where: { id },
-    include: {
-      contact: true,
-      criteria: { orderBy: { createdAt: 'desc' } },
-      matches: {
-        include: {
-          property: {
-            select: {
-              id: true,
-              streetAddress: true,
-              city: true,
-              state: true,
-              zip: true,
-              propertyStatus: true,
-              leadType: true,
-            },
-          },
-        },
-        orderBy: { score: 'desc' },
-        take: 50,
+  const buyer = await Buyer.findByPk(id, {
+    include: [
+      { model: Contact, as: 'contact' },
+      {
+        model: BuyerCriteria,
+        as: 'criteria',
+        separate: true,
+        order: [['createdAt', 'DESC']],
       },
-      offers: {
-        include: {
-          property: {
-            select: {
-              id: true,
-              streetAddress: true,
-              city: true,
-              state: true,
-              leadType: true,
-            },
+      {
+        model: BuyerMatch,
+        as: 'matches',
+        separate: true,
+        order: [['score', 'DESC']],
+        limit: 50,
+        include: [
+          {
+            model: Property,
+            as: 'property',
+            attributes: ['id', 'streetAddress', 'city', 'state', 'zip', 'propertyStatus', 'leadType'],
           },
-        },
-        orderBy: { submittedAt: 'desc' },
-        take: 50,
+        ],
       },
-    },
+      {
+        model: BuyerOffer,
+        as: 'offers',
+        separate: true,
+        order: [['submittedAt', 'DESC']],
+        limit: 50,
+        include: [
+          {
+            model: Property,
+            as: 'property',
+            attributes: ['id', 'streetAddress', 'city', 'state', 'leadType'],
+          },
+        ],
+      },
+    ],
   })
+  if (!buyer) return null
+  return buyer.get({ plain: true }) as Record<string, any>
 }

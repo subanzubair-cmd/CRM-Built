@@ -1,17 +1,13 @@
-import { prisma } from '@/lib/prisma'
+import {
+  UserCampaignAssignment,
+  UserRoleConfig,
+  PropertyTeamAssignment,
+  User,
+  Op,
+  literal,
+  sequelize,
+} from '@crm/database'
 
-/**
- * Picks a user to auto-assign a new lead to, based on the lead's LeadCampaign.
- *
- * Round-robin logic:
- * - Find UserCampaignAssignment rows where campaignId=X AND assignNewLeads=true
- * - Exclude users on vacation OR inactive
- * - Filter by UserRoleConfig.leadAccessEnabled=true for (userId, roleId)
- * - If 0 eligible users → null (lead stays unassigned)
- * - If 1 → that userId
- * - If >1 → pick the user with the fewest recent PropertyTeamAssignment rows
- *          on properties belonging to this campaign (last 30 days)
- */
 export async function pickAssigneeForNewLead(
   leadCampaignId: string | null | undefined,
 ): Promise<string | null> {
@@ -22,10 +18,6 @@ export async function pickAssigneeForNewLead(
   return pickLeastLoaded(picks, leadCampaignId)
 }
 
-/**
- * Picks a user for a specific role on a specific LeadCampaign. Used by the
- * team auto-populate flow to fill one PropertyTeamAssignment row per role.
- */
 export async function pickAssigneeForRole(
   leadCampaignId: string,
   roleId: string,
@@ -40,25 +32,34 @@ async function findEligibleAssignees(
   leadCampaignId: string,
   roleId?: string,
 ): Promise<string[]> {
-  const assignments = await prisma.userCampaignAssignment.findMany({
+  const assignments = await UserCampaignAssignment.findAll({
     where: {
       campaignId: leadCampaignId,
       ...(roleId ? { roleId } : {}),
       assignNewLeads: true,
-      user: { vacationMode: false, status: 'ACTIVE' },
     },
-    select: { userId: true, roleId: true },
-  })
+    include: [
+      {
+        model: User,
+        as: 'user',
+        where: { vacationMode: false, status: 'ACTIVE' },
+        required: true,
+        attributes: [],
+      },
+    ],
+    attributes: ['userId', 'roleId'],
+    raw: true,
+  }) as unknown as Array<{ userId: string; roleId: string }>
   if (assignments.length === 0) return []
 
-  // Filter to users who also have UserRoleConfig.leadAccessEnabled for the same role
-  const roleConfigs = await (prisma as any).userRoleConfig.findMany({
+  const roleConfigs = await UserRoleConfig.findAll({
     where: {
-      OR: assignments.map((a) => ({ userId: a.userId, roleId: a.roleId })),
+      [Op.or]: assignments.map((a) => ({ userId: a.userId, roleId: a.roleId })),
       leadAccessEnabled: true,
     },
-    select: { userId: true, roleId: true },
-  }) as Array<{ userId: string; roleId: string }>
+    attributes: ['userId', 'roleId'],
+    raw: true,
+  }) as unknown as Array<{ userId: string; roleId: string }>
   const enabledSet = new Set(roleConfigs.map((r) => `${r.userId}:${r.roleId}`))
 
   const eligible = assignments
@@ -74,17 +75,18 @@ async function pickLeastLoaded(
 ): Promise<string> {
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 
-  // Count recent PropertyTeamAssignment rows (optionally scoped to roleId) on
-  // properties in this campaign, grouped by user.
-  const recent = await (prisma as any).propertyTeamAssignment.findMany({
+  const recent = await PropertyTeamAssignment.findAll({
     where: {
-      userId: { in: userIds },
+      userId: { [Op.in]: userIds },
       ...(roleId ? { roleId } : {}),
-      createdAt: { gte: since },
-      property: { leadCampaignId },
+      createdAt: { [Op.gte]: since },
+      propertyId: {
+        [Op.in]: literal(`(SELECT id FROM "Property" WHERE "leadCampaignId" = ${sequelize.escape(leadCampaignId)})`),
+      },
     },
-    select: { userId: true },
-  }) as Array<{ userId: string }>
+    attributes: ['userId'],
+    raw: true,
+  }) as unknown as Array<{ userId: string }>
 
   const counts = new Map<string, number>()
   for (const uid of userIds) counts.set(uid, 0)

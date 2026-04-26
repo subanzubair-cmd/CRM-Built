@@ -1,5 +1,19 @@
-import { prisma } from '@/lib/prisma'
-import { LeadType, LeadStatus, Prisma } from '@crm/database'
+import {
+  Property,
+  PropertyContact,
+  Contact,
+  User,
+  Market,
+  LeadType,
+  LeadStatus,
+  Op,
+  literal,
+  fn,
+  col,
+  sequelize,
+  QueryTypes,
+} from '@crm/database'
+import type { OrderItem, WhereOptions } from '@crm/database'
 
 const DECIMAL_FIELDS = ['bathrooms', 'askingPrice', 'offerPrice', 'arv', 'repairEstimate', 'lotSize', 'expectedProfit', 'contractPrice', 'underContractPrice', 'estimatedValue', 'soldPrice'] as const
 
@@ -20,121 +34,156 @@ export interface LeadListFilter {
   assignedToId?: string
   marketId?: string
   isHot?: boolean
-  leadType?: 'dts' | 'dta'       // filter warm/dead/referred by lead type
+  leadType?: 'dts' | 'dta'
   page?: number
   pageSize?: number
   sort?: string
   order?: 'asc' | 'desc'
-  marketScope?: string[] | null   // null = admin (no filter); [] = no access; string[] = filter to these market IDs
+  marketScope?: string[] | null
 }
 
-// Base pipeline filters — warm/dead/referred need leadType appended at query time
-const PIPELINE_WHERE: Record<LeadPipeline, Prisma.PropertyWhereInput> = {
-  dts: { leadType: LeadType.DIRECT_TO_SELLER, leadStatus: LeadStatus.ACTIVE, activeLeadStage: { not: null }, propertyStatus: { notIn: ['SOLD', 'RENTAL', 'DEAD'] } },
-  dta: { leadType: LeadType.DIRECT_TO_AGENT, leadStatus: LeadStatus.ACTIVE, activeLeadStage: { not: null }, propertyStatus: { notIn: ['SOLD', 'RENTAL', 'DEAD'] } },
+const PIPELINE_WHERE: Record<LeadPipeline, WhereOptions> = {
+  dts: { leadType: LeadType.DIRECT_TO_SELLER, leadStatus: LeadStatus.ACTIVE, activeLeadStage: { [Op.ne]: null }, propertyStatus: { [Op.notIn]: ['SOLD', 'RENTAL', 'DEAD'] } },
+  dta: { leadType: LeadType.DIRECT_TO_AGENT, leadStatus: LeadStatus.ACTIVE, activeLeadStage: { [Op.ne]: null }, propertyStatus: { [Op.notIn]: ['SOLD', 'RENTAL', 'DEAD'] } },
   warm: { leadStatus: LeadStatus.WARM },
   dead: { leadStatus: LeadStatus.DEAD },
   referred: { leadStatus: LeadStatus.REFERRED_TO_AGENT },
 }
 
-// Sort field mapping: URL param → Prisma orderBy
-function buildOrderBy(sort?: string, order?: 'asc' | 'desc'): Prisma.PropertyOrderByWithRelationInput[] {
-  const dir = order ?? 'desc'
-  const SORT_MAP: Record<string, Prisma.PropertyOrderByWithRelationInput> = {
-    address:    { streetAddress: dir },
-    stage:      { activeLeadStage: dir },
-    campaign:   { campaignName: dir },
-    lastComm:   { lastActivityAt: { sort: dir, nulls: 'last' } },
-    source:     { source: dir },
-    market:     { market: { name: dir } },
-    arv:        { arv: dir },
-    askingPrice:{ askingPrice: dir },
-    offers:     { offers: { _count: dir } },
-    assigned:   { assignedTo: { name: dir } },
-    tasks:      { tasks: { _count: dir } },
-    createdAt:  { createdAt: dir },
-    updatedAt:  { updatedAt: dir },
-  }
+function buildOrder(sort?: string, order?: 'asc' | 'desc'): OrderItem[] {
+  const dir = (order ?? 'desc').toUpperCase() as 'ASC' | 'DESC'
+  const nullsLast = dir === 'DESC' ? 'NULLS LAST' : 'NULLS LAST'
 
-  if (sort && SORT_MAP[sort]) {
-    return [SORT_MAP[sort], { updatedAt: 'desc' }]
+  switch (sort) {
+    case 'address':
+      return [['streetAddress', dir], ['updatedAt', 'DESC']]
+    case 'stage':
+      return [['activeLeadStage', dir], ['updatedAt', 'DESC']]
+    case 'campaign':
+      return [['campaignName', dir], ['updatedAt', 'DESC']]
+    case 'lastComm':
+      return [literal(`"Property"."lastActivityAt" ${dir} ${nullsLast}`), ['updatedAt', 'DESC']]
+    case 'source':
+      return [['source', dir], ['updatedAt', 'DESC']]
+    case 'market':
+      return [[{ model: Market, as: 'market' }, 'name', dir], ['updatedAt', 'DESC']]
+    case 'arv':
+      return [['arv', dir], ['updatedAt', 'DESC']]
+    case 'askingPrice':
+      return [['askingPrice', dir], ['updatedAt', 'DESC']]
+    case 'offers':
+      return [
+        literal(`(SELECT COUNT(*) FROM "LeadOffer" lo WHERE lo."propertyId" = "Property"."id") ${dir}`),
+        ['updatedAt', 'DESC'],
+      ]
+    case 'assigned':
+      return [[{ model: User, as: 'assignedTo' }, 'name', dir], ['updatedAt', 'DESC']]
+    case 'tasks':
+      return [
+        literal(`(SELECT COUNT(*) FROM "Task" t WHERE t."propertyId" = "Property"."id" AND t."status" = 'PENDING') ${dir}`),
+        ['updatedAt', 'DESC'],
+      ]
+    case 'createdAt':
+      return [['createdAt', dir], ['updatedAt', 'DESC']]
+    case 'updatedAt':
+      return [['updatedAt', dir]]
+    default:
+      return [literal(`"Property"."lastActivityAt" DESC NULLS LAST`), ['updatedAt', 'DESC']]
   }
-  // Default sort
-  return [{ lastActivityAt: { sort: 'desc', nulls: 'last' } }, { updatedAt: 'desc' }]
 }
 
 export async function getLeadList(filter: LeadListFilter) {
   const { pipeline, search, stage, assignedToId, marketId, isHot, leadType, page = 1, pageSize = 50, sort, order, marketScope } = filter
-  const base = PIPELINE_WHERE[pipeline]
+  const base = PIPELINE_WHERE[pipeline] as Record<string, unknown>
 
-  // For warm/dead/referred, optionally filter by leadType (dts or dta)
-  const leadTypeFilter = leadType === 'dts' ? { leadType: LeadType.DIRECT_TO_SELLER }
+  const leadTypeFilter: Record<string, unknown> = leadType === 'dts' ? { leadType: LeadType.DIRECT_TO_SELLER }
     : leadType === 'dta' ? { leadType: LeadType.DIRECT_TO_AGENT }
     : {}
 
-  const where: Prisma.PropertyWhereInput = {
+  const marketFilter: Record<string, unknown> = (marketScope !== null && marketScope !== undefined)
+    ? {
+        marketId: marketId && marketScope.includes(marketId)
+          ? marketId
+          : { [Op.in]: marketScope },
+      }
+    : marketId
+      ? { marketId }
+      : {}
+
+  const where: Record<string, unknown> = {
     ...base,
     ...leadTypeFilter,
-    ...(stage && { activeLeadStage: stage as any }),
+    ...(stage && { activeLeadStage: stage }),
     ...(assignedToId && { assignedToId }),
-    ...(marketScope !== null && marketScope !== undefined
-      ? {
-          marketId: marketId && marketScope.includes(marketId)
-            ? marketId
-            : { in: marketScope },
-        }
-      : marketId
-        ? { marketId }
-        : {}),
+    ...marketFilter,
     ...(isHot && { isHot: true }),
-    ...(search && {
-      OR: [
-        { normalizedAddress: { contains: search, mode: 'insensitive' } },
-        { streetAddress: { contains: search, mode: 'insensitive' } },
-        { city: { contains: search, mode: 'insensitive' } },
-        {
-          contacts: {
-            some: {
-              contact: {
-                OR: [
-                  { firstName: { contains: search, mode: 'insensitive' } },
-                  { lastName: { contains: search, mode: 'insensitive' } },
-                  { phone: { contains: search, mode: 'insensitive' } },
-                ],
-              },
+  }
+
+  if (search) {
+    const escaped = search.replace(/'/g, "''")
+    const like = `%${escaped}%`
+    where[Op.and as unknown as string] = [
+      {
+        [Op.or]: [
+          { normalizedAddress: { [Op.iLike]: `%${search}%` } },
+          { streetAddress: { [Op.iLike]: `%${search}%` } },
+          { city: { [Op.iLike]: `%${search}%` } },
+          {
+            id: {
+              [Op.in]: literal(
+                `(SELECT pc."propertyId" FROM "PropertyContact" pc JOIN "Contact" c ON c."id" = pc."contactId" WHERE c."firstName" ILIKE '${like}' OR c."lastName" ILIKE '${like}' OR c."phone" ILIKE '${like}')`,
+              ),
             },
           },
-        },
-      ],
-    }),
+        ],
+      },
+    ]
   }
 
   const [rows, total] = await Promise.all([
-    prisma.property.findMany({
-      where,
-      include: {
-        contacts: {
-          where: { isPrimary: true },
-          include: { contact: { select: { firstName: true, lastName: true, phone: true } } },
-          take: 1,
-        },
-        assignedTo: { select: { id: true, name: true } },
-        market: { select: { id: true, name: true } },
-        _count: {
-          select: {
-            tasks: { where: { status: 'PENDING' } },
-            offers: true,
-          },
-        },
+    Property.findAll({
+      where: where as WhereOptions,
+      attributes: {
+        include: [
+          [literal(`(SELECT COUNT(*) FROM "Task" t WHERE t."propertyId" = "Property"."id" AND t."status" = 'PENDING')`), '_count_tasks'],
+          [literal(`(SELECT COUNT(*) FROM "LeadOffer" lo WHERE lo."propertyId" = "Property"."id")`), '_count_offers'],
+        ],
       },
-      orderBy: buildOrderBy(sort, order),
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      include: [
+        {
+          model: PropertyContact,
+          as: 'contacts',
+          where: { isPrimary: true },
+          required: false,
+          separate: true,
+          limit: 1,
+          include: [
+            { model: Contact, as: 'contact', attributes: ['firstName', 'lastName', 'phone'] },
+          ],
+        },
+        { model: User, as: 'assignedTo', attributes: ['id', 'name'] },
+        { model: Market, as: 'market', attributes: ['id', 'name'] },
+      ],
+      order: buildOrder(sort, order),
+      offset: (page - 1) * pageSize,
+      limit: pageSize,
+      subQuery: false,
     }),
-    prisma.property.count({ where }),
+    Property.count({ where: where as WhereOptions }),
   ])
 
-  return { rows: rows.map(serializeRow), total, page, pageSize }
+  const plain = rows.map((row) => {
+    const obj = row.get({ plain: true }) as Record<string, any>
+    obj._count = {
+      tasks: Number(obj._count_tasks ?? 0),
+      offers: Number(obj._count_offers ?? 0),
+    }
+    delete obj._count_tasks
+    delete obj._count_offers
+    return serializeRow(obj)
+  })
+
+  return { rows: plain, total, page, pageSize }
 }
 
 // ─── Communication Stats (batched raw SQL) ──────────────────────────────────
@@ -152,15 +201,16 @@ export interface CommStats {
 export async function getLeadCommStats(propertyIds: string[]): Promise<Record<string, CommStats>> {
   if (propertyIds.length === 0) return {}
 
-  const rows = await prisma.$queryRaw<Array<{
+  const rows = await sequelize.query<{
     id: string
-    call_count: bigint
-    sms_count: bigint
-    email_count: bigint
+    call_count: string
+    sms_count: string
+    email_count: string
     last_call_at: Date | null
-    total_tasks: bigint
-    completed_tasks: bigint
-  }>>`
+    total_tasks: string
+    completed_tasks: string
+  }>(
+    `
     SELECT
       p.id,
       COUNT(DISTINCT m.id) FILTER (WHERE m.channel = 'CALL') as call_count,
@@ -172,9 +222,14 @@ export async function getLeadCommStats(propertyIds: string[]): Promise<Record<st
     FROM "Property" p
     LEFT JOIN "Message" m ON m."propertyId" = p.id
     LEFT JOIN "Task" t ON t."propertyId" = p.id
-    WHERE p.id = ANY(${propertyIds})
+    WHERE p.id = ANY(:propertyIds)
     GROUP BY p.id
-  `
+    `,
+    {
+      replacements: { propertyIds },
+      type: QueryTypes.SELECT,
+    },
+  )
 
   const map: Record<string, CommStats> = {}
   for (const r of rows) {
@@ -194,63 +249,87 @@ export async function getLeadCommStats(propertyIds: string[]): Promise<Record<st
 // ─── Lead by ID ──────────────────────────────────────────────────────────────
 
 export async function getLeadById(id: string) {
-  return prisma.property.findUnique({
-    where: { id },
-    include: {
-      contacts: {
-        include: { contact: true },
-        orderBy: { isPrimary: 'desc' },
+  const row = await Property.findByPk(id, {
+    include: [
+      {
+        model: PropertyContact,
+        as: 'contacts',
+        separate: true,
+        order: [['isPrimary', 'DESC']],
+        include: [{ model: Contact, as: 'contact' }],
       },
-      notes: { orderBy: { createdAt: 'desc' }, take: 50 },
-      tasks: {
-        include: { assignedTo: { select: { id: true, name: true } } },
-        orderBy: { dueAt: 'asc' },
+      {
+        association: 'notes',
+        separate: true,
+        order: [['createdAt', 'DESC']],
+        limit: 50,
       },
-      activityLogs: {
-        include: { user: { select: { id: true, name: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
+      {
+        association: 'tasks',
+        separate: true,
+        order: [['dueAt', 'ASC']],
+        include: [{ model: User, as: 'assignedTo', attributes: ['id', 'name'] }],
       },
-      stageHistory: { orderBy: { createdAt: 'desc' }, take: 20 },
-      assignedTo: { select: { id: true, name: true } },
-      market: { select: { id: true, name: true } },
-    },
+      {
+        association: 'activityLogs',
+        separate: true,
+        order: [['createdAt', 'DESC']],
+        limit: 100,
+        include: [{ model: User, as: 'user', attributes: ['id', 'name'] }],
+      },
+      {
+        association: 'stageHistory',
+        separate: true,
+        order: [['createdAt', 'DESC']],
+        limit: 20,
+      },
+      { model: User, as: 'assignedTo', attributes: ['id', 'name'] },
+      { model: Market, as: 'market', attributes: ['id', 'name'] },
+    ],
   })
+
+  if (!row) return null
+  return serializeRow(row.get({ plain: true }) as Record<string, any>)
 }
 
 // ─── Adjacent Leads (prev/next within pipeline) ──────────────────────────────
 
 export async function getAdjacentLeadIds(id: string, pipeline: LeadPipeline): Promise<{ prevId: string | null; nextId: string | null }> {
-  const base = PIPELINE_WHERE[pipeline]
-  const current = await prisma.property.findUnique({ where: { id }, select: { lastActivityAt: true, updatedAt: true } })
+  const base = PIPELINE_WHERE[pipeline] as Record<string, unknown>
+  const current = await Property.findByPk(id, { attributes: ['lastActivityAt', 'updatedAt'], raw: true })
   if (!current) return { prevId: null, nextId: null }
 
+  const ts = current.lastActivityAt ?? new Date(0)
+  const updated = current.updatedAt
+
   const [prev, next] = await Promise.all([
-    prisma.property.findFirst({
+    Property.findOne({
       where: {
         ...base,
-        OR: [
-          { lastActivityAt: { gt: current.lastActivityAt ?? new Date(0) } },
-          { lastActivityAt: current.lastActivityAt, updatedAt: { gt: current.updatedAt } },
-          { lastActivityAt: current.lastActivityAt, updatedAt: current.updatedAt, id: { lt: id } },
+        [Op.or]: [
+          { lastActivityAt: { [Op.gt]: ts } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: { [Op.gt]: updated } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: updated, id: { [Op.lt]: id } },
         ],
-      },
-      orderBy: [{ lastActivityAt: { sort: 'asc', nulls: 'last' } }, { updatedAt: 'asc' }],
-      select: { id: true },
+      } as WhereOptions,
+      order: [literal(`"Property"."lastActivityAt" ASC NULLS LAST`), ['updatedAt', 'ASC']],
+      attributes: ['id'],
+      raw: true,
     }),
-    prisma.property.findFirst({
+    Property.findOne({
       where: {
         ...base,
-        OR: [
-          { lastActivityAt: { lt: current.lastActivityAt ?? new Date(0) } },
-          { lastActivityAt: current.lastActivityAt, updatedAt: { lt: current.updatedAt } },
-          { lastActivityAt: current.lastActivityAt, updatedAt: current.updatedAt, id: { gt: id } },
+        [Op.or]: [
+          { lastActivityAt: { [Op.lt]: ts } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: { [Op.lt]: updated } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: updated, id: { [Op.gt]: id } },
         ],
-      },
-      orderBy: [{ lastActivityAt: { sort: 'desc', nulls: 'last' } }, { updatedAt: 'desc' }],
-      select: { id: true },
+      } as WhereOptions,
+      order: [literal(`"Property"."lastActivityAt" DESC NULLS LAST`), ['updatedAt', 'DESC']],
+      attributes: ['id'],
+      raw: true,
     }),
   ])
 
-  return { prevId: prev?.id ?? null, nextId: next?.id ?? null }
+  return { prevId: (prev as any)?.id ?? null, nextId: (next as any)?.id ?? null }
 }
