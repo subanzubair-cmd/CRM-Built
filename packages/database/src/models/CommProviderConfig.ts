@@ -54,6 +54,17 @@ export class CommProviderConfig extends Model<
   @Column(DataType.BOOLEAN)
   declare enableCallCost: boolean
 
+  /**
+   * Toggle gating call audio recording. When true AND the provider
+   * supports it (Telnyx → call.answered triggers start_recording →
+   * call.recording.saved persists URL), the audio is surfaced in the
+   * call activity feed for playback.
+   */
+  @AllowNull(false)
+  @Default(false)
+  @Column(DataType.BOOLEAN)
+  declare enableCallRecording: boolean
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)

@@ -292,11 +292,32 @@ export function CommProviderForm() {
               hint="UUID of your Messaging Profile (Telnyx → Messaging → Messaging Profiles). Required for outbound SMS routing through your 10DLC campaign."
             />
             <FieldRow
+              label="Voice Application ID *"
+              value={fields.voiceApplicationId ?? ''}
+              onChange={(v) => setField('voiceApplicationId', v)}
+              mono
+              hint="UUID of your Voice API Application (Telnyx → Voice → Voice API & Apps → Applications). Required for outbound calls — your numbers must be assigned to this application."
+            />
+            <FieldRow
+              label="Voice Connection ID *"
+              value={fields.voiceConnectionId ?? ''}
+              onChange={(v) => setField('voiceConnectionId', v)}
+              mono
+              hint="UUID of a Credential / SIP Connection (Telnyx → Voice → SIP Connections). Used to mint short-lived WebRTC tokens so the browser softphone can dial without exposing your API key."
+            />
+            <FieldRow
               label="Public Key *"
               value={fields.publicKey ?? ''}
               onChange={(v) => setField('publicKey', v)}
               mono
-              hint="Required for production. Telnyx signs every inbound webhook with ed25519 — without this key, signatures cannot be verified. Copy from Telnyx → Account → Public Key (base64)."
+              hint="Required for production. Telnyx signs every inbound webhook with ed25519 — without this key, signatures cannot be verified. Mission Control → Developers → Webhook Signing → copy the Public Key (base64)."
+            />
+            <FieldRow
+              label="Public Webhook URL"
+              value={fields.webhookUrl ?? ''}
+              onChange={(v) => setField('webhookUrl', v)}
+              placeholder={origin ? `${origin}/api/webhooks/telnyx` : 'https://your-domain.com/api/webhooks/telnyx'}
+              hint="The URL you pasted into Telnyx Messaging Profile + Voice API App. Stored here for your records — the CRM derives the webhook endpoint from this host. Leave blank to use the auto-detected origin."
             />
           </>
         )}

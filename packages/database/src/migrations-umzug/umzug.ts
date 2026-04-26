@@ -28,6 +28,14 @@ import {
   up as callCostUp,
   down as callCostDown,
 } from './20260426010000-add-call-cost'
+import {
+  up as callRecordingUp,
+  down as callRecordingDown,
+} from './20260426020000-add-call-recording'
+import {
+  up as recordingStorageKeyUp,
+  down as recordingStorageKeyDown,
+} from './20260426030000-add-call-recording-storage-key'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -60,6 +68,20 @@ const migrations = [
       callCostUp({ name: '20260426010000-add-call-cost', context }),
     down: ({ context }: { context: any }) =>
       callCostDown({ name: '20260426010000-add-call-cost', context }),
+  },
+  {
+    name: '20260426020000-add-call-recording',
+    up: ({ context }: { context: any }) =>
+      callRecordingUp({ name: '20260426020000-add-call-recording', context }),
+    down: ({ context }: { context: any }) =>
+      callRecordingDown({ name: '20260426020000-add-call-recording', context }),
+  },
+  {
+    name: '20260426030000-add-call-recording-storage-key',
+    up: ({ context }: { context: any }) =>
+      recordingStorageKeyUp({ name: '20260426030000-add-call-recording-storage-key', context }),
+    down: ({ context }: { context: any }) =>
+      recordingStorageKeyDown({ name: '20260426030000-add-call-recording-storage-key', context }),
   },
 ]
 

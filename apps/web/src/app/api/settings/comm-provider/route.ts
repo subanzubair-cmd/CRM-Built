@@ -43,6 +43,9 @@ export async function GET() {
       masked.apiKey = maskSecret(cfg.apiKey)
       masked.messagingProfileId = cfg.messagingProfileId ?? ''
       masked.publicKey = cfg.publicKey ?? ''
+      masked.voiceApplicationId = cfg.voiceApplicationId ?? ''
+      masked.voiceConnectionId = cfg.voiceConnectionId ?? ''
+      masked.webhookUrl = cfg.webhookUrl ?? ''
     } else if (name === 'signalhouse') {
       masked.apiToken = maskSecret(cfg.apiToken)
       masked.accountId = cfg.accountId ?? ''
@@ -73,6 +76,14 @@ const TelnyxCfg = z.object({
   apiKey: z.string().optional(),
   messagingProfileId: z.string().optional(),
   publicKey: z.string().optional(),
+  // Voice API Application UUID — needed for outbound voice routing.
+  voiceApplicationId: z.string().optional(),
+  // Credential / SIP Connection UUID — used by /api/calls/credentials to
+  // mint short-lived JWT tokens for the WebRTC softphone in the browser.
+  voiceConnectionId: z.string().optional(),
+  // Public webhook URL the operator pasted into Telnyx (informational —
+  // stored so operators can verify what they configured upstream).
+  webhookUrl: z.string().optional(),
 })
 const SignalHouseCfg = z.object({
   apiToken: z.string().optional(),

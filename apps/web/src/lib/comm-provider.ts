@@ -16,6 +16,10 @@ export interface ActiveCommConfig {
   apiKey?: string
   messagingProfileId?: string
   publicKey?: string
+  /** UUID of the Voice API Application — needed for outbound voice routing. */
+  voiceApplicationId?: string
+  /** UUID of the Credential / SIP Connection — used to mint WebRTC tokens. */
+  voiceConnectionId?: string
   // Signal House
   apiToken?: string
   accountId?: string
@@ -67,6 +71,8 @@ export async function getActiveCommConfig(): Promise<ActiveCommConfig | null> {
         config.apiKey = cfg.apiKey ? decrypt(cfg.apiKey) : undefined
         config.messagingProfileId = cfg.messagingProfileId
         config.publicKey = cfg.publicKey
+        config.voiceApplicationId = cfg.voiceApplicationId
+        config.voiceConnectionId = cfg.voiceConnectionId
       } else if (providerName === 'signalhouse') {
         config.apiToken = cfg.apiToken ? decrypt(cfg.apiToken) : undefined
         config.accountId = cfg.accountId

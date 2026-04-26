@@ -95,6 +95,31 @@ export class ActiveCall extends Model<
   @Column(DataType.TEXT)
   declare costCurrency: string | null
 
+  /**
+   * Provider-hosted recording URL (Telnyx CDN, Twilio media URL, etc.).
+   * Used briefly as the source for the MinIO download — the CRM never
+   * exposes this to the browser. After download, recordingStorageKey
+   * is what the playback endpoint serves from.
+   */
+  @Column(DataType.TEXT)
+  declare recordingUrl: string | null
+
+  /**
+   * MinIO object key for the CRM-hosted recording. Set after the audio
+   * is downloaded from the provider URL. The /api/calls/[id]/recording
+   * endpoint generates a short-lived presigned URL from this key for the
+   * audio player. This is what makes the recording a CRM-owned asset
+   * rather than a provider-hosted one.
+   */
+  @Column(DataType.TEXT)
+  declare recordingStorageKey: string | null
+
+  @Column(DataType.INTEGER)
+  declare recordingDuration: number | null
+
+  @Column(DataType.TEXT)
+  declare recordingSid: string | null
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -125,6 +150,10 @@ export interface ActiveCallAttributes {
   endedAt: Date | null
   cost: number | null
   costCurrency: string | null
+  recordingUrl: string | null
+  recordingStorageKey: string | null
+  recordingDuration: number | null
+  recordingSid: string | null
   createdAt: Date
   updatedAt: Date
 }
