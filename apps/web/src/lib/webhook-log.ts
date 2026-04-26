@@ -34,6 +34,47 @@ export interface WebhookHit {
   fromPhone: string | null
   /** e.164 to-phone, when extractable from payload */
   toPhone: string | null
+  /** User-Agent header — lets the operator distinguish real Telnyx
+   *  hits ('telnyx-webhooks/...') from internal probes ('node', 'curl',
+   *  'undici', 'Next.js Middleware') in the diagnostic UI. */
+  userAgent: string | null
+  /** Best-guess source classification based on User-Agent. */
+  source: 'telnyx' | 'probe' | 'unknown'
+  /** All inbound headers (lowercased keys). Captured so the operator
+   *  can verify Telnyx is actually sending telnyx-signature-ed25519
+   *  and telnyx-timestamp. Auth/cookie headers are stripped. */
+  headers: Record<string, string>
+}
+
+/**
+ * Heuristic: classify a request as a real Telnyx webhook delivery
+ * vs. an internal CRM probe based on User-Agent. Telnyx sends
+ * `telnyx-webhooks/<version>`; our reachability check uses Node's
+ * built-in fetch which sends `undici`; curl probes use `curl/...`.
+ */
+export function classifySource(userAgent: string | null): 'telnyx' | 'probe' | 'unknown' {
+  if (!userAgent) return 'unknown'
+  const ua = userAgent.toLowerCase()
+  if (ua.includes('telnyx')) return 'telnyx'
+  if (ua.includes('undici') || ua.includes('node') || ua.includes('curl') || ua.includes('next')) return 'probe'
+  return 'unknown'
+}
+
+/**
+ * Snapshot request headers for the diagnostic UI. Strips obvious
+ * auth/cookie headers so we don't accidentally leak session creds
+ * into the in-memory log. ngrok adds its own diagnostic headers
+ * (x-forwarded-for, x-original-*) which we keep — they're useful for
+ * confirming Telnyx is actually hitting our public URL.
+ */
+export function snapshotHeaders(req: Request): Record<string, string> {
+  const out: Record<string, string> = {}
+  const SKIP = new Set(['cookie', 'authorization', 'x-csrf-token'])
+  req.headers.forEach((value, key) => {
+    if (SKIP.has(key.toLowerCase())) return
+    out[key.toLowerCase()] = value
+  })
+  return out
 }
 
 const MAX = 50

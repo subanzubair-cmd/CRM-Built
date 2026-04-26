@@ -414,6 +414,7 @@ export function CommProviderForm() {
 function RecentWebhookHits() {
   const [hits, setHits] = useState<any[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [expanded, setExpanded] = useState<number | null>(null)
 
   async function load() {
     setLoading(true)
@@ -480,23 +481,68 @@ function RecentWebhookHits() {
         </p>
       ) : (
         <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
-          {hits.map((h: any, i: number) => (
-            <li key={i} className="px-3 py-2 flex items-center gap-3 text-[11px]">
-              <span className={`inline-flex items-center justify-center min-w-[42px] px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${statusColor(h.responseStatus)}`}>
-                {h.responseStatus}
-              </span>
-              <span className="text-gray-700 font-medium min-w-[110px]">{h.eventType ?? '—'}</span>
-              <span className="text-gray-500 flex-1 truncate">{h.outcome}</span>
-              {(h.fromPhone || h.toPhone) && (
-                <span className="font-mono text-gray-500 text-[10px]">
-                  {h.fromPhone ?? '?'} → {h.toPhone ?? '?'}
-                </span>
-              )}
-              <span className="text-gray-400 text-[10px] tabular-nums">
-                {new Date(h.ts).toLocaleTimeString()}
-              </span>
-            </li>
-          ))}
+          {hits.map((h: any, i: number) => {
+            const sourceBadge =
+              h.source === 'telnyx'
+                ? { color: 'bg-blue-100 text-blue-700', label: 'TELNYX' }
+                : h.source === 'probe'
+                  ? { color: 'bg-gray-100 text-gray-500', label: 'PROBE' }
+                  : { color: 'bg-amber-100 text-amber-700', label: '?' }
+            const isOpen = expanded === i
+            return (
+              <li key={i}>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(isOpen ? null : i)}
+                  className="w-full px-3 py-2 flex items-center gap-3 text-[11px] hover:bg-gray-50 text-left"
+                  title="Click to view all request headers"
+                >
+                  <span className={`inline-flex items-center justify-center min-w-[42px] px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${statusColor(h.responseStatus)}`}>
+                    {h.responseStatus}
+                  </span>
+                  <span
+                    className={`inline-flex items-center justify-center min-w-[52px] px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${sourceBadge.color}`}
+                    title={h.userAgent ?? 'No User-Agent'}
+                  >
+                    {sourceBadge.label}
+                  </span>
+                  <span className="text-gray-700 font-medium min-w-[110px]">{h.eventType ?? '—'}</span>
+                  <span className="text-gray-500 flex-1 truncate">{h.outcome}</span>
+                  {(h.fromPhone || h.toPhone) && (
+                    <span className="font-mono text-gray-500 text-[10px]">
+                      {h.fromPhone ?? '?'} → {h.toPhone ?? '?'}
+                    </span>
+                  )}
+                  <span className="text-gray-400 text-[10px] tabular-nums">
+                    {new Date(h.ts).toLocaleTimeString()}
+                  </span>
+                </button>
+                {isOpen && h.headers && (
+                  <div className="px-3 py-2 border-t border-gray-100 bg-gray-50">
+                    <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Request headers</p>
+                    <div className="font-mono text-[10px] text-gray-700 space-y-0.5 max-h-48 overflow-y-auto">
+                      {Object.entries(h.headers as Record<string, string>)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([k, v]) => {
+                          const isSig = k === 'telnyx-signature-ed25519' || k === 'telnyx-timestamp'
+                          return (
+                            <div key={k} className="flex gap-2">
+                              <span className={isSig ? 'text-blue-700 font-semibold' : 'text-gray-500'}>{k}:</span>
+                              <span className="text-gray-700 break-all">{v}</span>
+                            </div>
+                          )
+                        })}
+                      {(!h.headers['telnyx-signature-ed25519'] || !h.headers['telnyx-timestamp']) && (
+                        <p className="mt-2 text-amber-700 font-sans not-italic">
+                          ⚠ Telnyx signature headers are missing from this request. If source is TELNYX, enable Webhook Signing in Mission Control → Developers → Webhook Signing.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>
@@ -571,8 +617,8 @@ function TelnyxInboundDiagnostic({ webhookUrl }: { webhookUrl: string }) {
 
       {result?.checks && (
         <ul className="space-y-2">
-          {(['appExists', 'webhookMatch', 'numbersAssigned', 'messagingProfile', 'reachability', 'signatureKey'] as const).map((key) => {
-            const c = result.checks[key] as { ok: boolean; message: string; numbers?: any[] } | undefined
+          {(['appExists', 'webhookMatch', 'numbersAssigned', 'messagingProfile', 'reachability', 'signatureKey', 'recentActivity'] as const).map((key) => {
+            const c = result.checks[key] as { ok: boolean; message: string; numbers?: any[]; messages?: any[] } | undefined
             if (!c) return null
             const labels: Record<string, string> = {
               appExists: 'Voice Application',
@@ -581,6 +627,7 @@ function TelnyxInboundDiagnostic({ webhookUrl }: { webhookUrl: string }) {
               messagingProfile: 'Messaging Profile (SMS)',
               reachability: 'Webhook URL Reachability',
               signatureKey: 'Signature Verification',
+              recentActivity: 'Recent Telnyx-Side Activity',
             }
             return (
               <li
@@ -610,6 +657,25 @@ function TelnyxInboundDiagnostic({ webhookUrl }: { webhookUrl: string }) {
                           {!n.assigned && (
                             <span className="text-[10px] text-gray-500">
                               (currently on {n.connectionId ?? 'no'} connection)
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {key === 'recentActivity' && c.messages && c.messages.length > 0 && (
+                    <div className="mt-1.5 space-y-0.5">
+                      {c.messages.map((m: any, i: number) => (
+                        <div key={i} className="text-[11px] flex items-center gap-2">
+                          <span className="font-mono text-gray-700">{m.from}</span>
+                          <span className="text-gray-300">→</span>
+                          <span className="font-mono text-gray-700">{m.to}</span>
+                          {m.text && (
+                            <span className="text-gray-500 italic truncate flex-1">&ldquo;{m.text}&rdquo;</span>
+                          )}
+                          {m.receivedAt && (
+                            <span className="text-[10px] text-gray-400 tabular-nums">
+                              {new Date(m.receivedAt).toLocaleTimeString()}
                             </span>
                           )}
                         </div>

@@ -14,7 +14,7 @@ import {
   sequelize,
 } from '@crm/database'
 import { getActiveCommConfig } from '@/lib/comm-provider'
-import { recordHit } from '@/lib/webhook-log'
+import { recordHit, classifySource, snapshotHeaders } from '@/lib/webhook-log'
 
 /**
  * POST /api/webhooks/telnyx — UNIFIED Telnyx webhook (SMS + Voice).
@@ -36,6 +36,21 @@ export async function POST(req: NextRequest) {
   const config = await getActiveCommConfig()
   const sigHeader = req.headers.get('telnyx-signature-ed25519')
   const tsHeader = req.headers.get('telnyx-timestamp')
+  const userAgent = req.headers.get('user-agent')
+  const source = classifySource(userAgent)
+  const headers = snapshotHeaders(req)
+
+  // Dev-only signature bypass. Production hard-blocks this regardless
+  // of env var so a leaked .env.production never silently disables
+  // verification. Logs a loud warning every time it's hit.
+  const skipEnv = (process.env.TELNYX_SKIP_SIGNATURE_VERIFICATION ?? '').toLowerCase()
+  const inProd = process.env.NODE_ENV === 'production'
+  const bypassSignature = !inProd && (skipEnv === 'true' || skipEnv === '1')
+  if (bypassSignature) {
+    console.warn(
+      '[webhook/telnyx] ⚠️  SIGNATURE VERIFICATION BYPASSED via TELNYX_SKIP_SIGNATURE_VERIFICATION=true (dev-mode only).',
+    )
+  }
 
   // Tiny helper so we record the hit + return in one shot. Body-parse
   // is deferred until after signature verification so the diagnostic
@@ -50,12 +65,17 @@ export async function POST(req: NextRequest) {
       outcome,
       fromPhone: extra?.fromPhone ?? null,
       toPhone: extra?.toPhone ?? null,
+      userAgent,
+      source,
+      headers,
     })
     return NextResponse.json(payload ?? { ok: status < 300 }, { status })
   }
 
-  // Signature verification — only enforced when Public Key is configured.
-  if (config?.providerName === 'telnyx' && config.publicKey) {
+  // Signature verification — enforced when Public Key is set AND we're
+  // not in dev-bypass mode. Telnyx retries 4xx responses for ~24h, so
+  // we still return quickly on rejection (no slow handshake).
+  if (config?.providerName === 'telnyx' && config.publicKey && !bypassSignature) {
     if (!sigHeader || !tsHeader) {
       return done(401, 'signature missing', {}, { error: 'Missing signature' })
     }
@@ -107,9 +127,12 @@ export async function POST(req: NextRequest) {
       hasSignature: !!sigHeader,
       eventType,
       responseStatus: res.status,
-      outcome: 'sms handled',
+      outcome: bypassSignature ? 'sms handled (sig bypassed)' : 'sms handled',
       fromPhone: extractFrom,
       toPhone: extractTo,
+      userAgent,
+      source,
+      headers,
     })
     return res
   }
@@ -121,9 +144,12 @@ export async function POST(req: NextRequest) {
       hasSignature: !!sigHeader,
       eventType,
       responseStatus: res.status,
-      outcome: 'call handled',
+      outcome: bypassSignature ? 'call handled (sig bypassed)' : 'call handled',
       fromPhone: extractFrom,
       toPhone: extractTo,
+      userAgent,
+      source,
+      headers,
     })
     return res
   }

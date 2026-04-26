@@ -9,14 +9,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!session) redirect('/login')
 
   return (
-    // suppressHydrationWarning: InboundCallNotification is a 'use client'
-    // component that returns null on first mount; combined with browser
-    // extensions that wrap top-level elements, this can produce a benign
-    // mismatch React surfaces as a recoverable hydration error. The render
-    // tree is identical post-hydration, so silencing the warning here is
-    // the React-recommended escape hatch.
+    // InboundCallNotification is moved to the end of the tree (it uses
+    // fixed positioning so visual order is irrelevant) so it can never
+    // be the first child a browser extension wraps — that's the
+    // commonest cause of the React hydration warning we were seeing.
+    // suppressHydrationWarning is still set on the wrapper as a belt
+    // for any other extension-driven attribute mismatches.
     <div className="flex flex-col h-screen bg-slate-50" suppressHydrationWarning>
-      <InboundCallNotification />
       <GlobalHeader />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
@@ -24,6 +23,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+      <InboundCallNotification />
     </div>
   )
 }

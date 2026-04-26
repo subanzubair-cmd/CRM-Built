@@ -236,6 +236,67 @@ export async function GET(req: NextRequest) {
     ? { ok: true, message: 'Public Key is set — inbound webhooks will be ed25519-verified.' }
     : { ok: true, message: 'Public Key is not set — webhooks will be accepted without verification (dev mode).' }
 
+  // 7) Recent Telnyx-side activity. If the operator just sent a test
+  //    SMS but the CRM has nothing, we can directly ask Telnyx whether
+  //    the message arrived at THEIR side. If Telnyx has it but the CRM
+  //    doesn't, the failure is webhook delivery (signature, network,
+  //    timeout). If Telnyx doesn't have it either, the failure is
+  //    upstream (carrier, wrong number, account suspended).
+  let recentActivity: {
+    ok: boolean
+    message: string
+    messages: Array<{ direction: string; from: string; to: string; text: string; receivedAt: string | null }>
+  } = {
+    ok: true,
+    message: 'No recent inbound messages on this Telnyx account in the last 24h.',
+    messages: [],
+  }
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const mdrRes = await fetch(
+      `https://api.telnyx.com/v2/detail_records?filter[record_type]=mdr&filter[direction]=inbound&filter[date_range][gte]=${encodeURIComponent(since)}&page[size]=10`,
+      { headers: { Authorization: `Bearer ${config.apiKey}` } },
+    )
+    if (mdrRes.ok) {
+      const mdrJson = (await mdrRes.json().catch(() => ({}))) as any
+      const records = (mdrJson?.data ?? []) as Array<any>
+      const messages = records.map((r) => ({
+        direction: r.direction ?? 'inbound',
+        from: r.source ?? r.from ?? '—',
+        to: r.destination ?? r.to ?? '—',
+        text: (r.message_body ?? r.text ?? '').slice(0, 80),
+        receivedAt: r.created_at ?? r.completed_at ?? null,
+      }))
+      if (messages.length > 0) {
+        recentActivity = {
+          ok: true,
+          message: `Telnyx has ${messages.length} inbound message${messages.length === 1 ? '' : 's'} on this account in the last 24h. If they're missing from the CRM, the webhook isn't being delivered (or signature verification is rejecting them silently).`,
+          messages,
+        }
+      }
+    } else if (mdrRes.status === 404) {
+      // Detail records endpoint not available on free tier — fall
+      // back to a softer message without failing the whole diagnostic.
+      recentActivity = {
+        ok: true,
+        message: 'Telnyx Detail Records aren\'t available on this account tier — can\'t cross-check inbound activity. Use the Recent Webhook Hits panel below instead.',
+        messages: [],
+      }
+    } else {
+      recentActivity = {
+        ok: true,
+        message: `Could not fetch recent activity from Telnyx (HTTP ${mdrRes.status}).`,
+        messages: [],
+      }
+    }
+  } catch (err) {
+    recentActivity = {
+      ok: true,
+      message: err instanceof Error ? `Recent activity check failed: ${err.message}` : 'Recent activity check failed.',
+      messages: [],
+    }
+  }
+
   const checks = {
     appExists: {
       ok: true,
@@ -276,6 +337,7 @@ export async function GET(req: NextRequest) {
     messagingProfile: mpCheck,
     reachability: reachCheck,
     signatureKey: sigCheck,
+    recentActivity,
   }
 
   const ok =
