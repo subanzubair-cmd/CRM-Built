@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { BuyerMatch, Buyer, Contact } from '@crm/database'
 import { z } from 'zod'
 
 type Params = { params: Promise<{ id: string }> }
@@ -15,17 +15,28 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id: propertyId } = await params
-  const matches = await prisma.buyerMatch.findMany({
+  const matches = await BuyerMatch.findAll({
     where: { propertyId },
-    include: {
-      buyer: {
-        include: { contact: { select: { firstName: true, lastName: true, phone: true, email: true } } },
+    include: [
+      {
+        model: Buyer,
+        as: 'buyer',
+        include: [{ model: Contact, as: 'contact', attributes: ['firstName', 'lastName', 'phone', 'email'] }],
       },
-    },
-    orderBy: { createdAt: 'desc' },
+    ],
+    order: [['createdAt', 'DESC']],
   })
 
-  return NextResponse.json({ data: matches.map((m) => ({ ...m, score: Number(m.score), dispoOfferAmount: m.dispoOfferAmount ? Number(m.dispoOfferAmount) : null })) })
+  const data = matches.map((m) => {
+    const plain = m.get({ plain: true }) as any
+    return {
+      ...plain,
+      score: Number(plain.score),
+      dispoOfferAmount: plain.dispoOfferAmount ? Number(plain.dispoOfferAmount) : null,
+    }
+  })
+
+  return NextResponse.json({ data })
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -38,22 +49,17 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const { buyerId, dispoStage } = parsed.data
 
-  // Check if this buyer is already matched to this property
-  const existing = await prisma.buyerMatch.findFirst({
-    where: { propertyId, buyerId },
-  })
+  const existing = await BuyerMatch.findOne({ where: { propertyId, buyerId }, raw: true })
   if (existing) {
     return NextResponse.json({ error: 'This buyer is already matched to this property' }, { status: 409 })
   }
 
-  const match = await prisma.buyerMatch.create({
-    data: {
-      propertyId,
-      buyerId,
-      dispoStage: dispoStage as any,
-      score: 0,
-    },
-  })
+  const match = await BuyerMatch.create({
+    propertyId,
+    buyerId,
+    dispoStage,
+    score: 0,
+  } as any)
 
-  return NextResponse.json({ success: true, data: match }, { status: 201 })
+  return NextResponse.json({ success: true, data: match.get({ plain: true }) }, { status: 201 })
 }

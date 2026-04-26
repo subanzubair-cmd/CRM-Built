@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Buyer, Contact, Message, Op, literal, sequelize } from '@crm/database'
 import { z } from 'zod'
 
 const BlastSchema = z.object({
   channel: z.enum(['SMS', 'EMAIL']),
   subject: z.string().optional(),
   body: z.string().min(1).max(1600),
-  // Optional: restrict to specific buyer IDs (checkbox selection)
-  // If omitted, blasts to ALL active buyers (legacy header button behavior)
   buyerIds: z.array(z.string()).min(1).max(500).optional(),
-  marketFilter: z.string().optional(), // market name to restrict recipients (used when buyerIds not set)
+  marketFilter: z.string().optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -23,26 +21,34 @@ export async function POST(req: NextRequest) {
 
   const { channel, subject, body: messageBody, buyerIds, marketFilter } = parsed.data
 
-  // Fetch target buyers with contacts
-  const buyers = await prisma.buyer.findMany({
-    where: {
-      isActive: true,
-      ...(buyerIds && buyerIds.length > 0
-        ? { id: { in: buyerIds } }
-        : marketFilter
-          ? { preferredMarkets: { has: marketFilter } }
-          : {}),
-    },
-    include: {
-      contact: { select: { id: true, phone: true, email: true, firstName: true } },
-    },
-    take: 500,
+  const where: Record<string, unknown> = { isActive: true }
+  if (buyerIds && buyerIds.length > 0) {
+    where.id = { [Op.in]: buyerIds }
+  } else if (marketFilter) {
+    const escaped = marketFilter.replace(/'/g, "''")
+    where.id = {
+      [Op.in]: literal(`(SELECT id FROM "Buyer" WHERE "preferredMarkets" @> ARRAY['${escaped}']::text[])`),
+    }
+  }
+
+  const buyers = await Buyer.findAll({
+    where,
+    include: [
+      {
+        model: Contact,
+        as: 'contact',
+        attributes: ['id', 'phone', 'email', 'firstName'],
+        required: true,
+      },
+    ],
+    limit: 500,
   })
 
-  // Filter buyers who have the right contact info for the channel
-  const eligible = buyers.filter((b) =>
-    channel === 'SMS' ? Boolean(b.contact.phone) : Boolean(b.contact.email)
-  )
+  const eligible = buyers
+    .map((b) => b.get({ plain: true }) as any)
+    .filter((b) =>
+      channel === 'SMS' ? Boolean(b.contact?.phone) : Boolean(b.contact?.email),
+    )
 
   if (eligible.length === 0) {
     return NextResponse.json({ error: 'No eligible buyers for this channel' }, { status: 400 })
@@ -50,20 +56,18 @@ export async function POST(req: NextRequest) {
 
   const userId = ((session as any)?.user?.id ?? '') as string
 
-  const created = await prisma.$transaction(
-    eligible.map((b) =>
-      prisma.message.create({
-        data: {
-          channel: channel as any,
-          direction: 'OUTBOUND',
-          body: messageBody,
-          subject: subject ?? null,
-          sentById: userId,
-          to: channel === 'SMS' ? b.contact.phone : b.contact.email,
-          // propertyId intentionally omitted — buyer blasts are contact-level communications
-        },
-      })
-    )
+  const created = await sequelize.transaction(async (tx) =>
+    Message.bulkCreate(
+      eligible.map((b) => ({
+        channel,
+        direction: 'OUTBOUND',
+        body: messageBody,
+        subject: subject ?? null,
+        sentById: userId,
+        to: channel === 'SMS' ? b.contact.phone : b.contact.email,
+      })) as any[],
+      { transaction: tx },
+    ),
   )
 
   return NextResponse.json({
@@ -77,10 +81,15 @@ export async function GET(req: NextRequest) {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Return count of active buyers by channel eligibility
   const [smsEligible, emailEligible] = await Promise.all([
-    prisma.buyer.count({ where: { isActive: true, contact: { phone: { not: null } } } }),
-    prisma.buyer.count({ where: { isActive: true, contact: { email: { not: null } } } }),
+    Buyer.count({
+      where: { isActive: true },
+      include: [{ model: Contact, as: 'contact', where: { phone: { [Op.ne]: null } }, required: true, attributes: [] }],
+    }),
+    Buyer.count({
+      where: { isActive: true },
+      include: [{ model: Contact, as: 'contact', where: { email: { [Op.ne]: null } }, required: true, attributes: [] }],
+    }),
   ])
 
   return NextResponse.json({ smsEligible, emailEligible })

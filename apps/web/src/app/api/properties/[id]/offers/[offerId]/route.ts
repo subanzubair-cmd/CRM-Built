@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  BuyerOffer,
+  Buyer,
+  Contact,
+  ActivityLog,
+  Notification,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 
 const PatchSchema = z.object({
@@ -9,8 +18,6 @@ const PatchSchema = z.object({
 
 type Params = { params: Promise<{ id: string; offerId: string }> }
 
-// PATCH /api/properties/[id]/offers/[offerId]
-// Accept or reject a specific offer. Accepting automatically rejects all other pending offers.
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -23,89 +30,74 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { status } = parsed.data
 
-  // Verify the offer exists and belongs to this property
-  const offer = await prisma.buyerOffer.findFirst({
+  const offerRow = await BuyerOffer.findOne({
     where: { id: offerId, propertyId: id },
-    include: {
-      buyer: { include: { contact: { select: { firstName: true, lastName: true } } } },
-    },
+    include: [
+      {
+        model: Buyer,
+        as: 'buyer',
+        include: [{ model: Contact, as: 'contact', attributes: ['firstName', 'lastName'] }],
+      },
+    ],
   })
-  if (!offer) return NextResponse.json({ error: 'Offer not found' }, { status: 404 })
+  if (!offerRow) return NextResponse.json({ error: 'Offer not found' }, { status: 404 })
+  const offer = offerRow.get({ plain: true }) as any
 
-  // Get property for activity log and notification target
-  const property = await prisma.property.findUnique({
-    where: { id },
-    select: { assignedToId: true, streetAddress: true },
-  })
+  const property = await Property.findByPk(id, {
+    attributes: ['assignedToId', 'streetAddress'],
+    raw: true,
+  }) as any
 
   const buyerName = `${offer.buyer.contact.firstName} ${offer.buyer.contact.lastName ?? ''}`.trim()
   const amount = `$${Number(offer.dispoOfferAmount).toLocaleString()}`
 
-  if (status === 'ACCEPTED') {
-    // Accept this offer
-    await prisma.buyerOffer.update({
-      where: { id: offerId },
-      data: { status: 'ACCEPTED', respondedAt: new Date() },
-    })
-
-    // Reject all other pending offers for this property (one accepted offer per property)
-    await prisma.buyerOffer.updateMany({
-      where: { propertyId: id, id: { not: offerId }, status: 'PENDING' },
-      data: { status: 'REJECTED', respondedAt: new Date() },
-    })
-
-    // Log activity
-    await prisma.activityLog.create({
-      data: {
+  await sequelize.transaction(async (tx) => {
+    if (status === 'ACCEPTED') {
+      await BuyerOffer.update(
+        { status: 'ACCEPTED', respondedAt: new Date() },
+        { where: { id: offerId }, transaction: tx },
+      )
+      await BuyerOffer.update(
+        { status: 'REJECTED', respondedAt: new Date() },
+        { where: { propertyId: id, id: { [Op.ne]: offerId }, status: 'PENDING' }, transaction: tx },
+      )
+      await ActivityLog.create({
         propertyId: id,
         userId,
         action: 'OFFER_ACCEPTED',
         detail: { description: `Offer of ${amount} from ${buyerName} accepted` },
-      },
-    })
-
-    // Notify assigned user
-    if (property?.assignedToId) {
-      await prisma.notification.create({
-        data: {
+      } as any, { transaction: tx })
+      if (property?.assignedToId) {
+        await Notification.create({
           userId: property.assignedToId,
           type: 'SYSTEM',
           title: 'Offer Accepted',
           body: `Offer of ${amount} from ${buyerName} on ${property.streetAddress ?? 'property'} was accepted`,
           propertyId: id,
-        },
-      })
-    }
-  } else {
-    // Reject this offer
-    await prisma.buyerOffer.update({
-      where: { id: offerId },
-      data: { status: 'REJECTED', respondedAt: new Date() },
-    })
-
-    // Log activity
-    await prisma.activityLog.create({
-      data: {
+        } as any, { transaction: tx })
+      }
+    } else {
+      await BuyerOffer.update(
+        { status: 'REJECTED', respondedAt: new Date() },
+        { where: { id: offerId }, transaction: tx },
+      )
+      await ActivityLog.create({
         propertyId: id,
         userId,
         action: 'PIPELINE_CHANGE',
         detail: { description: `Offer of ${amount} from ${buyerName} rejected` },
-      },
-    })
-
-    // Notify assigned user
-    if (property?.assignedToId) {
-      await prisma.notification.create({
-        data: {
+      } as any, { transaction: tx })
+      if (property?.assignedToId) {
+        await Notification.create({
           userId: property.assignedToId,
           type: 'SYSTEM',
           title: 'Offer Rejected',
           body: `Offer of ${amount} from ${buyerName} on ${property.streetAddress ?? 'property'} was rejected`,
           propertyId: id,
-        },
-      })
+        } as any, { transaction: tx })
+      }
     }
-  }
+  })
 
   return NextResponse.json({ success: true })
 }

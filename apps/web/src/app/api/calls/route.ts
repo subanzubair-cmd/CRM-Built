@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
-import { User } from '@crm/database'
+import {
+  Property,
+  ActiveCall,
+  PropertyTeamAssignment,
+  LeadCampaign,
+  TwilioNumber,
+  User,
+  Op,
+} from '@crm/database'
 import { z } from 'zod'
 import {
   makeConferenceCall,
@@ -17,14 +24,6 @@ const InitiateCallSchema = z.object({
   fromNumber: z.string().optional(),
 })
 
-/**
- * POST /api/calls
- * Initiate an outbound conference call. Enforces:
- * - caller must be on property's team (assignedToId OR PropertyTeamAssignment) unless admin
- * - customer must not be on Do Not Call list
- * - outbound number falls back: fromNumber → property.defaultOutboundNumber → campaign.phoneNumber → env default
- * - persists leadCampaignId for ROI attribution
- */
 export async function POST(req: NextRequest) {
   const limited = rateLimitMutation(req, { bucket: 'calls.post', limit: 30 })
   if (limited) return limited
@@ -53,7 +52,6 @@ export async function POST(req: NextRequest) {
 
   const { customerPhone, propertyId, fromNumber } = parsed.data
 
-  // Resolve property context (for team auth, attribution, and number fallback)
   let propertyContext: {
     id: string
     assignedToId: string | null
@@ -63,19 +61,21 @@ export async function POST(req: NextRequest) {
   } | null = null
 
   if (propertyId) {
-    const property = await prisma.property.findUnique({
-      where: { id: propertyId },
-      select: {
-        id: true,
-        assignedToId: true,
-        defaultOutboundNumber: true,
-        leadCampaignId: true,
-        leadCampaign: { select: { phoneNumber: { select: { number: true } } } },
-      },
+    const propertyRow = await Property.findByPk(propertyId, {
+      attributes: ['id', 'assignedToId', 'defaultOutboundNumber', 'leadCampaignId'],
+      include: [
+        {
+          model: LeadCampaign,
+          as: 'leadCampaign',
+          attributes: ['id'],
+          include: [{ model: TwilioNumber, as: 'phoneNumber', attributes: ['number'] }],
+        },
+      ],
     })
-    if (!property) {
+    if (!propertyRow) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
     }
+    const property = propertyRow.get({ plain: true }) as any
     propertyContext = {
       id: property.id,
       assignedToId: property.assignedToId,
@@ -84,32 +84,30 @@ export async function POST(req: NextRequest) {
       campaignNumber: property.leadCampaign?.phoneNumber?.number ?? null,
     }
 
-    // Team-membership check (unless admin)
     const isAdmin = hasPermission(session, 'admin.all')
     if (!isAdmin) {
       const isAssignee = propertyContext.assignedToId === userId
       const teamAssignment = isAssignee
         ? null
-        : await (prisma as any).propertyTeamAssignment.findFirst({
+        : await PropertyTeamAssignment.findOne({
             where: { propertyId, userId },
-            select: { id: true },
+            attributes: ['id'],
+            raw: true,
           })
       if (!isAssignee && !teamAssignment) {
         return NextResponse.json(
-          { error: 'You are not on this property\u2019s team.' },
+          { error: 'You are not on this property’s team.' },
           { status: 403 },
         )
       }
     }
   }
 
-  // DND check
   const dndBlock = await checkDndByPhone(customerPhone, 'call')
   if (dndBlock) {
     return NextResponse.json({ error: dndBlock }, { status: 422 })
   }
 
-  // Resolve outbound caller ID — user override > property default > campaign > env
   const resolvedFromNumber =
     fromNumber ??
     propertyContext?.defaultOutboundNumber ??
@@ -126,20 +124,18 @@ export async function POST(req: NextRequest) {
       resolvedFromNumber,
     )
 
-    const activeCall = await (prisma as any).activeCall.create({
-      data: {
-        conferenceName,
-        agentCallSid,
-        customerCallSid,
-        customerPhone,
-        agentUserId: userId,
-        ...(propertyContext ? { propertyId: propertyContext.id } : {}),
-        ...(propertyContext?.leadCampaignId
-          ? { leadCampaignId: propertyContext.leadCampaignId }
-          : {}),
-        status: 'INITIATING',
-      },
-    })
+    const activeCall = await ActiveCall.create({
+      conferenceName,
+      agentCallSid,
+      customerCallSid,
+      customerPhone,
+      agentUserId: userId,
+      ...(propertyContext ? { propertyId: propertyContext.id } : {}),
+      ...(propertyContext?.leadCampaignId
+        ? { leadCampaignId: propertyContext.leadCampaignId }
+        : {}),
+      status: 'INITIATING',
+    } as any)
 
     return NextResponse.json({ success: true, data: activeCall }, { status: 201 })
   } catch (err) {
@@ -148,28 +144,24 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * GET /api/calls
- * List all non-completed active calls (for supervisor dashboard).
- */
 export async function GET(_req: NextRequest) {
   const session = await auth()
   const deny = requirePermission(session, 'comms.view')
   if (deny) return deny
 
   try {
-    const calls = await (prisma as any).activeCall.findMany({
+    const calls = await ActiveCall.findAll({
       where: {
-        status: { not: 'COMPLETED' },
+        status: { [Op.ne]: 'COMPLETED' },
       },
-      include: {
-        agent: { select: { id: true, name: true, phone: true } },
-        property: { select: { id: true, streetAddress: true, city: true, propertyStatus: true } },
-      },
-      orderBy: { startedAt: 'desc' },
+      include: [
+        { model: User, as: 'agent', attributes: ['id', 'name', 'phone'] },
+        { model: Property, as: 'property', attributes: ['id', 'streetAddress', 'city', 'propertyStatus'] },
+      ],
+      order: [['startedAt', 'DESC']],
     })
 
-    return NextResponse.json({ data: calls })
+    return NextResponse.json({ data: calls.map((c) => c.get({ plain: true })) })
   } catch (err) {
     console.error('[GET /api/calls]', err)
     return NextResponse.json({ error: 'Failed to fetch calls' }, { status: 500 })

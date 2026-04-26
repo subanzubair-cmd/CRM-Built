@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { BuyerCriteria } from '@crm/database'
 import { z } from 'zod'
 
 const CreateCriteriaSchema = z.object({
@@ -35,12 +35,10 @@ export async function POST(req: NextRequest, { params }: Params) {
   const parsed = CreateCriteriaSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const criteria = await prisma.buyerCriteria.create({
-    data: {
-      buyerId: id,
-      ...parsed.data,
-    },
-  })
+  const criteria = await BuyerCriteria.create({
+    buyerId: id,
+    ...parsed.data,
+  } as any)
 
   return NextResponse.json({ success: true, data: criteria }, { status: 201 })
 }
@@ -54,7 +52,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const parsed = DeleteCriteriaSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  await prisma.buyerCriteria.delete({ where: { id: parsed.data.criteriaId } })
+  await BuyerCriteria.destroy({ where: { id: parsed.data.criteriaId } })
 
   return NextResponse.json({ success: true })
 }

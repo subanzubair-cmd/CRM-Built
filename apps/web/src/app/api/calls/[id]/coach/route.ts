@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
-import { User } from '@crm/database'
+import { ActiveCall, User } from '@crm/database'
 import { z } from 'zod'
 import { addWhisperParticipant, addBargeParticipant } from '@/lib/twilio-calls'
 import { requirePermission } from '@/lib/auth-utils'
@@ -10,11 +9,6 @@ const CoachSchema = z.object({
   mode: z.enum(['WHISPER', 'BARGE']),
 })
 
-/**
- * POST /api/calls/[id]/coach
- * Join a live call as supervisor in whisper (coach) or barge (full participant) mode.
- * Supervisor must have User.phone set.
- */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -45,21 +39,22 @@ export async function POST(
 
   const { mode } = parsed.data
 
-  const activeCall = await (prisma as any).activeCall.findUnique({ where: { id } })
+  const activeCall = await ActiveCall.findByPk(id)
   if (!activeCall) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 })
   }
-  if (activeCall.status === 'COMPLETED') {
+  const call = activeCall.get({ plain: true }) as any
+  if (call.status === 'COMPLETED') {
     return NextResponse.json({ error: 'Call has already ended' }, { status: 409 })
   }
-  if (!activeCall.conferenceId) {
+  if (!call.conferenceId) {
     return NextResponse.json(
       { error: 'Conference not yet active. Wait a moment and retry.' },
       { status: 409 },
     )
   }
 
-  if (activeCall.supervisorCallSid) {
+  if (call.supervisorCallSid) {
     return NextResponse.json(
       { error: 'A supervisor is already monitoring this call.' },
       { status: 409 },
@@ -70,25 +65,22 @@ export async function POST(
     let supervisorCallSid: string
 
     if (mode === 'WHISPER') {
-      if (!activeCall.agentCallSid) {
+      if (!call.agentCallSid) {
         return NextResponse.json({ error: 'Agent call SID not available yet' }, { status: 409 })
       }
       supervisorCallSid = await addWhisperParticipant(
-        activeCall.conferenceId,
+        call.conferenceId,
         supervisor.phone,
-        activeCall.agentCallSid,
+        call.agentCallSid,
       )
     } else {
       supervisorCallSid = await addBargeParticipant(
-        activeCall.conferenceId,
+        call.conferenceId,
         supervisor.phone,
       )
     }
 
-    await (prisma as any).activeCall.update({
-      where: { id },
-      data: { supervisorCallSid, supervisorMode: mode },
-    })
+    await activeCall.update({ supervisorCallSid, supervisorMode: mode })
 
     return NextResponse.json({ success: true, supervisorCallSid, mode })
   } catch (err) {

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property } from '@crm/database'
 import { generateLeadSummary } from '@/lib/lead-summary'
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -15,10 +15,7 @@ export async function POST(
   try {
     const summary = await generateLeadSummary(id)
 
-    await prisma.property.update({
-      where: { id },
-      data: { aiSummary: summary },
-    })
+    await Property.update({ aiSummary: summary } as any, { where: { id } })
 
     return NextResponse.json({ summary })
   } catch (err) {

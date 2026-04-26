@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Buyer, Contact, ActivityLog, sequelize } from '@crm/database'
 import { z } from 'zod'
 
 const ConvertToBuyerSchema = z.object({
@@ -22,44 +22,40 @@ export async function POST(req: NextRequest) {
 
   const { contactId, propertyId, preferredMarkets } = parsed.data
 
-  // Check contact exists
-  const contact = await prisma.contact.findUnique({ where: { id: contactId } })
+  const contact = await Contact.findByPk(contactId)
   if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
 
-  // Check if already a buyer
-  const existing = await prisma.buyer.findUnique({ where: { contactId } })
+  const existing = await Buyer.findOne({ where: { contactId } })
   if (existing) return NextResponse.json({ error: 'Already a buyer' }, { status: 409 })
 
-  // Create buyer record linked to existing contact
-  const buyer = await prisma.buyer.create({
-    data: {
+  const result = await sequelize.transaction(async (tx) => {
+    const buyer = await Buyer.create({
       contactId,
       isActive: true,
       preferredMarkets,
-    },
-    include: { contact: true },
-  })
+    } as any, { transaction: tx })
 
-  // Update contact type to BUYER if not already
-  await prisma.contact.update({
-    where: { id: contactId },
-    data: { type: 'BUYER' },
-  })
+    await contact.update({ type: 'BUYER' }, { transaction: tx })
 
-  // Create activity log on the property
-  await prisma.activityLog.create({
-    data: {
+    const cPlain = contact.get({ plain: true }) as any
+    await ActivityLog.create({
       propertyId,
       userId,
       userName,
       action: 'CONTACT_CONVERTED',
       detail: {
-        description: `Converted ${contact.firstName} ${contact.lastName ?? ''} to Buyer`.trim(),
+        description: `Converted ${cPlain.firstName} ${cPlain.lastName ?? ''} to Buyer`.trim(),
         buyerId: buyer.id,
         contactId,
       },
-    },
+    } as any, { transaction: tx })
+
+    const fresh = await Buyer.findByPk(buyer.id, {
+      include: [{ model: Contact, as: 'contact' }],
+      transaction: tx,
+    })
+    return fresh?.get({ plain: true })
   })
 
-  return NextResponse.json({ success: true, data: buyer }, { status: 201 })
+  return NextResponse.json({ success: true, data: result }, { status: 201 })
 }

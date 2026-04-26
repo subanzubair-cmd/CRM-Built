@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Buyer, Contact, Op, literal } from '@crm/database'
 import { getMarketScope } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -20,33 +20,47 @@ export async function GET(req: NextRequest) {
   const search = req.nextUrl.searchParams.get('search') ?? ''
   const scope = getMarketScope(session)
 
-  const filters: Record<string, unknown>[] = []
-  if (search.length >= 2) {
-    filters.push({
-      contact: {
-        OR: [
-          { firstName: { contains: search, mode: 'insensitive' as const } },
-          { lastName: { contains: search, mode: 'insensitive' as const } },
-          { email: { contains: search, mode: 'insensitive' as const } },
-          { phone: { contains: search } },
-        ],
-      },
-    })
-  }
-  if (scope !== null) {
-    // Non-admin: buyer must overlap with user's assigned markets
-    filters.push({ preferredMarkets: { hasSome: scope } })
-  }
-  const where = filters.length ? { AND: filters } : {}
+  const where: Record<string, unknown> = {}
 
-  const buyers = await prisma.buyer.findMany({
+  const contactInclude: any = {
+    model: Contact,
+    as: 'contact',
+    attributes: ['firstName', 'lastName', 'phone', 'email'],
+  }
+
+  if (search.length >= 2) {
+    const like = `%${search}%`
+    contactInclude.where = {
+      [Op.or]: [
+        { firstName: { [Op.iLike]: like } },
+        { lastName: { [Op.iLike]: like } },
+        { email: { [Op.iLike]: like } },
+        { phone: { [Op.like]: like } },
+      ],
+    }
+    contactInclude.required = true
+  }
+
+  if (scope !== null) {
+    if (scope.length === 0) {
+      where.id = ''
+    } else {
+      const escaped = scope.map((m) => `'${m.replace(/'/g, "''")}'`).join(',')
+      where.id = {
+        [Op.in]: literal(`(SELECT id FROM "Buyer" WHERE "preferredMarkets" && ARRAY[${escaped}]::text[])`),
+      }
+    }
+  }
+
+  const buyers = await Buyer.findAll({
     where,
-    include: { contact: { select: { firstName: true, lastName: true, phone: true, email: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
+    include: [contactInclude],
+    order: [['createdAt', 'DESC']],
+    limit: 20,
+    subQuery: false,
   })
 
-  return NextResponse.json({ data: buyers })
+  return NextResponse.json({ data: buyers.map((b) => b.get({ plain: true })) })
 }
 
 export async function POST(req: NextRequest) {
@@ -59,42 +73,43 @@ export async function POST(req: NextRequest) {
 
   const { firstName, lastName, email, phone, notes, preferredMarkets } = parsed.data
 
-  // Check for duplicate buyer by phone or email
   if (phone || email) {
-    const duplicateContact = await prisma.contact.findFirst({
+    const duplicateContact = await Contact.findOne({
       where: {
         type: 'BUYER',
-        OR: [
+        [Op.or]: [
           ...(phone ? [{ phone }] : []),
           ...(email ? [{ email }] : []),
         ],
       },
-      include: { buyerProfile: { select: { id: true } } },
+      include: [{ model: Buyer, as: 'buyerProfile', attributes: ['id'] }],
     })
     if (duplicateContact) {
+      const dup = duplicateContact.get({ plain: true }) as any
       return NextResponse.json({
-        error: `A buyer with this ${duplicateContact.phone === phone ? 'phone number' : 'email'} already exists: ${duplicateContact.firstName} ${duplicateContact.lastName ?? ''}`.trim(),
-        existingBuyerId: duplicateContact.buyerProfile?.id,
+        error: `A buyer with this ${dup.phone === phone ? 'phone number' : 'email'} already exists: ${dup.firstName} ${dup.lastName ?? ''}`.trim(),
+        existingBuyerId: dup.buyerProfile?.id,
       }, { status: 409 })
     }
   }
 
-  const buyer = await prisma.buyer.create({
-    data: {
-      preferredMarkets,
-      notes,
-      contact: {
-        create: {
-          type: 'BUYER',
-          firstName,
-          lastName,
-          email,
-          phone,
-        },
-      },
-    },
-    include: { contact: true },
+  const contact = await Contact.create({
+    type: 'BUYER',
+    firstName,
+    lastName,
+    email,
+    phone,
+  } as any)
+
+  const buyerRow = await Buyer.create({
+    contactId: contact.id,
+    preferredMarkets,
+    notes,
+  } as any)
+
+  const buyer = await Buyer.findByPk(buyerRow.id, {
+    include: [{ model: Contact, as: 'contact' }],
   })
 
-  return NextResponse.json({ success: true, data: buyer }, { status: 201 })
+  return NextResponse.json({ success: true, data: buyer?.get({ plain: true }) }, { status: 201 })
 }

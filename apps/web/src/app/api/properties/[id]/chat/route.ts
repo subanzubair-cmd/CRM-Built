@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { Property, Market, PropertyContact, Contact, AiLog } from '@crm/database'
 import { generateText } from '@/lib/ai'
 
 const ChatSchema = z.object({
@@ -26,23 +26,28 @@ export async function POST(
 
   const { message, history } = parsed.data
 
-  const property = await prisma.property.findUniqueOrThrow({
-    where: { id },
-    include: {
-      market: { select: { name: true } },
-      contacts: {
+  const propertyRow = await Property.findByPk(id, {
+    include: [
+      { model: Market, as: 'market', attributes: ['name'] },
+      {
+        model: PropertyContact,
+        as: 'contacts',
         where: { isPrimary: true },
-        include: {
-          contact: { select: { firstName: true, lastName: true, phone: true, email: true } },
-        },
-        take: 3,
+        required: false,
+        separate: true,
+        limit: 3,
+        include: [
+          { model: Contact, as: 'contact', attributes: ['firstName', 'lastName', 'phone', 'email'] },
+        ],
       },
-    },
+    ],
   })
+  if (!propertyRow) throw new Error(`Property ${id} not found`)
+  const property = propertyRow.get({ plain: true }) as any
 
-  const contactList = property.contacts
-    .map((c) =>
-      `${c.contact.firstName} ${c.contact.lastName ?? ''} (${c.contact.phone ?? 'no phone'})`.trim()
+  const contactList = (property.contacts ?? [])
+    .map((c: any) =>
+      `${c.contact?.firstName ?? ''} ${c.contact?.lastName ?? ''} (${c.contact?.phone ?? 'no phone'})`.trim(),
     )
     .join(', ')
 
@@ -70,14 +75,12 @@ Answer questions about this lead concisely. If asked about something not in the 
     const reply = await generateText(conversationPrompt, system)
 
     try {
-      await prisma.aiLog.create({
-        data: {
-          propertyId: id,
-          engine: 'TEXT_CONVERSATIONAL',
-          input: { message, historyLength: history.length },
-          output: { reply },
-        },
-      })
+      await AiLog.create({
+        propertyId: id,
+        engine: 'TEXT_CONVERSATIONAL',
+        input: { message, historyLength: history.length },
+        output: { reply },
+      } as any)
     } catch (logErr) {
       console.error('[chat] AiLog write failed', logErr)
     }

@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Contact,
+  PropertyContact,
+  PropertyTeamAssignment,
+  Property,
+  Role,
+  User,
+  Op,
+} from '@crm/database'
 
-/**
- * GET /api/calls/inbound/lookup?phone=+12145550101
- *
- * Looks up a phone number across contacts, properties, and list stacking
- * entries. Used by the Inbound Call Notification popup to identify callers.
- */
 export async function GET(req: NextRequest) {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -15,66 +17,57 @@ export async function GET(req: NextRequest) {
   const phone = req.nextUrl.searchParams.get('phone')
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
 
-  // Find matching contacts by phone or phone2
-  const contacts = await prisma.contact.findMany({
+  const contactRows = await Contact.findAll({
     where: {
-      OR: [
-        { phone: { equals: phone } },
-        { phone2: { equals: phone } },
+      [Op.or]: [
+        { phone },
+        { phone2: phone },
       ],
     },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      phone: true,
-      type: true,
-      properties: {
-        select: {
-          property: {
-            select: {
-              id: true,
-              streetAddress: true,
-              city: true,
-              state: true,
-              propertyStatus: true,
-              activeLeadStage: true,
-              leadType: true,
-              source: true,
-              tags: true,
-            },
+    attributes: ['id', 'firstName', 'lastName', 'phone', 'type'],
+    include: [
+      {
+        model: PropertyContact,
+        as: 'properties',
+        include: [
+          {
+            model: Property,
+            as: 'property',
+            attributes: [
+              'id', 'streetAddress', 'city', 'state',
+              'propertyStatus', 'activeLeadStage', 'leadType',
+              'source', 'tags',
+            ],
           },
-        },
+        ],
       },
-    },
-    take: 10,
+    ],
+    limit: 10,
   })
 
-  // Flatten property references
-  const leadProperties = contacts.flatMap((c) =>
-    c.properties.map((pc) => pc.property)
+  const contacts = contactRows.map((c) => c.get({ plain: true }) as any)
+
+  const leadProperties = contacts.flatMap((c: any) =>
+    (c.properties ?? []).map((pc: any) => pc.property).filter(Boolean),
   )
 
-  // Deduplicate by property id
   const seen = new Set<string>()
-  const uniqueLeads = leadProperties.filter((p) => {
+  const uniqueLeads = leadProperties.filter((p: any) => {
     if (seen.has(p.id)) return false
     seen.add(p.id)
     return true
   })
 
-  // Find list-stacking properties (tags starting with "list:")
   const listStacking = uniqueLeads
-    .filter((p) => (p.tags ?? []).some((t) => t.startsWith('list:')))
-    .map((p) => ({
+    .filter((p: any) => (p.tags ?? []).some((t: string) => t.startsWith('list:')))
+    .map((p: any) => ({
       id: p.id,
       streetAddress: p.streetAddress,
       city: p.city,
       state: p.state,
-      lists: (p.tags ?? []).filter((t) => t.startsWith('list:')).map((t) => t.replace('list:', '')),
+      lists: (p.tags ?? []).filter((t: string) => t.startsWith('list:')).map((t: string) => t.replace('list:', '')),
     }))
 
-  // Caller info from first matching contact
   const caller = contacts[0]
     ? {
         name: `${contacts[0].firstName} ${contacts[0].lastName ?? ''}`.trim(),
@@ -83,25 +76,22 @@ export async function GET(req: NextRequest) {
       }
     : { name: 'Unknown Caller', phone, type: null }
 
-  // Source label — take from most recent lead property
   const source = uniqueLeads[0]?.source ?? null
 
-  // Look up team members assigned to each matched property — these are the
-  // users responsible for receiving calls/SMS/email for this lead.
-  const propertyIds = uniqueLeads.map((p) => p.id)
+  const propertyIds = uniqueLeads.map((p: any) => p.id)
   const teamRows = propertyIds.length
-    ? await (prisma as any).propertyTeamAssignment.findMany({
-        where: { propertyId: { in: propertyIds } },
-        include: {
-          role: { select: { id: true, name: true } },
-          user: { select: { id: true, name: true, email: true, phone: true } },
-        },
+    ? await PropertyTeamAssignment.findAll({
+        where: { propertyId: { [Op.in]: propertyIds } },
+        include: [
+          { model: Role, as: 'role', attributes: ['id', 'name'] },
+          { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
+        ],
       })
     : []
+  const teamPlain = teamRows.map((t) => t.get({ plain: true }) as any)
 
-  // Group team rows by property id
   const teamByProperty = new Map<string, Array<{ roleId: string; roleName: string; userId: string; userName: string; userEmail: string; userPhone: string | null }>>()
-  for (const t of teamRows as any[]) {
+  for (const t of teamPlain) {
     const arr = teamByProperty.get(t.propertyId) ?? []
     arr.push({
       roleId: t.role?.id ?? t.roleId,
@@ -117,7 +107,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     caller,
     source,
-    leadProperties: uniqueLeads.map((p) => ({
+    leadProperties: uniqueLeads.map((p: any) => ({
       id: p.id,
       streetAddress: p.streetAddress,
       city: p.city,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import { BuyerMatch } from '@crm/database'
 import { z } from 'zod'
 
 const PatchSchema = z.object({
@@ -21,15 +21,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = PatchSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const updated = await prisma.buyerMatch.update({
-    where: { id: matchId },
-    data: {
-      ...(parsed.data.dispoStage && { dispoStage: parsed.data.dispoStage }),
-      ...(parsed.data.dispoOfferAmount != null && { dispoOfferAmount: parsed.data.dispoOfferAmount }),
-    },
+  const match = await BuyerMatch.findByPk(matchId)
+  if (!match) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await match.update({
+    ...(parsed.data.dispoStage && { dispoStage: parsed.data.dispoStage }),
+    ...(parsed.data.dispoOfferAmount != null && { dispoOfferAmount: parsed.data.dispoOfferAmount }),
   })
 
-  return NextResponse.json({ success: true, data: updated })
+  return NextResponse.json({ success: true, data: match.get({ plain: true }) })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -38,6 +37,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { matchId } = await params
-  await prisma.buyerMatch.delete({ where: { id: matchId } })
+  await BuyerMatch.destroy({ where: { id: matchId } })
   return NextResponse.json({ success: true })
 }

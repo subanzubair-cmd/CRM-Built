@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property, ActivityLog, StageHistory, sequelize } from '@crm/database'
 import { z } from 'zod'
 import { runBuyerMatching } from '@/lib/buyer-matching'
 import { enqueueAutomation } from '@/lib/queue'
 import { requirePermission } from '@/lib/auth-utils'
 
-// Legal pipeline transitions
 const VALID_TRANSITIONS: Record<string, string[]> = {
   LEAD:            ['UNDER_CONTRACT', 'DEAD'],
   UNDER_CONTRACT:  ['IN_TM', 'DEAD'],
   IN_TM:           ['IN_INVENTORY', 'IN_DISPO', 'SOLD', 'RENTAL', 'DEAD'],
-  // Inventory can go to Dispo, Sold, Rental, or Dead — but NOT simultaneously to Dispo via routing
-  // (Inventory is a rehab pipeline — it goes to Dispo only after rehab is complete)
   IN_INVENTORY:    ['IN_DISPO', 'SOLD', 'RENTAL', 'DEAD'],
   IN_DISPO:        ['SOLD', 'IN_INVENTORY', 'DEAD'],
 }
 
-// Route A exit strategies → simultaneous TM + Dispo routing
 const DUAL_PIPELINE_EXITS = [
   'WHOLESALE_ASSIGNMENT',
   'WHOLESALE_DOUBLE_CLOSE',
@@ -48,19 +44,17 @@ export async function POST(req: NextRequest, { params }: Params) {
   const parsed = PromoteSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const existing = await prisma.property.findUnique({
-    where: { id },
-    select: { propertyStatus: true, tmStage: true },
-  })
+  const existing = await Property.findByPk(id, {
+    attributes: ['propertyStatus', 'tmStage'],
+    raw: true,
+  }) as any
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { toStatus, contractDate, soldAt, exitStrategy, reason } = parsed.data
 
-  // Idempotent no-op: already in target state, nothing to do.
-  // Return the current state with 200 so double-clicks don't error.
   if (existing.propertyStatus === toStatus) {
-    const current = await prisma.property.findUnique({ where: { id } })
-    return NextResponse.json({ success: true, data: current, idempotent: true }, { status: 200 })
+    const current = await Property.findByPk(id)
+    return NextResponse.json({ success: true, data: current?.get({ plain: true }), idempotent: true }, { status: 200 })
   }
 
   const validNext = VALID_TRANSITIONS[existing.propertyStatus] ?? []
@@ -84,8 +78,6 @@ export async function POST(req: NextRequest, { params }: Params) {
     DEAD:         { leadStatus: 'DEAD', deadAt: new Date(), tmStage: null, inventoryStage: null, inDispo: false, activeLeadStage: null },
   }
 
-  // Atomic transition: only succeed if still in the expected fromStatus.
-  // Prevents duplicate StageHistory from concurrent double-clicks.
   const pipelineLabel = toStatus === 'IN_TM' ? 'tm'
     : toStatus === 'IN_INVENTORY' ? 'inventory'
     : toStatus === 'IN_DISPO' ? 'dispo'
@@ -94,69 +86,65 @@ export async function POST(req: NextRequest, { params }: Params) {
     : toStatus === 'DEAD' ? 'dead'
     : 'leads'
 
-  const result = await prisma.$transaction(async (tx) => {
-    const updateCount = await tx.property.updateMany({
-      where: { id, propertyStatus: existing.propertyStatus },
-      data: {
+  const result = await sequelize.transaction(async (tx) => {
+    const [updateCount] = await Property.update(
+      {
         propertyStatus: toStatus,
         ...(contractDate && {
           contractDate: /^\d{4}-\d{2}-\d{2}$/.test(contractDate)
             ? new Date(contractDate + 'T12:00:00')
             : new Date(contractDate),
         }),
-        ...(exitStrategy && { exitStrategy: exitStrategy as any }),
+        ...(exitStrategy && { exitStrategy }),
         ...(stageDefaults[toStatus] ?? {}),
+      } as any,
+      {
+        where: { id, propertyStatus: existing.propertyStatus },
+        transaction: tx,
       },
-    })
+    )
 
-    if (updateCount.count === 0) {
+    if (updateCount === 0) {
       return { raced: true as const }
     }
 
-    const property = await tx.property.findUnique({ where: { id } })
+    const property = await Property.findByPk(id, { transaction: tx })
 
-    await tx.activityLog.create({
-      data: {
-        propertyId: id,
-        userId,
-        action: 'PIPELINE_CHANGE',
-        detail: {
-          description: `Promoted to ${toStatus}${reason ? `: ${reason}` : ''}`,
-          from: existing.propertyStatus,
-          to: toStatus,
-        },
+    await ActivityLog.create({
+      propertyId: id,
+      userId,
+      action: 'PIPELINE_CHANGE',
+      detail: {
+        description: `Promoted to ${toStatus}${reason ? `: ${reason}` : ''}`,
+        from: existing.propertyStatus,
+        to: toStatus,
       },
-    })
+    } as any, { transaction: tx })
 
-    await tx.stageHistory.create({
-      data: {
-        propertyId: id,
-        pipeline: pipelineLabel,
-        fromStage: existing.propertyStatus,
-        toStage: toStatus,
-        changedById: userId,
-        changedByName: userName,
-        reason,
-      },
-    })
+    await StageHistory.create({
+      propertyId: id,
+      pipeline: pipelineLabel,
+      fromStage: existing.propertyStatus,
+      toStage: toStatus,
+      changedById: userId,
+      changedByName: userName,
+      reason,
+    } as any, { transaction: tx })
 
-    return { raced: false as const, property }
+    return { raced: false as const, property: property?.get({ plain: true }) }
   })
 
   if (result.raced) {
-    // Another request beat us to it — return current state as idempotent success
-    const current = await prisma.property.findUnique({ where: { id } })
-    return NextResponse.json({ success: true, data: current, idempotent: true }, { status: 200 })
+    const current = await Property.findByPk(id)
+    return NextResponse.json({ success: true, data: current?.get({ plain: true }), idempotent: true }, { status: 200 })
   }
 
-  // Fire buyer matching when property enters Dispo — either directly or via dual-pipeline routing
   if (toStatus === 'IN_DISPO' || isDualPipeline) {
     runBuyerMatching(id).catch((err) =>
-      console.error('[promote] buyer matching failed:', err)
+      console.error('[promote] buyer matching failed:', err),
     )
   }
 
-  // Enqueue automation job for STAGE_CHANGE trigger (best-effort)
   enqueueAutomation({
     trigger: 'STAGE_CHANGE',
     propertyId: id,

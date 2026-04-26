@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import { Buyer, Contact } from '@crm/database'
 import { z } from 'zod'
 
 const UpdateBuyerSchema = z.object({
@@ -22,13 +22,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateBuyerSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const buyer = await prisma.buyer.update({
-    where: { id },
-    data: parsed.data,
-    include: { contact: { select: { firstName: true, lastName: true } } },
+  const buyer = await Buyer.findByPk(id)
+  if (!buyer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await buyer.update(parsed.data)
+  const fresh = await Buyer.findByPk(id, {
+    include: [{ model: Contact, as: 'contact', attributes: ['firstName', 'lastName'] }],
   })
 
-  return NextResponse.json({ success: true, data: buyer })
+  return NextResponse.json({ success: true, data: fresh?.get({ plain: true }) })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -37,10 +38,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  await prisma.buyer.update({
-    where: { id },
-    data: { isActive: false },
-  })
+  await Buyer.update({ isActive: false }, { where: { id } })
 
   return NextResponse.json({ success: true })
 }
