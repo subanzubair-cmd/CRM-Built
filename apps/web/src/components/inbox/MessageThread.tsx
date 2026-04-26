@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Phone, Mail, MessageSquare, FileText, Volume2, Pencil, Trash2, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTz } from '@/components/providers/TimezoneProvider'
-import { CallRecordingPlayer } from '@/components/calls/CallRecordingPlayer'
+import { ActivityRow } from '@/components/activity/ActivityRow'
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   SMS:   <MessageSquare className="w-3.5 h-3.5" />,
@@ -60,6 +60,47 @@ function formatPhone(raw: string | null | undefined): string | null {
 
 interface Props {
   messages: Message[]
+}
+
+/**
+ * Inline note row — keeps the rich-text + edit/delete affordances
+ * that don't belong on the icon-box ActivityRow used for CALL/SMS/
+ * EMAIL. Indented to differentiate visually from comms rows.
+ */
+function NoteRow({
+  msg,
+  onDeleted,
+  timestamp,
+}: {
+  msg: Message
+  onDeleted: (id: string) => void
+  timestamp: string
+}) {
+  return (
+    <div className="px-5 py-3 flex items-start gap-3 group">
+      <div className="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <FileText className="w-4 h-4 text-gray-600" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-xs font-semibold text-gray-700">
+            Note · {msg.sentBy?.name ?? 'System'}
+          </span>
+          <span className="text-xs text-gray-400 whitespace-nowrap flex-shrink-0">{timestamp}</span>
+        </div>
+        <div className="mt-1 text-sm text-gray-800 leading-snug">
+          {msg.body ? (
+            <div dangerouslySetInnerHTML={{ __html: msg.body }} />
+          ) : (
+            <em className="opacity-60">No content</em>
+          )}
+        </div>
+        <div className="mt-1">
+          <NoteActions msg={msg} onDeleted={onDeleted} />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function NoteActions({ msg, onDeleted }: { msg: Message; onDeleted: (id: string) => void }) {
@@ -157,88 +198,53 @@ export function MessageThread({ messages: initialMessages }: Props) {
             <span className="text-[11px] text-gray-400 font-medium">{group.date}</span>
             <div className="flex-1 h-px bg-gray-100" />
           </div>
-          <div className="space-y-2">
+          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden bg-white">
             {group.msgs.map((msg) => {
-              const isOutbound = msg.direction === 'OUTBOUND'
               const isNote = msg.channel === 'NOTE'
+              if (isNote) {
+                // Notes keep the chat-bubble UI because they're
+                // rich-text + need the inline edit/delete actions.
+                return (
+                  <NoteRow
+                    key={msg.id}
+                    msg={msg}
+                    onDeleted={handleDeleted}
+                    timestamp={tz.formatRelative(new Date(msg.createdAt))}
+                  />
+                )
+              }
+              const isOutbound = msg.direction === 'OUTBOUND'
+              // Outcome parser for CALL messages so the colored
+              // "LEAD CONNECTED" line renders separately from notes.
+              let outcomeLabel: string | null = null
+              let outcomeKind: 'connected' | 'not-connected' | null = null
+              if (msg.channel === 'CALL' && msg.body) {
+                const m = msg.body.match(/^(LEAD (?:NOT-)?CONNECTED \([^)]+\))/i)
+                if (m) {
+                  outcomeLabel = m[1]
+                  outcomeKind = outcomeLabel.toUpperCase().includes('NOT-') ? 'not-connected' : 'connected'
+                }
+              }
+              const cost = typeof msg.callCost === 'number'
+                ? (msg.callCost < 0.01 ? `$${msg.callCost.toFixed(4)}` : `$${msg.callCost.toFixed(2)}`)
+                : null
               return (
-                <div key={msg.id} className={`group flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[75%] ${isOutbound ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
-                    <div className={`flex items-center gap-1.5 ${isOutbound ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${CHANNEL_COLORS[msg.channel] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {CHANNEL_ICONS[msg.channel]}
-                        {msg.channel}
-                      </span>
-                      <span className="text-[10px] text-gray-400">{msg.sentBy?.name ?? 'System'}</span>
-                    </div>
-                    {/* From/To phone numbers — surfaces which CRM
-                        number was dialed and which caller hit it. */}
-                    {(msg.from || msg.to) && msg.channel !== 'NOTE' && (
-                      <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-mono text-gray-500 ${isOutbound ? 'justify-end' : 'justify-start'}`}>
-                        {msg.from && (
-                          <span>
-                            <span className="text-gray-400 font-sans uppercase tracking-wide mr-0.5">From</span>
-                            {formatPhone(msg.from)}
-                          </span>
-                        )}
-                        {msg.to && (
-                          <span>
-                            <span className="text-gray-400 font-sans uppercase tracking-wide mr-0.5">To</span>
-                            {formatPhone(msg.to)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {msg.subject && (
-                      <p className="text-[11px] font-semibold text-gray-700">{msg.subject}</p>
-                    )}
-                    <div className={`px-3 py-2 rounded-xl text-sm ${
-                      isOutbound
-                        ? 'bg-blue-600 text-white rounded-tr-sm'
-                        : 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm'
-                    }`}>
-                      {msg.body ? (
-                        isNote
-                          ? <div dangerouslySetInnerHTML={{ __html: msg.body }} />
-                          : msg.body
-                      ) : (
-                        <em className="opacity-60">No content</em>
-                      )}
-                    </div>
-                    {/* CALL message extras — cost + recording player.
-                        Read-time enriched by getConversationMessages
-                        joining ActiveCall on twilioSid; no extra
-                        fetches per-message. */}
-                    {msg.channel === 'CALL' && msg.twilioSid && (
-                      <div className={`flex flex-col gap-1 ${isOutbound ? 'items-end' : 'items-start'}`}>
-                        {/* Cost line — renders only when ActiveCall has a
-                            cost recorded. Sub-cent formats with 4 decimals. */}
-                        {typeof msg.callCost === 'number' && (
-                          <span className="text-[10px] text-gray-500 font-mono">
-                            Cost:{' '}
-                            <span className="text-emerald-700 font-semibold">
-                              {(msg.callCostCurrency ?? 'USD') === 'USD' ? '$' : ''}
-                              {msg.callCost < 0.01 ? msg.callCost.toFixed(4) : msg.callCost.toFixed(2)}
-                              {(msg.callCostCurrency ?? 'USD') !== 'USD' ? ` ${msg.callCostCurrency}` : ''}
-                            </span>
-                          </span>
-                        )}
-                        {/* Recording player — only when ActiveCall has a
-                            stored recording (recordingStorageKey set). */}
-                        {msg.callHasRecording && (
-                          <CallRecordingPlayer callId={msg.twilioSid} />
-                        )}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-gray-400">
-                        {tz.formatRelative(new Date(msg.createdAt))}
-                      </span>
-                      {/* Edit/Delete for notes */}
-                      {isNote && <NoteActions msg={msg} onDeleted={handleDeleted} />}
-                    </div>
-                  </div>
-                </div>
+                <ActivityRow
+                  key={msg.id}
+                  channel={msg.channel}
+                  direction={msg.direction}
+                  primary={isOutbound ? msg.to ?? null : msg.from ?? null}
+                  byName={isOutbound ? (msg.sentBy?.name ?? null) : null}
+                  bySecondary={null}
+                  toSecondary={isOutbound && msg.channel === 'SMS' ? msg.to ?? null : null}
+                  body={msg.channel === 'CALL' ? null : msg.body}
+                  outcomeLabel={outcomeLabel}
+                  outcomeKind={outcomeKind}
+                  costFormatted={cost}
+                  callIdForRecording={msg.twilioSid ?? null}
+                  hasRecording={msg.channel === 'CALL' && !!msg.callHasRecording}
+                  timestamp={tz.formatRelative(new Date(msg.createdAt))}
+                />
               )
             })}
           </div>
