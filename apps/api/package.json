@@ -28,8 +28,13 @@
     "minio": "^8.0.5",
     "nodemailer": "^8.0.5",
     "openai": "^6.34.0",
+    "pg-hstore": "^2.3.4",
+    "reflect-metadata": "^0.2.2",
+    "sequelize": "^6.37.5",
+    "sequelize-typescript": "^2.1.6",
     "socket.io": "^4.8.0",
-    "twilio": "^5.13.1"
+    "twilio": "^5.13.1",
+    "umzug": "^3.8.2"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

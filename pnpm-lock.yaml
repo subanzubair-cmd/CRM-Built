@@ -71,12 +71,27 @@ importers:
       pg:
         specifier: ^8.20.0
         version: 8.20.0
+      pg-hstore:
+        specifier: ^2.3.4
+        version: 2.3.4
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
+      sequelize:
+        specifier: ^6.37.5
+        version: 6.37.8(pg-hstore@2.3.4)(pg@8.20.0)
+      sequelize-typescript:
+        specifier: ^2.1.6
+        version: 2.1.6(@types/node@20.19.39)(@types/validator@13.15.10)(reflect-metadata@0.2.2)(sequelize@6.37.8(pg-hstore@2.3.4)(pg@8.20.0))
       socket.io:
         specifier: ^4.8.0
         version: 4.8.3
       twilio:
         specifier: ^5.13.1
         version: 5.13.1
+      umzug:
+        specifier: ^3.8.2
+        version: 3.8.2(@types/node@20.19.39)
     devDependencies:
       '@types/bcryptjs':
         specifier: ^2.4.6
@@ -168,6 +183,12 @@ importers:
       nextjs-toploader:
         specifier: ^3.9.17
         version: 3.9.17(next@15.5.15(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      pg:
+        specifier: ^8.20.0
+        version: 8.20.0
+      pg-hstore:
+        specifier: ^2.3.4
+        version: 2.3.4
       react:
         specifier: ^19.0.0
         version: 19.2.5
@@ -177,6 +198,15 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.5(react@19.2.5)
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
+      sequelize:
+        specifier: ^6.37.5
+        version: 6.37.8(pg-hstore@2.3.4)(pg@8.20.0)
+      sequelize-typescript:
+        specifier: ^2.1.6
+        version: 2.1.6(@types/node@20.19.39)(@types/validator@13.15.10)(reflect-metadata@0.2.2)(sequelize@6.37.8(pg-hstore@2.3.4)(pg@8.20.0))
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -186,6 +216,9 @@ importers:
       twilio:
         specifier: ^5.13.1
         version: 5.13.1
+      umzug:
+        specifier: ^3.8.2
+        version: 3.8.2(@types/node@20.19.39)
       zod:
         specifier: ^3.24.0
         version: 3.25.76
