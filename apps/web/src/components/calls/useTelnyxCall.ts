@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getTelnyxClient } from '@/lib/webrtc/telnyx-client'
 import { useCallRecorder } from '@/components/calls/useCallRecorder'
+import { useCallAudioPlayback } from '@/components/calls/useCallAudioPlayback'
 
 export type CallState = 'idle' | 'connecting' | 'ringing' | 'active' | 'ended' | 'error'
 
@@ -53,6 +54,15 @@ export function useTelnyxCall(): UseTelnyxCallApi {
 
   // Recorder lifecycle is driven by call state.
   useCallRecorder({ callId, rawCall, active: state === 'active' })
+
+  // Audio playback — attach the remote stream to a hidden <audio>
+  // element so the agent actually hears the customer + ringback.
+  // Active during ringing AND active so the agent hears the ringback
+  // tone Telnyx feeds back during the connecting/ringing phase.
+  useCallAudioPlayback({
+    rawCall,
+    active: state === 'ringing' || state === 'active' || state === 'connecting',
+  })
 
   const client = useMemo(() => getTelnyxClient(), [])
 

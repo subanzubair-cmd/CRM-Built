@@ -22,6 +22,9 @@ const LogMessageSchema = z.object({
   direction: z.enum(['INBOUND', 'OUTBOUND']).default('OUTBOUND'),
   contactId: z.string().optional(),
   contactPhone: z.string().optional(),
+  // Optional ActiveCall.id link for CALL messages — lets the activity
+  // feed render an inline recording player + cost without re-querying.
+  activeCallId: z.string().optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
   const parsed = LogMessageSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const { propertyId, channel, body: messageBody, subject, direction, contactId, contactPhone } = parsed.data
+  const { propertyId, channel, body: messageBody, subject, direction, contactId, contactPhone, activeCallId } = parsed.data
 
   // Resolve contactId if not passed: prefer primary contact, fall back to contact matching phone
   let resolvedContactId: string | null = contactId ?? null
@@ -97,6 +100,13 @@ export async function POST(req: NextRequest) {
         body: messageBody,
         subject: subject ?? null,
         sentById: userId,
+        // Stash the ActiveCall.id in twilioSid for CALL messages so the
+        // activity feed can render an inline recording player and pull
+        // cost without re-querying. Re-using twilioSid avoids a schema
+        // change; for inbound calls the Telnyx webhook also writes to
+        // this field (with the call_control_id), so the column is
+        // semantically "the provider/call reference for this message".
+        ...(channel === 'CALL' && activeCallId ? { twilioSid: activeCallId } : {}),
       },
       { transaction: tx },
     )

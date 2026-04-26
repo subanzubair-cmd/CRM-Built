@@ -349,27 +349,35 @@ export function CallDispositionModal({
         ? `${durationSecs}s`
         : `${Math.floor(durationSecs / 60)}m ${durationSecs % 60}s`
 
-    // Fetch per-call cost from ActiveCall (populated by the Telnyx
-    // call.hangup webhook + CDR fallback). By the time the agent
-    // submits the disposition, the cost is usually present. If the
-    // race loses (cost not yet posted), we save without it — the row
-    // is still in the DB and a future feature could backfill the
-    // activity log entry once cost lands.
+    // Fetch per-call cost from ActiveCall, polling briefly because:
+    //   - Telnyx call.hangup webhook fires within a few hundred ms
+    //   - But cost may NOT be inline; CDR fallback adds another ~8s
+    //   - Agents commonly submit the disposition immediately after End
+    //     so the modal often beats both webhooks
+    // Wait up to 10s with 750ms intervals; bail the moment cost lands
+    // OR timeout silently (we save without it rather than block the
+    // agent forever).
     let costLabel: string | null = null
     if (callId) {
-      try {
-        const res = await fetch(`/api/calls/${callId}/cost`)
-        if (res.ok) {
-          const j = (await res.json()) as { cost: number | null; costCurrency: string | null }
-          if (j.cost != null) {
-            // Sub-cent calls show 4 decimals; otherwise 2.
-            const fixed = j.cost < 0.01 ? j.cost.toFixed(4) : j.cost.toFixed(2)
-            const isUsd = (j.costCurrency ?? 'USD') === 'USD'
-            costLabel = isUsd ? `$${fixed}` : `${fixed} ${j.costCurrency}`
+      const deadline = Date.now() + 10_000
+      while (Date.now() < deadline) {
+        try {
+          const res = await fetch(`/api/calls/${callId}/cost`)
+          if (res.ok) {
+            const j = (await res.json()) as { cost: number | null; costCurrency: string | null }
+            if (j.cost != null) {
+              // Sub-cent calls show 4 decimals; otherwise 2.
+              const fixed = j.cost < 0.01 ? j.cost.toFixed(4) : j.cost.toFixed(2)
+              const isUsd = (j.costCurrency ?? 'USD') === 'USD'
+              costLabel = isUsd ? `$${fixed}` : `${fixed} ${j.costCurrency}`
+              break
+            }
           }
+        } catch {
+          // Network blip — keep polling.
         }
-      } catch {
-        // Silent — proceed without cost.
+        // Short delay between polls so we don't hammer the server.
+        await new Promise((r) => setTimeout(r, 750))
       }
     }
 
@@ -391,6 +399,10 @@ export function CallDispositionModal({
             channel: 'CALL',
             direction: 'OUTBOUND',
             body: bodyParts.join(' \u2014 '),
+            // Link the disposition Message back to the ActiveCall so
+            // the activity feed can render an inline recording player
+            // (CallRecordingPlayer reads /api/calls/[id]/recording).
+            ...(callId ? { activeCallId: callId } : {}),
           }),
         })
       }

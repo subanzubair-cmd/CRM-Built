@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Phone, Mail, MessageSquare, FileText, Volume2, Pencil, Trash2, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTz } from '@/components/providers/TimezoneProvider'
+import { CallRecordingPlayer } from '@/components/calls/CallRecordingPlayer'
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   SMS:   <MessageSquare className="w-3.5 h-3.5" />,
@@ -31,6 +32,9 @@ interface Message {
   subject: string | null
   from?: string | null
   to?: string | null
+  /** ActiveCall.id reference for CALL messages — drives the inline
+   *  recording player when present. */
+  twilioSid?: string | null
   createdAt: Date
   sentBy: { name: string } | null
 }
@@ -194,6 +198,16 @@ export function MessageThread({ messages: initialMessages }: Props) {
                         <em className="opacity-60">No content</em>
                       )}
                     </div>
+                    {/* Inline recording player for CALL messages that
+                        have an ActiveCall.id linked. CallRecordingPlayer
+                        lazy-loads the audio via /api/calls/[id]/recording
+                        and shows nothing if no recording exists for the
+                        call. */}
+                    {msg.channel === 'CALL' && msg.twilioSid && (
+                      <div className={isOutbound ? 'self-end' : 'self-start'}>
+                        <CallRecordingPlayer callId={msg.twilioSid} />
+                      </div>
+                    )}
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-gray-400">
                         {tz.formatRelative(new Date(msg.createdAt))}
