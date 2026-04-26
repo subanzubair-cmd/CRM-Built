@@ -78,6 +78,20 @@ export async function GET() {
     })
     if (!credRes.ok) {
       const txt = await credRes.text().catch(() => '')
+      // Telnyx returns 422 "invalid connection" when the ID we passed
+      // is a Voice API Application ID (not a SIP Connection ID).
+      // /v2/telephony_credentials specifically requires a Credentials-
+      // type SIP Connection. Translate into an actionable message.
+      if (credRes.status === 422 && txt.includes('invalid connection')) {
+        return NextResponse.json(
+          {
+            error:
+              'Browser calling needs a Telnyx SIP Connection (Credentials type), not a Voice API App. Steps: (1) Mission Control → Voice → SIP Connections → Create New, (2) Connection Type = Credentials, Save, (3) copy the Connection ID, (4) paste it into Settings → Voice Connection ID and Save.',
+            providerError: txt.slice(0, 240),
+          },
+          { status: 502 },
+        )
+      }
       return NextResponse.json(
         { error: `Telnyx credential creation failed (${credRes.status}): ${txt.slice(0, 240)}` },
         { status: 502 },

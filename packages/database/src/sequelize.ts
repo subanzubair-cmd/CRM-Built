@@ -27,11 +27,52 @@ const sequelizeOptions: SequelizeOptions = {
   dialect: 'postgres',
   // Quiet by default; flip to console.log when you need to see the SQL.
   logging: process.env.SEQUELIZE_LOG === '1' ? console.log : false,
+  // Force Sequelize to send/receive timestamps as UTC strings. Without
+  // this, Sequelize 6 + sequelize-typescript decorators can land on the
+  // host's local timezone and double-shift (DataType.NOW evaluated as
+  // a JS Date but serialized assuming a wrong source TZ produced rows
+  // ~5h in the future on US/Central hosts).
+  timezone: '+00:00',
   // Don't add Sequelize's automatic createdAt/updatedAt — every model declares
   // its own to match the existing Prisma-managed columns byte-for-byte.
   define: {
     timestamps: false,
     freezeTableName: true,
+    // Universal beforeValidate hook: stamp createdAt/updatedAt with
+    // Node's `new Date()` whenever the model has those columns. This
+    // bypasses the broken @Default(DataType.NOW) evaluator and
+    // guarantees the value is the actual current epoch.
+    hooks: {
+      // Stamp timestamps with Node's `new Date()` on every create.
+      // Sequelize-typescript's @Default(DataType.NOW) was producing
+      // values ~5h in the future on US/Central hosts (likely a TZ
+      // double-conversion in v2.1.6), and Postgres NOW() in a column
+      // default would be more reliable but our migrations don't set
+      // it. This hook overwrites whatever DataType.NOW produced with
+      // a fresh JS Date so all timestamps match wall-clock UTC.
+      beforeCreate(instance: any) {
+        try {
+          const now = new Date()
+          if (instance != null && typeof instance.set === 'function') {
+            const attrs = (instance.constructor as any)?.rawAttributes ?? {}
+            if ('createdAt' in attrs) instance.set('createdAt', now)
+            if ('updatedAt' in attrs) instance.set('updatedAt', now)
+          }
+        } catch {
+          // Silent — never block a write because the timestamp hook misfired.
+        }
+      },
+      beforeUpdate(instance: any) {
+        try {
+          if (instance != null && typeof instance.set === 'function') {
+            const attrs = (instance.constructor as any)?.rawAttributes ?? {}
+            if ('updatedAt' in attrs) instance.set('updatedAt', new Date())
+          }
+        } catch {
+          // Silent.
+        }
+      },
+    },
   },
   pool: {
     max: 10,

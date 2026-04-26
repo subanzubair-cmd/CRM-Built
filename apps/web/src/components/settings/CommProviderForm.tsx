@@ -302,7 +302,14 @@ export function CommProviderForm() {
               value={fields.voiceApplicationId ?? ''}
               onChange={(v) => setField('voiceApplicationId', v)}
               mono
-              hint="ID of your Voice API Application (Telnyx → Voice → Voice API & Apps → Applications). Required for outbound calls — your numbers must be assigned to this application. The CRM also uses this same ID as the SIP Connection ID for minting WebRTC login tokens (a Voice API App in Telnyx is a credential connection, so its ID serves both roles)."
+              hint="ID of your Voice API Application (Telnyx → Voice → Voice API & Apps → Applications). Required for inbound call routing — your numbers must be assigned to this application via connection_id."
+            />
+            <FieldRow
+              label="Voice Connection ID (SIP — for browser calls)"
+              value={fields.voiceConnectionId ?? ''}
+              onChange={(v) => setField('voiceConnectionId', v)}
+              mono
+              hint="Optional. ID of a Telnyx SIP Connection (Credentials type) — required ONLY for browser-based outbound calls (WebRTC softphone). Telnyx → Voice → SIP Connections → Create New → Connection Type = Credentials → copy ID. Leave blank if you don't need browser dialing."
             />
             <FieldRow
               label="Public Key *"

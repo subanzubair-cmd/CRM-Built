@@ -16,6 +16,7 @@ import {
   Conversation,
   EsignDocument,
   LeadCampaign,
+  Contact,
   sequelize,
 } from '@crm/database'
 import { z } from 'zod'
@@ -579,6 +580,19 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const { id } = await params
 
   await sequelize.transaction(async (tx) => {
+    // Snapshot the contacts attached to this lead BEFORE we drop the
+    // join rows — we'll cascade-delete any contact that has no other
+    // property attached. Without this, the contact (e.g., the "Unknown
+    // Caller +14697997747" auto-created from an inbound call) sticks
+    // around and the next inbound call still matches it.
+    const linkedContacts = await PropertyContact.findAll({
+      where: { propertyId: id },
+      attributes: ['contactId'],
+      raw: true,
+      transaction: tx,
+    }) as any[]
+    const contactIds = Array.from(new Set(linkedContacts.map((r) => r.contactId).filter(Boolean)))
+
     await ActivityLog.destroy({ where: { propertyId: id }, transaction: tx })
     await StageHistory.destroy({ where: { propertyId: id }, transaction: tx })
     await Note.destroy({ where: { propertyId: id }, transaction: tx })
@@ -592,6 +606,20 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     await Conversation.destroy({ where: { propertyId: id }, transaction: tx })
     await EsignDocument.destroy({ where: { propertyId: id }, transaction: tx })
     await Property.destroy({ where: { id }, transaction: tx })
+
+    // Cascade-delete now-orphaned contacts. A contact is orphaned if
+    // it has zero remaining PropertyContact rows after the join above
+    // was dropped. Multi-property contacts (a buyer attached to many
+    // listings) survive untouched.
+    for (const contactId of contactIds) {
+      const remaining = await PropertyContact.count({
+        where: { contactId },
+        transaction: tx,
+      })
+      if (remaining === 0) {
+        await Contact.destroy({ where: { id: contactId }, transaction: tx })
+      }
+    }
   })
 
   return NextResponse.json({ success: true })
