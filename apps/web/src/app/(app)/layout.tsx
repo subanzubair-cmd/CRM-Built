@@ -2,7 +2,6 @@ import { auth } from '@/auth'
 import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { GlobalHeader } from '@/components/layout/GlobalHeader'
-import { PageLoadingBar } from '@/components/ui/PageLoadingBar'
 import { InboundCallNotification } from '@/components/calls/InboundCallNotification'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -11,7 +10,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
-      <PageLoadingBar />
       <InboundCallNotification />
       <GlobalHeader />
       <div className="flex flex-1 overflow-hidden">
