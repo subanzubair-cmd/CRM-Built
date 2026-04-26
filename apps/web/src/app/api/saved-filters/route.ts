@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { SavedFilter } from '@crm/database'
 import { z } from 'zod'
 
 const CreateSchema = z.object({
@@ -19,9 +19,10 @@ export async function GET(req: NextRequest) {
   const pipeline = searchParams.get('pipeline')
   if (!pipeline) return NextResponse.json({ error: 'pipeline param required' }, { status: 422 })
 
-  const filters = await prisma.savedFilter.findMany({
+  const filters = await SavedFilter.findAll({
     where: { userId, pipeline },
-    orderBy: { createdAt: 'asc' },
+    order: [['createdAt', 'ASC']],
+    raw: true,
   })
 
   return NextResponse.json({ data: filters })
@@ -39,11 +40,14 @@ export async function POST(req: NextRequest) {
 
   const { name, pipeline, filters } = parsed.data
 
-  const saved = await prisma.savedFilter.upsert({
-    where: { userId_name_pipeline: { userId, name, pipeline } },
-    create: { userId, name, pipeline, filters },
-    update: { filters },
+  // Composite-unique upsert on (userId, name, pipeline)
+  const [saved, created] = await SavedFilter.findOrCreate({
+    where: { userId, name, pipeline },
+    defaults: { userId, name, pipeline, filters },
   })
+  if (!created) {
+    await saved.update({ filters })
+  }
 
   return NextResponse.json({ success: true, data: saved }, { status: 201 })
 }

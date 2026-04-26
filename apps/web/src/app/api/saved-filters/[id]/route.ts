@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { SavedFilter } from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -12,9 +12,9 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const filter = await prisma.savedFilter.findFirst({ where: { id, userId } })
+  const filter = await SavedFilter.findOne({ where: { id, userId } })
   if (!filter) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  await prisma.savedFilter.delete({ where: { id } })
+  await filter.destroy()
   return NextResponse.json({ success: true })
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Task, User } from '@crm/database'
 
 export async function GET(req: NextRequest) {
   const session = await auth()
@@ -15,14 +15,17 @@ export async function GET(req: NextRequest) {
     ? (statusParam as TaskStatus)
     : undefined
 
-  const tasks = await prisma.task.findMany({
-    where: {
-      ...(propertyId ? { propertyId } : {}),
-      ...(status ? { status } : {}),
-    },
-    include: { assignedTo: { select: { id: true, name: true } } },
-    orderBy: { dueAt: 'asc' },
-    take: 100,
+  const where: Record<string, unknown> = {}
+  if (propertyId) where.propertyId = propertyId
+  if (status) where.status = status
+
+  const tasks = await Task.findAll({
+    where,
+    include: [{ model: User, as: 'assignedTo', attributes: ['id', 'name'] }],
+    order: [['dueAt', 'ASC']],
+    limit: 100,
+    raw: true,
+    nest: true,
   })
 
   return NextResponse.json({ data: tasks })

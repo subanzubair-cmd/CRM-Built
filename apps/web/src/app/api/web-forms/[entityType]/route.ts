@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { WebFormConfig } from '@crm/database'
 import { z } from 'zod'
 
 const VALID_ENTITY_TYPES = ['leads', 'buyers', 'vendors']
@@ -45,8 +45,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Invalid entity type' }, { status: 400 })
   }
 
-  const config = await prisma.webFormConfig.findUnique({
+  const config = await WebFormConfig.findOne({
     where: { entityType },
+    raw: true,
   })
 
   // Generate embed code
@@ -94,11 +95,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000'
   const embedCode = `<iframe src="${baseUrl}/forms/${entityType}" width="100%" height="600" frameborder="0" style="border: none;"></iframe>`
 
-  const config = await prisma.webFormConfig.upsert({
+  const fieldsJson = JSON.parse(JSON.stringify(parsed.data.fields))
+  const [config, created] = await WebFormConfig.findOrCreate({
     where: { entityType },
-    create: { entityType, fields: JSON.parse(JSON.stringify(parsed.data.fields)), embedCode },
-    update: { fields: JSON.parse(JSON.stringify(parsed.data.fields)), embedCode },
+    defaults: { entityType, fields: fieldsJson, embedCode },
   })
+  if (!created) {
+    await config.update({ fields: fieldsJson, embedCode })
+  }
 
   return NextResponse.json({ success: true, data: config })
 }

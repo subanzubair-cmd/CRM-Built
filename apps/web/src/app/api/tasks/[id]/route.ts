@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Task } from '@crm/database'
 import { z } from 'zod'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 import { scheduleNextRepeat } from '@/lib/task-repeat'
@@ -20,12 +20,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateTaskSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const task = await prisma.task.update({
-    where: { id },
-    data: {
-      status: parsed.data.status,
-      completedAt: parsed.data.status === 'COMPLETED' ? new Date() : undefined,
-    },
+  const task = await Task.findByPk(id)
+  if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await task.update({
+    status: parsed.data.status,
+    completedAt: parsed.data.status === 'COMPLETED' ? new Date() : null,
   })
 
   if (parsed.data.status === 'COMPLETED') {

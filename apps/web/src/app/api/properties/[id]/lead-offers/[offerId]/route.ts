@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { LeadOffer } from '@crm/database'
 import { z } from 'zod'
 
 type Params = { params: Promise<{ id: string; offerId: string }> }
@@ -26,8 +26,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     data.offerDate = /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + 'T12:00:00') : new Date(d)
   }
 
-  const offer = await prisma.leadOffer.update({ where: { id: offerId }, data })
-  return NextResponse.json({ success: true, data: { ...offer, offerPrice: Number(offer.offerPrice) } })
+  const offer = await LeadOffer.findByPk(offerId)
+  if (!offer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await offer.update(data)
+  return NextResponse.json({
+    success: true,
+    data: { ...offer.toJSON(), offerPrice: Number(offer.offerPrice) },
+  })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -35,6 +40,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { offerId } = await params
-  await prisma.leadOffer.delete({ where: { id: offerId } })
+  await LeadOffer.destroy({ where: { id: offerId } })
   return NextResponse.json({ success: true })
 }

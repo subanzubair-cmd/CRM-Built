@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { WebFormConfig } from '@crm/database'
 import { z } from 'zod'
-
-const VALID_ENTITY_TYPES = ['leads', 'buyers', 'vendors']
 
 const UpsertSchema = z.object({
   entityType: z.enum(['leads', 'buyers', 'vendors'] as const),
@@ -19,8 +17,9 @@ export async function GET() {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const configs = await prisma.webFormConfig.findMany({
-    orderBy: { entityType: 'asc' },
+  const configs = await WebFormConfig.findAll({
+    order: [['entityType', 'ASC']],
+    raw: true,
   })
 
   return NextResponse.json({ data: configs })
@@ -40,11 +39,14 @@ export async function POST(req: NextRequest) {
   const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000'
   const embedCode = `<iframe src="${baseUrl}/forms/${entityType}" width="100%" height="600" frameborder="0" style="border: none;"></iframe>`
 
-  const config = await prisma.webFormConfig.upsert({
+  const fieldsJson = JSON.parse(JSON.stringify(fields))
+  const [config, created] = await WebFormConfig.findOrCreate({
     where: { entityType },
-    create: { entityType, fields: JSON.parse(JSON.stringify(fields)), embedCode },
-    update: { fields: JSON.parse(JSON.stringify(fields)), embedCode },
+    defaults: { entityType, fields: fieldsJson, embedCode },
   })
+  if (!created) {
+    await config.update({ fields: fieldsJson, embedCode })
+  }
 
   return NextResponse.json({ success: true, data: config })
 }

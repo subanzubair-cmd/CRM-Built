@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property } from '@crm/database'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -20,9 +20,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const property = await prisma.property.findUnique({
-    where: { id },
-    select: { id: true, streetAddress: true, city: true, state: true, zip: true },
+  const property = await Property.findByPk(id, {
+    attributes: ['id', 'streetAddress', 'city', 'state', 'zip'],
   })
   if (!property) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
