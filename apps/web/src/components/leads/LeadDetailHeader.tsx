@@ -14,6 +14,7 @@ import { SoldDetailsModal } from './SoldDetailsModal'
 import { MergeLeadModal } from './MergeLeadModal'
 import { MoveToBuyerModal } from './MoveToBuyerModal'
 import { MoveToVendorModal } from './MoveToVendorModal'
+import { DeadLeadReasonModal } from './DeadLeadReasonModal'
 
 /* ── Pipeline stages + move-out statuses ── */
 const DTS_PIPELINE_STAGES = [
@@ -143,6 +144,14 @@ export function LeadDetailHeader({
   const [showUCModal, setShowUCModal] = useState(false)
   const [showOfferModal, setShowOfferModal] = useState(false)
   const [showSoldModal, setShowSoldModal] = useState(false)
+  // The dead-lead modal collects the structured reasons + verbatim "Other"
+  // text before we PATCH leadStatus → DEAD. Two entry points need it:
+  //   1) MOVE_OUT_STATUSES dropdown picking "Dead Lead" (handled below)
+  //   2) Promote button picking "PROMOTE_DEAD" (handled below)
+  // showDeadModal carries the surface so we know whether to call PATCH
+  // /api/leads/[id] (lead pipeline) or /api/properties/[id]/promote
+  // (TM/inventory/dispo surfaces).
+  const [showDeadModal, setShowDeadModal] = useState<null | 'lead' | 'promote'>(null)
   const [pendingValue, setPendingValue] = useState<string | null>(null)
   const [showActions, setShowActions] = useState(false)
   const [showTagInput, setShowTagInput] = useState(false)
@@ -192,6 +201,12 @@ export function LeadDetailHeader({
         setShowSoldModal(true)
         return
       }
+      // Intercept DEAD to collect reasons via the modal first. The actual
+      // promote POST runs after the modal confirms (see modal's onConfirm).
+      if (toStatus === 'DEAD') {
+        setShowDeadModal('promote')
+        return
+      }
       setSaving(true)
       try {
         await fetch(`/api/properties/${id}/promote`, {
@@ -199,8 +214,7 @@ export function LeadDetailHeader({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ toStatus }),
         })
-        if (toStatus === 'DEAD') router.push(`/leads/dead?type=${pipeline}`)
-        else if (toStatus === 'IN_INVENTORY') router.push(`/inventory/${id}`)
+        if (toStatus === 'IN_INVENTORY') router.push(`/inventory/${id}`)
         else if (toStatus === 'IN_DISPO') router.push(`/dispo`)
         else if (toStatus === 'RENTAL') router.push(`/rental/${id}`)
         else startTransition(() => router.refresh())
@@ -230,9 +244,14 @@ export function LeadDetailHeader({
       setPendingValue(value)
       setShowUCModal(true)
     } else if (isStatus) {
+      // DEAD requires capturing reasons up front. Defer the PATCH until
+      // the modal confirms — see DeadLeadReasonModal block in the JSX.
+      if (value === 'DEAD') {
+        setShowDeadModal('lead')
+        return
+      }
       await patch({ leadStatus: value })
-      if (value === 'DEAD') router.push(`/leads/dead?type=${pipeline}`)
-      else if (value === 'WARM') router.push(`/leads/warm?type=${pipeline}`)
+      if (value === 'WARM') router.push(`/leads/warm?type=${pipeline}`)
       else if (value === 'REFERRED_TO_AGENT') router.push(`/leads/referred?type=${pipeline}`)
     } else {
       // If lead is currently DEAD/WARM/REFERRED, reactivate it when moving to a pipeline stage
@@ -307,6 +326,53 @@ export function LeadDetailHeader({
           propertyId={id}
           onClose={() => { setShowOfferModal(false); setPendingValue(null) }}
           onSaved={() => { setShowOfferModal(false); setPendingValue(null); startTransition(() => router.refresh()) }}
+        />
+      )}
+
+      {showDeadModal && (
+        <DeadLeadReasonModal
+          onCancel={() => setShowDeadModal(null)}
+          onConfirm={async ({ deadReasons, deadOtherReason }) => {
+            const surface = showDeadModal
+            setShowDeadModal(null)
+            setSaving(true)
+            try {
+              if (surface === 'promote') {
+                // TM/Inventory/Dispo → Dead. The promote endpoint flips
+                // propertyStatus to DEAD. We then PATCH /api/leads/[id]
+                // to persist the captured reasons + run the lead-status
+                // path (sets deadAt, audit-logs the rich detail).
+                await fetch(`/api/properties/${id}/promote`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ toStatus: 'DEAD' }),
+                })
+                await fetch(`/api/leads/${id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    leadStatus: 'DEAD',
+                    deadReasons,
+                    deadOtherReason,
+                  }),
+                })
+              } else {
+                // Lead pipeline → Dead. Single PATCH does it all.
+                await fetch(`/api/leads/${id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    leadStatus: 'DEAD',
+                    deadReasons,
+                    deadOtherReason,
+                  }),
+                })
+              }
+              router.push(`/leads/dead?type=${pipeline}`)
+            } finally {
+              setSaving(false)
+            }
+          }}
         />
       )}
 

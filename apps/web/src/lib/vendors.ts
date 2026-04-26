@@ -79,7 +79,39 @@ export async function getVendorList(filter: VendorListFilter) {
   return { rows, total, page, pageSize }
 }
 
-export async function getVendorById(id: string) {
+export interface VendorWithContact {
+  id: string
+  contactId: string
+  category: string
+  isActive: boolean
+  markets: string[]
+  notes: string | null
+  createdAt: Date
+  updatedAt: Date
+  contact: {
+    id: string
+    firstName: string
+    lastName: string | null
+    email: string | null
+    phone: string | null
+    phone2: string | null
+    address: string | null
+    city: string | null
+    state: string | null
+    zip: string | null
+    type: string
+    notes: string | null
+    tags: string[]
+    doNotCall: boolean
+    doNotText: boolean
+    doNotEmail: boolean
+    preferredChannel: string | null
+    createdAt: Date
+    updatedAt: Date
+  }
+}
+
+export async function getVendorById(id: string): Promise<VendorWithContact | null> {
   const vendor = await Vendor.findByPk(id, {
     include: [{ model: Contact, as: 'contact' }],
   })
@@ -88,7 +120,5 @@ export async function getVendorById(id: string) {
   // pass it down without serialization issues. The contact-non-null
   // refinement is preserved via the cast — Vendor.contactId is NOT NULL
   // and the FK is enforced, so eager-load always produces a row.
-  type ContactPlain = ReturnType<Contact['get']>
-  type VendorPlain = ReturnType<Vendor['get']> & { contact: ContactPlain }
-  return vendor.get({ plain: true }) as VendorPlain
+  return vendor.get({ plain: true }) as unknown as VendorWithContact
 }

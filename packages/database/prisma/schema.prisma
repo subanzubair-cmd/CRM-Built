@@ -474,6 +474,10 @@ model Property {
   garageArea         Int?
   apn                String?
   defaultOutboundNumber String?
+  // Dead-lead capture: reasons checked in the dead-status modal + verbatim
+  // free-text from the "Other" field. Populated on leadStatus → DEAD.
+  deadReasons        String[]  @default([])
+  deadOtherReason    String?
 
   contacts            PropertyContact[]
   conversations       Conversation[]

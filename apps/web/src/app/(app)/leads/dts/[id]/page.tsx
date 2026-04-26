@@ -21,6 +21,7 @@ import { AnalyticsTimeline } from '@/components/leads/AnalyticsTimeline'
 import { TeamCard } from '@/components/leads/TeamCard'
 import { DealCalculator } from '@/components/leads/DealCalculator'
 import { DuplicateWarningLoader } from '@/components/leads/DuplicateWarningLoader'
+import { DeadReasonsCard } from '@/components/leads/DeadReasonsCard'
 import { prisma } from '@/lib/prisma'
 import { User } from '@crm/database'
 
@@ -154,6 +155,13 @@ export default async function LeadDtsDetailPage({ params }: PageProps) {
           campaignTypeFilter="DTS"
         />
         <PromoteButton propertyId={lead.id} options={promoteOptions} />
+        {lead.leadStatus === 'DEAD' ? (
+          <DeadReasonsCard
+            deadReasons={(lead as any).deadReasons ?? []}
+            deadOtherReason={(lead as any).deadOtherReason ?? null}
+            deadAt={(lead as any).deadAt ?? null}
+          />
+        ) : null}
         <TagsCard propertyId={lead.id} initialTags={lead.tags} />
         <AssociatedLeadsCard propertyId={lead.id} />
         <AssociatedPropertiesCard propertyId={lead.id} />

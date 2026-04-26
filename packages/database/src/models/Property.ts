@@ -209,6 +209,17 @@ export class Property extends Model<
   @Column(DataType.INTEGER) declare garageArea: number | null
   @Column(DataType.TEXT) declare apn: string | null
   @Column(DataType.TEXT) declare defaultOutboundNumber: string | null
+
+  // Dead-lead capture columns. Populated by the dead-reason modal when
+  // leadStatus transitions to DEAD; cleared (back to []/null) on
+  // reactivation. The free-text in `deadOtherReason` is stored verbatim.
+  @AllowNull(false)
+  @Default([])
+  @Column(DataType.ARRAY(DataType.TEXT))
+  declare deadReasons: string[]
+
+  @Column(DataType.TEXT)
+  declare deadOtherReason: string | null
 }
 
 export interface PropertyAttributes {
@@ -291,4 +302,6 @@ export interface PropertyAttributes {
   garageArea: number | null
   apn: string | null
   defaultOutboundNumber: string | null
+  deadReasons: string[]
+  deadOtherReason: string | null
 }

@@ -20,6 +20,10 @@ import {
   up as indexUp,
   down as indexDown,
 } from './20260409101049-normalized-address-partial-index'
+import {
+  up as deadReasonsUp,
+  down as deadReasonsDown,
+} from './20260425200000-add-dead-reasons'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -38,6 +42,13 @@ const migrations = [
       indexUp({ name: '20260409101049-normalized-address-partial-index', context }),
     down: ({ context }: { context: any }) =>
       indexDown({ name: '20260409101049-normalized-address-partial-index', context }),
+  },
+  {
+    name: '20260425200000-add-dead-reasons',
+    up: ({ context }: { context: any }) =>
+      deadReasonsUp({ name: '20260425200000-add-dead-reasons', context }),
+    down: ({ context }: { context: any }) =>
+      deadReasonsDown({ name: '20260425200000-add-dead-reasons', context }),
   },
 ]
 

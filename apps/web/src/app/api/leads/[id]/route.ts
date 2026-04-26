@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
 import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  ActivityLog,
+  StageHistory,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 import { reEvaluateTeam } from '@/lib/team-assignment'
@@ -55,6 +61,12 @@ const UpdateLeadSchema = z.object({
   deadAt: z.null().optional(),
   warmAt: z.null().optional(),
   referredAt: z.null().optional(),
+  // Captured by DeadLeadReasonModal when leadStatus → DEAD. Reasons are
+  // preset codes (the modal's checkbox keys); deadOtherReason is the
+  // verbatim free-text from the "Other Reasons" textarea. Both pass
+  // through to ActivityLog.detail and to the lead detail page section.
+  deadReasons: z.array(z.string()).optional(),
+  deadOtherReason: z.string().nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -201,7 +213,22 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (data.leadStatus === 'DEAD') {
     updates.propertyStatus = 'DEAD'
     updates.deadAt = new Date()
+    // Persist the captured reasons. Empty array + null `other` is fine
+    // (e.g. bulk dead-mark or merge-driven dead transitions don't supply
+    // them) — the dead-lead modal forces at least one selection in the UI.
+    if (data.deadReasons !== undefined) {
+      updates.deadReasons = data.deadReasons
+    }
+    if (data.deadOtherReason !== undefined) {
+      updates.deadOtherReason = data.deadOtherReason
+    }
     // Don't clear activeLeadStage — lead keeps its pipeline position for reactivation
+  }
+  // Reactivation path (DEAD → ACTIVE/anything-else): wipe the dead-reason
+  // capture so a future re-deactivation starts fresh.
+  if (existing.leadStatus === 'DEAD' && data.leadStatus && data.leadStatus !== 'DEAD') {
+    updates.deadReasons = []
+    updates.deadOtherReason = null
   }
   // When moving to WARM, set timestamp
   if (data.leadStatus === 'WARM') {
@@ -212,13 +239,39 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     updates.referredAt = new Date()
   }
 
-  const activityEntries: Array<{ action: string; detail: string }> = []
+  // Each entry's `detail` may be a plain string (legacy) OR a structured
+  // object (newer richer payloads — e.g. dead-status transitions carry
+  // `deadReasons` + `deadOtherReason` so the audit trail shows exactly
+  // why the lead was killed without re-querying the property row).
+  const activityEntries: Array<{
+    action: string
+    detail: string | Record<string, unknown>
+  }> = []
 
   if (data.activeLeadStage && data.activeLeadStage !== existing.activeLeadStage) {
     activityEntries.push({ action: 'STAGE_CHANGE', detail: `Stage changed from ${existing.activeLeadStage ?? 'none'} to ${data.activeLeadStage}` })
   }
   if (data.leadStatus && data.leadStatus !== existing.leadStatus) {
-    activityEntries.push({ action: 'STATUS_CHANGE', detail: `Status changed to ${data.leadStatus}` })
+    if (data.leadStatus === 'DEAD') {
+      // Rich payload for the audit trail. `deadReasons` is the set of
+      // checkbox codes from DeadLeadReasonModal; `deadOtherReason` is
+      // the verbatim text from the "Other Reasons" textarea.
+      activityEntries.push({
+        action: 'STATUS_CHANGE',
+        detail: {
+          description: 'Lead moved to DEAD',
+          fromStatus: existing.leadStatus,
+          toStatus: 'DEAD',
+          deadReasons: data.deadReasons ?? [],
+          deadOtherReason: data.deadOtherReason ?? null,
+        },
+      })
+    } else {
+      activityEntries.push({
+        action: 'STATUS_CHANGE',
+        detail: `Status changed to ${data.leadStatus}`,
+      })
+    }
   }
   if (data.propertyStatus && data.propertyStatus !== existing.propertyStatus) {
     activityEntries.push({ action: 'PIPELINE_CHANGE', detail: `Moved to ${data.propertyStatus} pipeline` })
@@ -350,28 +403,60 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     ? [...stageHistoryEntries, exitRouting.stageHistoryEntry]
     : stageHistoryEntries
 
-  const property = await prisma.property.update({
-    where: { id },
-    data: {
-      ...updates,
-      ...exitRouting.pipelineData,
-      ...(activityEntries.length > 0 && {
-        activityLogs: {
-          createMany: {
-            data: activityEntries.map((e) => ({
-              userId,
-              action: e.action,
-              detail: { description: e.detail },
-            })),
-          },
-        },
-      }),
-      ...(finalStageHistoryEntries.length > 0 && {
-        stageHistory: {
-          createMany: { data: finalStageHistoryEntries },
-        },
-      }),
-    },
+  // Port to Sequelize. The previous implementation used Prisma's nested-
+  // write idiom (`activityLogs: { createMany: ... }, stageHistory: { ... }`)
+  // which Sequelize doesn't have a direct equivalent for. We wrap the three
+  // writes in a `sequelize.transaction` so the property update + the
+  // activity-log entries + the stage-history entries either all commit or
+  // all roll back — matching the original atomicity.
+  //
+  // For dead-lead transitions specifically, this means the new
+  // `deadReasons` / `deadOtherReason` columns and the corresponding
+  // ActivityLog row land in the same transaction, so a partial state
+  // can't leak into the audit trail.
+  const property = await sequelize.transaction(async (tx) => {
+    const [count] = await Property.update(
+      { ...updates, ...exitRouting.pipelineData } as any,
+      { where: { id }, transaction: tx },
+    )
+    if (count === 0) {
+      throw new Error('Property not found')
+    }
+
+    if (activityEntries.length > 0) {
+      // The dead-status transition pushes a tailored entry that includes
+      // the captured reasons in its `detail` payload (see "data.leadStatus
+      // === 'DEAD'" branch above) so the audit trail records exactly why
+      // the lead was killed.
+      await ActivityLog.bulkCreate(
+        activityEntries.map((e) => ({
+          propertyId: id,
+          userId,
+          action: e.action,
+          detail: typeof e.detail === 'string'
+            ? { description: e.detail }
+            : (e.detail as Record<string, unknown>),
+        })),
+        { transaction: tx },
+      )
+    }
+
+    if (finalStageHistoryEntries.length > 0) {
+      await StageHistory.bulkCreate(
+        finalStageHistoryEntries.map((e) => ({
+          propertyId: id,
+          pipeline: e.pipeline,
+          fromStage: e.fromStage ?? null,
+          toStage: e.toStage,
+          changedById: e.changedById,
+          changedByName: e.changedByName,
+        })),
+        { transaction: tx },
+      )
+    }
+
+    const fresh = await Property.findByPk(id, { transaction: tx })
+    return fresh?.get({ plain: true })
   })
 
   // Return response immediately — fire-and-forget all non-critical work
