@@ -28,10 +28,11 @@ export { PrismaClient, Prisma } from '../node_modules/.prisma/client'
 //   Phase 3: User, Role
 //   Phase 4: Campaign, CampaignStep, CampaignEnrollment, Automation,
 //            AutomationAction
+//   Phase 5: Contact, Buyer, BuyerCriteria, Vendor
 export type {
-  Property, Contact, PropertyContact,
+  Property, PropertyContact,
   StageHistory, Conversation, Message, Note, Task, Appointment,
-  Buyer, BuyerCriteria, BuyerMatch, BuyerOffer, Vendor,
+  BuyerMatch, BuyerOffer,
   PropertyFile, EsignDocument, Notification, ActivityLog,
   SavedFilter, AiLog, WebhookEvent,
 } from '../node_modules/.prisma/client'

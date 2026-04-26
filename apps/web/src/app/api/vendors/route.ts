@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Contact, Vendor, sequelize, Op } from '@crm/database'
 import { z } from 'zod'
 
 const CreateVendorSchema = z.object({
@@ -23,43 +23,63 @@ export async function POST(req: NextRequest) {
 
   const { firstName, lastName, email, phone, category, markets, notes } = parsed.data
 
-  // Check for duplicate vendor by phone or email
+  // Duplicate check on phone OR email among VENDOR-typed contacts.
   if (phone || email) {
-    const duplicateContact = await prisma.contact.findFirst({
+    const duplicateContact = await Contact.findOne({
       where: {
         type: 'VENDOR',
-        OR: [
+        [Op.or]: [
           ...(phone ? [{ phone }] : []),
           ...(email ? [{ email }] : []),
         ],
       },
     })
     if (duplicateContact) {
-      const vendorProfile = await prisma.vendor.findFirst({ where: { contactId: duplicateContact.id }, select: { id: true } })
-      return NextResponse.json({
-        error: `A vendor with this ${duplicateContact.phone === phone ? 'phone number' : 'email'} already exists: ${duplicateContact.firstName} ${duplicateContact.lastName ?? ''}`.trim(),
-        existingVendorId: vendorProfile?.id,
-      }, { status: 409 })
+      const vendorProfile = await Vendor.findOne({
+        where: { contactId: duplicateContact.id },
+        attributes: ['id'],
+      })
+      return NextResponse.json(
+        {
+          error: `A vendor with this ${
+            duplicateContact.phone === phone ? 'phone number' : 'email'
+          } already exists: ${duplicateContact.firstName} ${duplicateContact.lastName ?? ''}`.trim(),
+          existingVendorId: vendorProfile?.id,
+        },
+        { status: 409 },
+      )
     }
   }
 
-  const vendor = await prisma.vendor.create({
-    data: {
-      category,
-      markets,
-      notes,
-      contact: {
-        create: {
-          type: 'VENDOR',
-          firstName,
-          lastName,
-          email,
-          phone,
-        },
+  // Two-step create wrapped in a transaction (Prisma's nested-create idiom
+  // doesn't translate directly to Sequelize). Contact first, then Vendor
+  // referencing its id.
+  const vendor = await sequelize.transaction(async (t) => {
+    const contact = await Contact.create(
+      {
+        type: 'VENDOR',
+        firstName,
+        lastName: lastName ?? null,
+        email: email ?? null,
+        phone: phone ?? null,
       },
-    },
-    include: { contact: true },
+      { transaction: t },
+    )
+    return Vendor.create(
+      {
+        contactId: contact.id,
+        category,
+        markets,
+        notes: notes ?? null,
+      },
+      { transaction: t },
+    )
   })
 
-  return NextResponse.json({ success: true, data: vendor }, { status: 201 })
+  // Re-read with eager-loaded contact so the response matches the previous
+  // Prisma `include: { contact: true }` shape.
+  const fresh = await Vendor.findByPk(vendor.id, {
+    include: [{ model: Contact, as: 'contact' }],
+  })
+  return NextResponse.json({ success: true, data: fresh }, { status: 201 })
 }

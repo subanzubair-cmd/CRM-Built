@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { Contact, Op } from '@crm/database'
 
 export interface AddContactInput {
   firstName: string
@@ -30,6 +31,7 @@ export async function addContactToProperty(
 ) {
   const { firstName, lastName, phone, email, contactType = 'SELLER', role, isPrimary = false, preferredChannel } = data
 
+  // PropertyContact still on Prisma until Phase 6.
   if (isPrimary) {
     await prisma.propertyContact.updateMany({
       where: { propertyId, isPrimary: true },
@@ -37,15 +39,13 @@ export async function addContactToProperty(
     })
   }
 
-  const contact = await prisma.contact.create({
-    data: {
-      firstName,
-      ...(lastName != null && { lastName }),
-      ...(phone != null && { phone }),
-      ...(email != null && { email }),
-      type: contactType as any,
-      ...(preferredChannel != null && { preferredChannel }),
-    },
+  const contact = await Contact.create({
+    firstName,
+    ...(lastName != null && { lastName }),
+    ...(phone != null && { phone }),
+    ...(email != null && { email }),
+    type: contactType,
+    ...(preferredChannel != null && { preferredChannel }),
   })
 
   const propertyContact = await prisma.propertyContact.create({
@@ -88,7 +88,7 @@ export async function updatePropertyContact(
 
   await Promise.all([
     Object.keys(contactUpdates).length > 0
-      ? prisma.contact.update({ where: { id: contactId }, data: contactUpdates })
+      ? Contact.update(contactUpdates as any, { where: { id: contactId } })
       : Promise.resolve(),
     Object.keys(pcUpdates).length > 0
       ? prisma.propertyContact.updateMany({ where: { propertyId, contactId }, data: pcUpdates })

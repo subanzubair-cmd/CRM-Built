@@ -38,6 +38,12 @@ import { StatusAutomation } from './StatusAutomation'
 import { Template } from './Template'
 import { DirectMailCampaign } from './DirectMailCampaign'
 
+// ── Phase 5: Contacts & buyer/vendor ────────────────────────────────────────
+import { Contact } from './Contact'
+import { Buyer } from './Buyer'
+import { BuyerCriteria } from './BuyerCriteria'
+import { Vendor } from './Vendor'
+
 sequelize.addModels([
   // Phase 2 leaves (parents first)
   LeadSource,
@@ -70,6 +76,12 @@ sequelize.addModels([
   StatusAutomation,
   Template,
   DirectMailCampaign,
+
+  // Phase 5 contacts (Contact before Buyer/Vendor; BuyerCriteria after Buyer)
+  Contact,
+  Buyer,
+  BuyerCriteria,
+  Vendor,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -107,4 +119,9 @@ export {
   StatusAutomation,
   Template,
   DirectMailCampaign,
+  // Phase 5
+  Contact,
+  Buyer,
+  BuyerCriteria,
+  Vendor,
 }

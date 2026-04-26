@@ -23,6 +23,10 @@ import { AutomationAction } from './AutomationAction'
 import { LeadSource } from './LeadSource'
 import { TwilioNumber } from './TwilioNumber'
 import { Market } from './Market'
+import { Contact } from './Contact'
+import { Buyer } from './Buyer'
+import { BuyerCriteria } from './BuyerCriteria'
+import { Vendor } from './Vendor'
 
 export function wireAssociations(): void {
   // ── Phase 2: Independent leaves ───────────────────────────────────────────
@@ -136,4 +140,15 @@ export function wireAssociations(): void {
     foreignKey: 'automationId',
     as: 'automation',
   })
+
+  // ── Phase 5: Contacts & buyer/vendor ──────────────────────────────────────
+  // Contact 1:1 Buyer / Vendor (contactId is unique on each).
+  Contact.hasOne(Buyer, { foreignKey: 'contactId', as: 'buyerProfile' })
+  Buyer.belongsTo(Contact, { foreignKey: 'contactId', as: 'contact' })
+  Contact.hasOne(Vendor, { foreignKey: 'contactId', as: 'vendorProfile' })
+  Vendor.belongsTo(Contact, { foreignKey: 'contactId', as: 'contact' })
+
+  // Buyer 1:N BuyerCriteria.
+  Buyer.hasMany(BuyerCriteria, { foreignKey: 'buyerId', as: 'criteria' })
+  BuyerCriteria.belongsTo(Buyer, { foreignKey: 'buyerId', as: 'buyer' })
 }

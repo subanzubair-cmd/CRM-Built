@@ -1,4 +1,4 @@
-import { prisma } from './prisma'
+import { Contact, Op } from '@crm/database'
 
 export type SendChannel = 'sms' | 'call' | 'email'
 
@@ -7,9 +7,8 @@ export async function checkDndByContactId(
   channel: SendChannel,
 ): Promise<string | null> {
   if (!contactId) return null
-  const contact = await prisma.contact.findUnique({
-    where: { id: contactId },
-    select: { doNotCall: true, doNotText: true, doNotEmail: true },
+  const contact = await Contact.findByPk(contactId, {
+    attributes: ['doNotCall', 'doNotText', 'doNotEmail'],
   })
   if (!contact) return null
   return evaluateDnd(contact, channel)
@@ -20,9 +19,9 @@ export async function checkDndByPhone(
   channel: SendChannel,
 ): Promise<string | null> {
   if (!phone) return null
-  const contacts = await prisma.contact.findMany({
-    where: { OR: [{ phone }, { phone2: phone }] },
-    select: { doNotCall: true, doNotText: true, doNotEmail: true },
+  const contacts = await Contact.findAll({
+    where: { [Op.or]: [{ phone }, { phone2: phone }] },
+    attributes: ['doNotCall', 'doNotText', 'doNotEmail'],
   })
   for (const c of contacts) {
     const block = evaluateDnd(c, channel)
@@ -35,9 +34,9 @@ export async function checkDndByEmail(
   email: string | null | undefined,
 ): Promise<string | null> {
   if (!email) return null
-  const contacts = await prisma.contact.findMany({
+  const contacts = await Contact.findAll({
     where: { email },
-    select: { doNotCall: true, doNotText: true, doNotEmail: true },
+    attributes: ['doNotCall', 'doNotText', 'doNotEmail'],
   })
   for (const c of contacts) {
     const block = evaluateDnd(c, 'email')
