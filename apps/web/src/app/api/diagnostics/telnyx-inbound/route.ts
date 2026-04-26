@@ -91,8 +91,25 @@ export async function GET(req: NextRequest) {
       ? actualWebhook.replace(/\/$/, '') === expectedWebhook.replace(/\/$/, '')
       : null
 
-  // 3) List the user's phone numbers and check connection_id matches.
-  let numbersChecked: Array<{ number: string; assigned: boolean; connectionId: string | null }> = []
+  // 3) List the user's phone numbers and check connection_id.
+  //
+  // A Telnyx phone number's `connection_id` can point to ONE thing:
+  // either a Voice API Application (inbound webhooks fire to our
+  // configured URL) or a SIP Connection of Credentials type (browser
+  // WebRTC outbound + inbound rings the registered SIP user). The two
+  // are mutually exclusive — you pick a routing path per number.
+  //
+  // Our config holds both IDs so we can support both paths. The check
+  // accepts either as a valid assignment and reports which path the
+  // number is on so the operator knows what's enabled for that number.
+  const sipConnectionId = config.voiceConnectionId ?? null
+  let numbersChecked: Array<{
+    number: string
+    assigned: boolean
+    connectionId: string | null
+    /** Which side the number is routing through. */
+    routedVia: 'voice-app' | 'sip-connection' | 'other' | 'none'
+  }> = []
   let numbersFetchError: string | null = null
   try {
     const numRes = await fetch(
@@ -102,13 +119,19 @@ export async function GET(req: NextRequest) {
     if (numRes.ok) {
       const numJson = (await numRes.json().catch(() => ({}))) as any
       const numbers = (numJson?.data ?? []) as Array<any>
-      numbersChecked = numbers.map((n) => ({
-        number: n.phone_number,
-        // Telnyx phone numbers expose `connection_id` (the SIP
-        // connection or Voice API App that handles inbound calls).
-        connectionId: n.connection_id ?? null,
-        assigned: n.connection_id === appId,
-      }))
+      numbersChecked = numbers.map((n) => {
+        const cid = n.connection_id ?? null
+        let routedVia: 'voice-app' | 'sip-connection' | 'other' | 'none' = 'none'
+        if (cid === appId) routedVia = 'voice-app'
+        else if (sipConnectionId && cid === sipConnectionId) routedVia = 'sip-connection'
+        else if (cid) routedVia = 'other'
+        return {
+          number: n.phone_number,
+          connectionId: cid,
+          assigned: routedVia === 'voice-app' || routedVia === 'sip-connection',
+          routedVia,
+        }
+      })
     } else {
       numbersFetchError = `Telnyx returned ${numRes.status} listing phone numbers.`
     }
@@ -117,6 +140,7 @@ export async function GET(req: NextRequest) {
   }
 
   const assignedCount = numbersChecked.filter((n) => n.assigned).length
+  const sipAssignedCount = numbersChecked.filter((n) => n.routedVia === 'sip-connection').length
   const totalCount = numbersChecked.length
 
   // 4) Messaging Profile — SMS goes through here, NOT the Voice App.
@@ -320,18 +344,23 @@ export async function GET(req: NextRequest) {
         ? {
             ok: false,
             message:
-              'No phone numbers found on this Telnyx account. Buy or port a number in Mission Control → Numbers, then assign it to your Voice API Application.',
+              'No phone numbers found on this Telnyx account. Buy or port a number in Mission Control → Numbers, then assign it to either your Voice API App or your SIP Connection.',
             numbers: numbersChecked,
           }
         : assignedCount === 0
           ? {
               ok: false,
-              message: `${totalCount} number${totalCount === 1 ? '' : 's'} on this account, but NONE are assigned to this Voice Application. Open each number in Telnyx → Numbers → My Numbers and set "Connection" to "${app.application_name ?? appId}".`,
+              message: `${totalCount} number${totalCount === 1 ? '' : 's'} on this account, but NONE are assigned to your Voice API App OR your SIP Connection. A number's connection_id can point to one of those — set it in Mission Control → Numbers → My Numbers → Connection.`,
               numbers: numbersChecked,
             }
           : {
               ok: true,
-              message: `${assignedCount} of ${totalCount} number${totalCount === 1 ? '' : 's'} assigned to this Voice Application.`,
+              message:
+                sipAssignedCount > 0 && sipAssignedCount === assignedCount
+                  ? `${assignedCount} of ${totalCount} number${totalCount === 1 ? '' : 's'} assigned via the SIP Connection (browser-call path). Inbound webhooks fire if the SIP Connection has its own webhook URL configured.`
+                  : sipAssignedCount > 0
+                    ? `${assignedCount} of ${totalCount} number${totalCount === 1 ? '' : 's'} assigned (mix of Voice App + SIP Connection paths).`
+                    : `${assignedCount} of ${totalCount} number${totalCount === 1 ? '' : 's'} assigned via the Voice API App (inbound webhook path).`,
               numbers: numbersChecked,
             },
     messagingProfile: mpCheck,

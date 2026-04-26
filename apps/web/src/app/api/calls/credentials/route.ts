@@ -78,15 +78,56 @@ export async function GET() {
     })
     if (!credRes.ok) {
       const txt = await credRes.text().catch(() => '')
-      // Telnyx returns 422 "invalid connection" when the ID we passed
-      // is a Voice API Application ID (not a SIP Connection ID).
-      // /v2/telephony_credentials specifically requires a Credentials-
-      // type SIP Connection. Translate into an actionable message.
+      // Telnyx returns 422 "invalid connection" when the connection_id
+      // we passed isn't a Credentials-type SIP Connection. Query
+      // Telnyx for what TYPE that ID actually is so the operator gets
+      // a precise diagnostic instead of "go create a SIP Connection"
+      // when they may have already done so but picked the wrong type
+      // (IP / FQDN / Credentials are the three SIP Connection types,
+      // and only Credentials works for telephony_credentials).
       if (credRes.status === 422 && txt.includes('invalid connection')) {
+        let kindHint = 'unknown'
+        try {
+          // Try the credential_connections endpoint first — that's
+          // what telephony_credentials wants. If 200, the ID is a
+          // valid Credentials-type connection but something else is
+          // wrong (e.g., disabled).
+          const credConnRes = await fetch(
+            `https://api.telnyx.com/v2/credential_connections/${encodeURIComponent(connectionId)}`,
+            { headers: { Authorization: `Bearer ${config.apiKey}` } },
+          )
+          if (credConnRes.ok) {
+            kindHint = 'Credentials-type SIP Connection (correct type) — but Telnyx still rejected it. Check the connection is Active in Mission Control → Voice → SIP Connections.'
+          } else {
+            // Try the generic sip_connections endpoint to see if it's
+            // an IP/FQDN type instead.
+            const sipRes = await fetch(
+              `https://api.telnyx.com/v2/sip_connections/${encodeURIComponent(connectionId)}`,
+              { headers: { Authorization: `Bearer ${config.apiKey}` } },
+            )
+            if (sipRes.ok) {
+              const sipJson = (await sipRes.json().catch(() => ({}))) as any
+              const t = sipJson?.data?.connection_type ?? sipJson?.data?.type ?? 'unknown'
+              kindHint = `the ID is a SIP Connection of type "${t}" — telephony_credentials needs type "credential". Re-create as Connection Type = Credentials.`
+            } else {
+              // Try call_control_applications (Voice API App).
+              const ccRes = await fetch(
+                `https://api.telnyx.com/v2/call_control_applications/${encodeURIComponent(connectionId)}`,
+                { headers: { Authorization: `Bearer ${config.apiKey}` } },
+              )
+              if (ccRes.ok) {
+                kindHint = 'the ID is a Voice API Application — telephony_credentials needs a SIP Connection of type Credentials. Create one in Mission Control → Voice → SIP Connections.'
+              } else {
+                kindHint = `the ID was not found on this Telnyx account at all (checked credential_connections, sip_connections, call_control_applications). Re-copy the Connection ID from Mission Control → Voice → SIP Connections.`
+              }
+            }
+          }
+        } catch {
+          // Probe failed — fall through with generic message.
+        }
         return NextResponse.json(
           {
-            error:
-              'Browser calling needs a Telnyx SIP Connection (Credentials type), not a Voice API App. Steps: (1) Mission Control → Voice → SIP Connections → Create New, (2) Connection Type = Credentials, Save, (3) copy the Connection ID, (4) paste it into Settings → Voice Connection ID and Save.',
+            error: `Browser calling — Telnyx rejected connection_id "${connectionId}". Diagnosis: ${kindHint}`,
             providerError: txt.slice(0, 240),
           },
           { status: 502 },
