@@ -16,9 +16,12 @@
     "seed:dts-dta-leads": "tsx scripts/seed-dts-dta-leads.ts",
     "seed:all-pipelines": "tsx scripts/seed-all-pipelines.ts",
     "seed:lead-sources": "tsx scripts/seed-lead-sources.ts",
-    "seed:comm-provider": "tsx scripts/seed-comm-provider.ts"
+    "seed:comm-provider": "tsx scripts/seed-comm-provider.ts",
+    "tunnel": "tsx scripts/tunnel.ts"
   },
   "devDependencies": {
+    "@ngrok/ngrok": "^1.5.1",
+    "dotenv": "^16.4.0",
     "tsx": "^4.19.0",
     "turbo": "^2.5.0",
     "typescript": "^5.8.0"
