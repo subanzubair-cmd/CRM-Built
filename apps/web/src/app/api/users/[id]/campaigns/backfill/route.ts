@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property, Campaign, UserCampaignAssignment } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -20,27 +20,27 @@ export async function POST(req: NextRequest, { params }: Params) {
   const parsed = BackfillSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: parsed.data.campaignId },
-    select: { name: true },
-  })
+  const campaign = await Campaign.findByPk(parsed.data.campaignId, {
+    attributes: ['name'],
+    raw: true,
+  }) as any
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  // Reassign unassigned active leads in this campaign to this user
-  const result = await prisma.property.updateMany({
-    where: {
-      campaignName: campaign.name,
-      assignedToId: null,
-      leadStatus: 'ACTIVE',
+  const [count] = await Property.update(
+    { assignedToId: userId },
+    {
+      where: {
+        campaignName: campaign.name,
+        assignedToId: null,
+        leadStatus: 'ACTIVE',
+      },
     },
-    data: { assignedToId: userId },
-  })
+  )
 
-  // Mark backfill completed on the assignment row
-  await prisma.userCampaignAssignment.updateMany({
-    where: { userId, campaignId: parsed.data.campaignId },
-    data: { backfillExistingLeads: true },
-  })
+  await UserCampaignAssignment.update(
+    { backfillExistingLeads: true },
+    { where: { userId, campaignId: parsed.data.campaignId } },
+  )
 
-  return NextResponse.json({ success: true, backfilledCount: result.count })
+  return NextResponse.json({ success: true, backfilledCount: count })
 }

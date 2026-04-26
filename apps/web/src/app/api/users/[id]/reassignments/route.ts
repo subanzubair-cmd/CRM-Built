@@ -1,18 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Property, Market, User, Op } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 
 type Params = { params: Promise<{ id: string }> }
 
-/**
- * GET /api/users/[id]/reassignments
- *
- * Returns campaigns/properties grouped by (lead type → market → campaign) where
- * the user being deleted has assignments. For each campaign, includes the list
- * of OTHER users currently assigned to properties in that campaign — those are
- * the eligible reassignment candidates.
- */
 export async function GET(_req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'users.manage')
@@ -20,18 +12,12 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const { id: userId } = await params
 
-  // Leads (Properties assigned to this user)
-  const properties = await prisma.property.findMany({
+  const properties = await Property.findAll({
     where: { assignedToId: userId },
-    select: {
-      id: true,
-      campaignName: true,
-      leadType: true,
-      market: { select: { id: true, name: true } },
-    },
+    attributes: ['id', 'campaignName', 'leadType', 'marketId'],
+    include: [{ model: Market, as: 'market', attributes: ['id', 'name'] }],
   })
 
-  // Group by market + campaign
   type CampaignBucket = {
     campaignKey: string
     campaignName: string
@@ -41,7 +27,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
     leadType: string
   }
   const buckets = new Map<string, CampaignBucket>()
-  for (const p of properties) {
+  for (const row of properties) {
+    const p = row.get({ plain: true }) as any
     const marketId = p.market?.id ?? 'none'
     const marketName = p.market?.name ?? 'Primary Market'
     const campaignName = p.campaignName ?? 'Uncategorized'
@@ -61,22 +48,21 @@ export async function GET(_req: NextRequest, { params }: Params) {
     }
   }
 
-  // For each bucket, find OTHER users currently assigned to properties under the
-  // same campaign (across all their properties — not just this user's)
   const enrichedBuckets = await Promise.all(
     [...buckets.values()].map(async (bucket) => {
-      const otherAssignees = await prisma.property.findMany({
+      const otherAssignees = await Property.findAll({
         where: {
           campaignName: bucket.campaignName,
           ...(bucket.marketId ? { marketId: bucket.marketId } : {}),
-          assignedToId: { not: null, notIn: [userId] },
+          assignedToId: { [Op.ne]: null, [Op.notIn]: [userId] },
         },
-        select: { assignedTo: { select: { id: true, name: true, email: true } } },
-        distinct: ['assignedToId'],
+        attributes: ['assignedToId'],
+        include: [{ model: User, as: 'assignedTo', attributes: ['id', 'name', 'email'] }],
+        group: ['assignedToId', 'assignedTo.id'],
       })
       const eligibleUsers = otherAssignees
-        .map((o) => o.assignedTo)
-        .filter((u): u is { id: string; name: string; email: string } => Boolean(u))
+        .map((o) => (o.get({ plain: true }) as any).assignedTo)
+        .filter((u: any): u is { id: string; name: string; email: string } => Boolean(u))
 
       return {
         campaignKey: bucket.campaignKey,
@@ -87,21 +73,18 @@ export async function GET(_req: NextRequest, { params }: Params) {
         eligibleUsers,
         isOnlyAssignee: eligibleUsers.length === 0,
       }
-    })
+    }),
   )
 
-  // Buyers — users assigned via dispoAssigneeId
-  const buyersProperties = await prisma.property.findMany({
+  const buyersProperties = await Property.findAll({
     where: { dispoAssigneeId: userId },
-    select: {
-      id: true,
-      campaignName: true,
-      market: { select: { id: true, name: true } },
-    },
+    attributes: ['id', 'campaignName', 'marketId'],
+    include: [{ model: Market, as: 'market', attributes: ['id', 'name'] }],
   })
 
   const buyerBuckets = new Map<string, CampaignBucket>()
-  for (const p of buyersProperties) {
+  for (const row of buyersProperties) {
+    const p = row.get({ plain: true }) as any
     const marketId = p.market?.id ?? 'none'
     const marketName = p.market?.name ?? 'Primary Market'
     const campaignName = p.campaignName ?? 'Uncategorized'
@@ -123,18 +106,19 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const enrichedBuyerBuckets = await Promise.all(
     [...buyerBuckets.values()].map(async (bucket) => {
-      const otherAssignees = await prisma.property.findMany({
+      const otherAssignees = await Property.findAll({
         where: {
           campaignName: bucket.campaignName,
           ...(bucket.marketId ? { marketId: bucket.marketId } : {}),
-          dispoAssigneeId: { not: null, notIn: [userId] },
+          dispoAssigneeId: { [Op.ne]: null, [Op.notIn]: [userId] },
         },
-        select: { dispoAssignee: { select: { id: true, name: true, email: true } } },
-        distinct: ['dispoAssigneeId'],
+        attributes: ['dispoAssigneeId'],
+        include: [{ model: User, as: 'dispoAssignee', attributes: ['id', 'name', 'email'] }],
+        group: ['dispoAssigneeId', 'dispoAssignee.id'],
       })
       const eligibleUsers = otherAssignees
-        .map((o) => o.dispoAssignee)
-        .filter((u): u is { id: string; name: string; email: string } => Boolean(u))
+        .map((o) => (o.get({ plain: true }) as any).dispoAssignee)
+        .filter((u: any): u is { id: string; name: string; email: string } => Boolean(u))
 
       return {
         campaignKey: bucket.campaignKey,
@@ -145,7 +129,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
         eligibleUsers,
         isOnlyAssignee: eligibleUsers.length === 0,
       }
-    })
+    }),
   )
 
   return NextResponse.json({

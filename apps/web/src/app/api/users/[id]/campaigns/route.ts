@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  UserCampaignAssignment,
+  LeadCampaign,
+  Role,
+  Op,
+} from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -23,16 +28,16 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (deny) return deny
   const { id } = await params
 
-  const assignments = await prisma.userCampaignAssignment.findMany({
+  const assignments = await UserCampaignAssignment.findAll({
     where: { userId: id },
-    include: {
-      campaign: { select: { id: true, name: true, isActive: true, type: true } },
-      role: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'asc' },
+    include: [
+      { model: LeadCampaign, as: 'campaign', attributes: ['id', 'name', 'isActive', 'type'] },
+      { model: Role, as: 'role', attributes: ['id', 'name'] },
+    ],
+    order: [['createdAt', 'ASC']],
   })
 
-  return NextResponse.json({ data: assignments })
+  return NextResponse.json({ data: assignments.map((a) => a.get({ plain: true })) })
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -47,41 +52,36 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const { assignments } = parsed.data
 
-  // Delete assignments not in the new list
   const keepKeys = assignments.map((a) => `${a.campaignId}|${a.roleId}`)
-  const existing = await prisma.userCampaignAssignment.findMany({
+  const existing = await UserCampaignAssignment.findAll({
     where: { userId },
-    select: { id: true, campaignId: true, roleId: true },
-  })
+    attributes: ['id', 'campaignId', 'roleId'],
+    raw: true,
+  }) as unknown as Array<{ id: string; campaignId: string; roleId: string }>
   const toDelete = existing.filter((e) => !keepKeys.includes(`${e.campaignId}|${e.roleId}`))
   if (toDelete.length > 0) {
-    await prisma.userCampaignAssignment.deleteMany({
-      where: { id: { in: toDelete.map((t) => t.id) } },
+    await UserCampaignAssignment.destroy({
+      where: { id: { [Op.in]: toDelete.map((t) => t.id) } },
     })
   }
 
-  // Upsert each
   for (const a of assignments) {
-    await prisma.userCampaignAssignment.upsert({
-      where: {
-        userId_roleId_campaignId: {
-          userId,
-          roleId: a.roleId,
-          campaignId: a.campaignId,
-        },
-      },
-      create: {
+    const [row, created] = await UserCampaignAssignment.findOrCreate({
+      where: { userId, roleId: a.roleId, campaignId: a.campaignId },
+      defaults: {
         userId,
         roleId: a.roleId,
         campaignId: a.campaignId,
         assignNewLeads: a.assignNewLeads,
         backfillExistingLeads: a.backfillExistingLeads,
-      },
-      update: {
+      } as any,
+    })
+    if (!created) {
+      await row.update({
         assignNewLeads: a.assignNewLeads,
         backfillExistingLeads: a.backfillExistingLeads,
-      },
-    })
+      })
+    }
   }
 
   return NextResponse.json({ success: true })

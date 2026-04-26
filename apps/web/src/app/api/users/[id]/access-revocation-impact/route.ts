@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Property,
+  Task,
+  LeadCampaign,
+  Role,
+  User,
+  UserCampaignAssignment,
+  UserRoleConfig,
+  PropertyTeamAssignment,
+  Op,
+  literal,
+  sequelize,
+} from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -15,25 +27,6 @@ const BodySchema = z.object({
   removedPairs: z.array(PairSchema).min(1),
 })
 
-/**
- * POST /api/users/[id]/access-revocation-impact
- *
- * Given a set of (role, campaign) pairs being removed from user `id`,
- * return the leads / team slots / tasks that would be orphaned so the UI
- * can ask an admin to reassign them before the remove is committed.
- *
- * For each pair we return:
- *   - campaignId / roleId / campaignName / roleName (for display)
- *   - primaryLeadCount: # of properties on this campaign where assignedToId = user
- *   - teamSlotCount:    # of PropertyTeamAssignment rows for this (user, role, campaign)
- *   - openTaskCount:    # of pending tasks assigned to this user on this campaign
- *   - eligibleReplacements: users other than this one who hold the same
- *                           role+campaign AND have leadAccessEnabled, i.e. who
- *                           CAN take the work over.
- *
- * If all three counts are zero for every pair, the caller can proceed without
- * showing a confirmation modal.
- */
 export async function POST(req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'users.manage')
@@ -50,20 +43,18 @@ export async function POST(req: NextRequest, { params }: Params) {
   const campaignIds = Array.from(new Set(removedPairs.map((p) => p.campaignId)))
   const roleIds = Array.from(new Set(removedPairs.map((p) => p.roleId)))
 
-  // 1. Load campaigns + roles for names (parallel)
   const [campaigns, roles, userRecord] = await Promise.all([
-    prisma.leadCampaign.findMany({
-      where: { id: { in: campaignIds } },
-      select: { id: true, name: true },
-    }),
-    prisma.role.findMany({
-      where: { id: { in: roleIds } },
-      select: { id: true, name: true },
-    }),
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, name: true },
-    }),
+    LeadCampaign.findAll({
+      where: { id: { [Op.in]: campaignIds } },
+      attributes: ['id', 'name'],
+      raw: true,
+    }) as unknown as Promise<Array<{ id: string; name: string }>>,
+    Role.findAll({
+      where: { id: { [Op.in]: roleIds } },
+      attributes: ['id', 'name'],
+      raw: true,
+    }) as unknown as Promise<Array<{ id: string; name: string }>>,
+    User.findByPk(userId, { attributes: ['id', 'name'], raw: true }) as Promise<any>,
   ])
 
   if (!userRecord) {
@@ -73,59 +64,63 @@ export async function POST(req: NextRequest, { params }: Params) {
   const campaignNameById = new Map(campaigns.map((c) => [c.id, c.name]))
   const roleNameById = new Map(roles.map((r) => [r.id, r.name]))
 
-  // 2. For each pair, compute counts in parallel
   const buckets = await Promise.all(
     removedPairs.map(async (pair) => {
+      const propIdSubquery = `(SELECT id FROM "Property" WHERE "leadCampaignId" = ${sequelize.escape(pair.campaignId)})`
       const [primaryLeadCount, teamSlotCount, openTaskCount, eligibleReplacements] =
         await Promise.all([
-          prisma.property.count({
+          Property.count({
             where: { leadCampaignId: pair.campaignId, assignedToId: userId },
           }),
-          (prisma as any).propertyTeamAssignment.count({
+          PropertyTeamAssignment.count({
             where: {
               userId,
               roleId: pair.roleId,
-              property: { leadCampaignId: pair.campaignId },
+              propertyId: { [Op.in]: literal(propIdSubquery) },
             },
-          }) as Promise<number>,
-          prisma.task.count({
+          }),
+          Task.count({
             where: {
               assignedToId: userId,
               status: 'PENDING',
-              property: { leadCampaignId: pair.campaignId },
+              propertyId: { [Op.in]: literal(propIdSubquery) },
             },
           }),
-          // Replacement candidates: other users with UserCampaignAssignment for
-          // this (role, campaign) AND UserRoleConfig.leadAccessEnabled. These
-          // are the people who could legitimately take the work over.
           (async () => {
-            const otherAssignments = await prisma.userCampaignAssignment.findMany({
+            const otherAssignments = await UserCampaignAssignment.findAll({
               where: {
                 roleId: pair.roleId,
                 campaignId: pair.campaignId,
-                userId: { not: userId },
-                user: { status: 'ACTIVE', vacationMode: false },
+                userId: { [Op.ne]: userId },
               },
-              select: {
-                userId: true,
-                user: { select: { id: true, name: true, email: true } },
-              },
+              include: [
+                {
+                  model: User,
+                  as: 'user',
+                  where: { status: 'ACTIVE', vacationMode: false },
+                  required: true,
+                  attributes: ['id', 'name', 'email'],
+                },
+              ],
+              attributes: ['userId'],
             })
-            if (otherAssignments.length === 0) return []
-            const otherIds = otherAssignments.map((a) => a.userId)
-            const enabled = await (prisma as any).userRoleConfig.findMany({
+            if (otherAssignments.length === 0) return [] as Array<{ id: string; name: string; email: string }>
+            const plain = otherAssignments.map((o) => o.get({ plain: true }) as any)
+            const otherIds = plain.map((a: any) => a.userId)
+            const enabled = await UserRoleConfig.findAll({
               where: {
-                userId: { in: otherIds },
+                userId: { [Op.in]: otherIds },
                 roleId: pair.roleId,
                 leadAccessEnabled: true,
               },
-              select: { userId: true },
-            }) as Array<{ userId: string }>
+              attributes: ['userId'],
+              raw: true,
+            }) as unknown as Array<{ userId: string }>
             const enabledSet = new Set(enabled.map((e) => e.userId))
-            return otherAssignments
-              .filter((a) => enabledSet.has(a.userId))
-              .map((a) => a.user)
-              .filter((u): u is { id: string; name: string; email: string } => Boolean(u))
+            return plain
+              .filter((a: any) => enabledSet.has(a.userId))
+              .map((a: any) => a.user)
+              .filter((u: any): u is { id: string; name: string; email: string } => Boolean(u))
           })(),
         ])
 
