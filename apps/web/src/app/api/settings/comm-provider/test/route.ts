@@ -38,19 +38,50 @@ export async function POST() {
     }
 
     if (config.providerName === 'telnyx') {
-      if (!config.apiKey) {
-        return NextResponse.json({ ok: false, error: 'Telnyx API key missing' }, { status: 400 })
+      // Defensive: trim whitespace + sanity-check shape so we surface a
+      // useful message when the saved value is empty or doesn't look like
+      // a Telnyx V2 key (decryption returned garbage, copy/paste error, etc).
+      const apiKey = (config.apiKey ?? '').trim()
+      if (!apiKey) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              'Telnyx API key is empty after decrypt. Clear the API Key field, paste a fresh V2 key from Mission Control → API Keys, and Save.',
+          },
+          { status: 400 },
+        )
       }
+      if (!/^KEY[0-9A-Za-z_-]{20,}$/.test(apiKey)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Saved API key doesn't match the Telnyx V2 format (KEY…). Clear the field, paste again from Mission Control → API Keys, and Save.",
+          },
+          { status: 400 },
+        )
+      }
+
       // /v2/profile doesn't exist on Telnyx (404). /v2/phone_numbers
-      // with page[size]=1 is a cheap auth-check that exercises the same
-      // permissions the CRM actually needs.
+      // with page[size]=1 is a cheap auth-check.
       const res = await fetch('https://api.telnyx.com/v2/phone_numbers?page[size]=1', {
-        headers: { Authorization: `Bearer ${config.apiKey}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       })
       if (!res.ok) {
+        if (res.status === 401) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error:
+                "Telnyx rejected the API key (401). Steps to fix: (1) Mission Control → API Keys, (2) verify the key is active and on the same account as your phone numbers, (3) clear the API Key field in this form, paste again, and Save.",
+            },
+            { status: 400 },
+          )
+        }
         const txt = await res.text().catch(() => '')
         return NextResponse.json(
-          { ok: false, error: `Telnyx auth failed (${res.status})${txt ? `: ${txt.slice(0, 160)}` : ''}` },
+          { ok: false, error: `Telnyx returned ${res.status}${txt ? `: ${txt.slice(0, 160)}` : ''}` },
           { status: 400 },
         )
       }

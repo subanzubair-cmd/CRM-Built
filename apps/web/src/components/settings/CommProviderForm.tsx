@@ -487,16 +487,33 @@ function FieldRow({
   hint?: string
   mono?: boolean
 }) {
+  // When the field holds the masked-secret placeholder, show a small
+  // "Replace" button so it's obvious how to re-enter a value (the
+  // unaware user can't tell whether the dots represent the existing
+  // secret or a literal value).
+  const isMasked = value === '••••••••'
   return (
     <div className="mb-4">
       <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${mono ? 'font-mono' : ''}`}
-      />
+      <div className="relative">
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${mono ? 'font-mono' : ''} ${isMasked ? 'pr-20' : ''}`}
+        />
+        {isMasked && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute top-1/2 right-2 -translate-y-1/2 text-[10px] font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded transition-colors"
+            title="Clear so you can paste a new value"
+          >
+            Replace
+          </button>
+        )}
+      </div>
       {hint && <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">{hint}</p>}
     </div>
   )
