@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Phone,
+  PhoneOff,
   X,
   Minimize2,
   Maximize2,
@@ -114,23 +115,50 @@ export function CallPanel({
   const [error, setError] = useState<string | null>(null)
 
   // Drive the local UI state machine from the WebRTC hook's state.
+  // We treat any non-idle/ended/error state as "in call" so the End
+  // button is available during the connecting + ringing phases too —
+  // operators need to be able to abort a stuck dial.
   useEffect(() => {
     if (tx.callId && tx.callId !== callId) {
       setCallId(tx.callId)
     }
-    if (tx.state === 'active' && !inCall) {
+    const live = tx.state === 'connecting' || tx.state === 'ringing' || tx.state === 'active'
+    if (live && !inCall) {
       setInCall(true)
+      // Timer starts the moment we begin dialing, NOT when the call
+      // becomes active — so the operator sees how long the connecting
+      // phase is taking instead of a frozen "Connecting...".
       setCallStartedAt((prev) => prev ?? new Date())
     }
     if (tx.state === 'error') {
       setError(tx.error ?? 'Call failed')
       setCalling(false)
+      setInCall(false)
     }
     if (tx.state === 'ended' && inCall) {
-      // Let handleEndCall drive teardown; here we just stop showing the spinner.
       setCalling(false)
+      setInCall(false)
     }
   }, [tx.callId, tx.state, tx.error, callId, inCall])
+
+  // Human-readable label for the current phase. Drives the green
+  // pill so the operator can tell "ringing on their end" apart from
+  // "connecting to Telnyx" apart from "we're talking now".
+  const phaseLabel: string =
+    tx.state === 'connecting' ? 'Connecting…'
+      : tx.state === 'ringing' ? 'Ringing…'
+        : tx.state === 'active' ? 'Connected'
+          : tx.state === 'ended' ? 'Call ended'
+            : tx.state === 'error' ? 'Failed'
+              : 'Idle'
+
+  // Color the pill differently per phase so glance-state matches text.
+  const phaseClasses =
+    tx.state === 'active'
+      ? { bg: 'bg-green-50 border-green-200', dot: 'bg-green-500', text: 'text-green-700', timer: 'bg-green-100 text-green-700' }
+      : tx.state === 'error'
+        ? { bg: 'bg-red-50 border-red-200', dot: 'bg-red-500', text: 'text-red-700', timer: 'bg-red-100 text-red-700' }
+        : { bg: 'bg-amber-50 border-amber-200', dot: 'bg-amber-500', text: 'text-amber-700', timer: 'bg-amber-100 text-amber-700' }
 
   // Tasks
   const [tasks, setTasks] = useState<Task[]>([])
@@ -461,14 +489,14 @@ export function CallPanel({
             <p className="text-sm text-gray-400">No contacts available</p>
           )}
 
-          {/* Call in progress indicator */}
+          {/* Live call status — visible from "Connecting…" through
+              "Ringing…" through "Connected". Timer ticks the whole
+              time so the operator sees how long each phase took. */}
           {inCall && (
-            <div className="mt-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse flex-shrink-0" />
-              <span className="text-sm text-green-700 font-medium">
-                Connecting...
-              </span>
-              <span className="text-xs font-mono bg-green-100 text-green-700 px-2 py-0.5 rounded ml-auto">
+            <div className={`mt-3 ${phaseClasses.bg} border rounded-lg px-3 py-2 flex items-center gap-2`}>
+              <div className={`w-2 h-2 ${phaseClasses.dot} rounded-full animate-pulse flex-shrink-0`} />
+              <span className={`text-sm ${phaseClasses.text} font-medium`}>{phaseLabel}</span>
+              <span className={`text-xs font-mono ${phaseClasses.timer} px-2 py-0.5 rounded ml-auto tabular-nums`}>
                 {fmtTime(elapsed)}
               </span>
             </div>
@@ -478,7 +506,9 @@ export function CallPanel({
             <p className="mt-2 text-xs text-red-600">{error}</p>
           )}
 
-          {/* Call / End button */}
+          {/* Call / End button — End is ALWAYS available during any
+              live phase (connecting, ringing, active) so the operator
+              can abort a slow or stuck dial. */}
           <div className="mt-3">
             {!inCall ? (
               <button
@@ -486,37 +516,16 @@ export function CallPanel({
                 disabled={calling || !contact?.phone}
                 className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2.5 rounded-xl disabled:opacity-50 transition-colors active:scale-[0.98]"
               >
-                {calling ? (
-                  <svg
-                    className="w-4 h-4 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                ) : (
-                  <Phone className="w-4 h-4" />
-                )}
-                {calling ? 'Connecting...' : 'Call Lead'}
+                <Phone className="w-4 h-4" />
+                Call Lead
               </button>
             ) : (
               <button
                 onClick={handleEndCall}
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors active:scale-[0.98]"
+                className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors active:scale-[0.98]"
               >
-                End & Log Outcome
+                <PhoneOff className="w-4 h-4" />
+                {tx.state === 'active' ? 'End & Log Outcome' : 'End Call'}
               </button>
             )}
           </div>
