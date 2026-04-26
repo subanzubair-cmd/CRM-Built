@@ -349,11 +349,35 @@ export function CallDispositionModal({
         ? `${durationSecs}s`
         : `${Math.floor(durationSecs / 60)}m ${durationSecs % 60}s`
 
+    // Fetch per-call cost from ActiveCall (populated by the Telnyx
+    // call.hangup webhook + CDR fallback). By the time the agent
+    // submits the disposition, the cost is usually present. If the
+    // race loses (cost not yet posted), we save without it — the row
+    // is still in the DB and a future feature could backfill the
+    // activity log entry once cost lands.
+    let costLabel: string | null = null
+    if (callId) {
+      try {
+        const res = await fetch(`/api/calls/${callId}/cost`)
+        if (res.ok) {
+          const j = (await res.json()) as { cost: number | null; costCurrency: string | null }
+          if (j.cost != null) {
+            // Sub-cent calls show 4 decimals; otherwise 2.
+            const fixed = j.cost < 0.01 ? j.cost.toFixed(4) : j.cost.toFixed(2)
+            const isUsd = (j.costCurrency ?? 'USD') === 'USD'
+            costLabel = isUsd ? `$${fixed}` : `${fixed} ${j.costCurrency}`
+          }
+        }
+      } catch {
+        // Silent — proceed without cost.
+      }
+    }
+
     const bodyParts = [
       connLabel && `${connLabel} (${outcomeLabel})`,
       enterReason,
       notes.trim(),
-      `(${durLabel})`,
+      `(${durLabel}${costLabel ? ` · ${costLabel}` : ''})`,
     ].filter(Boolean)
 
     try {
