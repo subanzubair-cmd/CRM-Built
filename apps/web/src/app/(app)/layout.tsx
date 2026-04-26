@@ -9,7 +9,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!session) redirect('/login')
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
+    // suppressHydrationWarning: InboundCallNotification is a 'use client'
+    // component that returns null on first mount; combined with browser
+    // extensions that wrap top-level elements, this can produce a benign
+    // mismatch React surfaces as a recoverable hydration error. The render
+    // tree is identical post-hydration, so silencing the warning here is
+    // the React-recommended escape hatch.
+    <div className="flex flex-col h-screen bg-slate-50" suppressHydrationWarning>
       <InboundCallNotification />
       <GlobalHeader />
       <div className="flex flex-1 overflow-hidden">
