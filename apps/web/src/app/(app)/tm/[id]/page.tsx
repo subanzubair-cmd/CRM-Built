@@ -43,7 +43,7 @@ export default async function TmDetailPage({ params }: PageProps) {
   const { id } = await params
   const [property, users, messages] = await Promise.all([
     getPropertyById(id),
-    User.findAll({ where: { status: 'ACTIVE' }, attributes: ['id', 'name'], order: [['name', 'ASC']] }),
+    User.findAll({ where: { status: 'ACTIVE' }, attributes: ['id', 'name'], order: [['name', 'ASC']], raw: true }),
     getConversationMessages(id),
   ])
   if (!property) notFound()

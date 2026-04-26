@@ -64,6 +64,7 @@ export default async function VettedAgentsPage({ searchParams }: PageProps) {
       where: { status: 'ACTIVE' },
       attributes: ['id', 'name'],
       order: [['name', 'ASC']],
+      raw: true,
     }),
   ])
 

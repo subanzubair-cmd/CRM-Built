@@ -35,6 +35,7 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       where: { status: 'ACTIVE' },
       attributes: ['id', 'name'],
       order: [['name', 'ASC']],
+      raw: true,
     }),
   ])
 

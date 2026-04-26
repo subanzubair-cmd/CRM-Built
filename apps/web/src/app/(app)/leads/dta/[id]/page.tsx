@@ -45,7 +45,7 @@ export default async function LeadDtaDetailPage({ params }: PageProps) {
   const { id } = await params
   const [lead, users, messages] = await Promise.all([
     getLeadById(id),
-    User.findAll({ where: { status: 'ACTIVE' }, attributes: ['id', 'name'], order: [['name', 'ASC']] }),
+    User.findAll({ where: { status: 'ACTIVE' }, attributes: ['id', 'name'], order: [['name', 'ASC']], raw: true }),
     getConversationMessages(id),
   ])
   if (!lead) notFound()

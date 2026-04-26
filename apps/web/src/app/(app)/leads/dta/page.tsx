@@ -38,6 +38,7 @@ export default async function LeadsDtaPage({ searchParams }: PageProps) {
       where: { status: 'ACTIVE' },
       attributes: ['id', 'name'],
       order: [['name', 'ASC']],
+      raw: true,
     }),
   ])
 

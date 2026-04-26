@@ -1,4 +1,4 @@
-import { Vendor, Contact, Op, literal } from '@crm/database'
+import { Vendor, Contact, Op } from '@crm/database'
 import type { WhereOptions } from '@crm/database'
 
 export interface VendorListFilter {
@@ -30,7 +30,7 @@ export async function getVendorList(filter: VendorListFilter) {
       }
     : undefined
 
-  const [rows, total] = await Promise.all([
+  const [rawRows, total] = await Promise.all([
     Vendor.findAll({
       where: vendorWhere,
       include: [
@@ -68,6 +68,14 @@ export async function getVendorList(filter: VendorListFilter) {
     }),
   ])
 
+  // Convert Sequelize instances → plain nested objects so the result can
+  // pass from a Server Component to a Client Component without React 19
+  // rejecting it ("Objects with toJSON methods are not supported"). We
+  // can't use `raw: true` here because it doesn't preserve the typed
+  // include nesting we need; `.get({ plain: true })` is the canonical
+  // alternative when an include is involved.
+  const rows = rawRows.map((v) => v.get({ plain: true }))
+
   return { rows, total, page, pageSize }
 }
 
@@ -76,8 +84,11 @@ export async function getVendorById(id: string) {
     include: [{ model: Contact, as: 'contact' }],
   })
   if (!vendor) return null
-  // Sequelize types `contact` as optional even when an include guarantees it.
-  // Vendor.contactId is NOT NULL and the FK is enforced, so the eager-load
-  // always produces a row; assert the refined type for callers.
-  return vendor as Vendor & { contact: Contact }
+  // Plain object so consumers (server components → client components) can
+  // pass it down without serialization issues. The contact-non-null
+  // refinement is preserved via the cast — Vendor.contactId is NOT NULL
+  // and the FK is enforced, so eager-load always produces a row.
+  type ContactPlain = ReturnType<Contact['get']>
+  type VendorPlain = ReturnType<Vendor['get']> & { contact: ContactPlain }
+  return vendor.get({ plain: true }) as VendorPlain
 }

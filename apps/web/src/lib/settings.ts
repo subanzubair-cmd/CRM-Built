@@ -41,10 +41,14 @@ export async function getUserList() {
 }
 
 export async function getCampaignListSimple() {
+  // raw: true returns plain objects (not Sequelize instances), required when
+  // the result is passed from a Server Component to a Client Component prop.
+  // React 19 strict serialization rejects objects with toJSON methods.
   return Campaign.findAll({
     attributes: ['id', 'name', 'marketId', 'status'],
     where: { status: { [Op.in]: ['ACTIVE', 'DRAFT'] } },
     order: [['name', 'ASC']],
+    raw: true,
   })
 }
 
@@ -58,6 +62,7 @@ export async function getLeadCampaignListSimple() {
     attributes: ['id', 'name', 'type'],
     where: { isActive: true },
     order: [['name', 'ASC']],
+    raw: true,
   })
 }
 
@@ -92,5 +97,6 @@ export async function getRoleList() {
   return Role.findAll({
     attributes: ['id', 'name', 'description', 'permissions', 'isSystem'],
     order: [['name', 'ASC']],
+    raw: true,
   })
 }
