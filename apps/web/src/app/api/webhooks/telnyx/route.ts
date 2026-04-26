@@ -237,12 +237,12 @@ async function handleSmsEvent(eventType: string, payload: any) {
 
     const { leadCampaignId, leadCampaignType } = await resolveCampaignByPhone(toPhone)
 
-    // Unknown sender + a campaign owns the receiving number → create
-    // a lead under THAT campaign. If the receiving number isn't tied
-    // to any campaign, we don't auto-create (no campaign attribution
-    // = no pipeline placement); the message still gets logged
-    // unattributed below so it's not silently dropped.
-    if (matches.length === 0 && leadCampaignId) {
+    // Unknown sender → ALWAYS create a lead. When a campaign owns the
+    // receiving number, attribute the lead to that campaign. When no
+    // campaign owns the number, the lead lands in the "Others" bucket
+    // (tags=['others'], source='Others') so the operator can filter
+    // and triage uncategorized inbound from one view.
+    if (matches.length === 0) {
       const created = await autoCreateInboundLead({
         fromPhone,
         leadCampaignId,
@@ -256,14 +256,13 @@ async function handleSmsEvent(eventType: string, payload: any) {
           raw: true,
         }) as any
         matches.push({ propertyId: created, contactId: pc?.contactId ?? null })
-        console.log(`[webhook/telnyx sms] auto-created lead ${created} for ${fromPhone} under campaign ${leadCampaignId}`)
+        console.log(
+          `[webhook/telnyx sms] auto-created lead ${created} for ${fromPhone}` +
+            (leadCampaignId ? ` under campaign ${leadCampaignId}` : ' in "Others" bucket (no campaign owns the dialed number)'),
+        )
       } else {
         console.error(`[webhook/telnyx sms] autoCreateInboundLead returned null for ${fromPhone}`)
       }
-    } else if (matches.length === 0 && !leadCampaignId) {
-      console.warn(
-        `[webhook/telnyx sms] no campaign owns dialed number ${toPhone} — skipping auto-create. Assign this number to a Lead Campaign to enable auto-lead creation.`,
-      )
     }
 
     // Fan out: write Message + Conversation + ActivityLog per matched
@@ -510,11 +509,11 @@ async function handleCallEvent(eventType: string, payload: any) {
           `[webhook/telnyx call.initiated] from=${fromPhone} to=${toPhone} existingContact=${existingContactId ?? '(none)'} attachedProperty=${propertyId ?? '(none)'} campaign=${leadCampaignId ?? '(none)'}`,
         )
 
-        // Auto-create only when the dialed number is owned by a Lead
-        // Campaign — that's the campaign the new lead lands under.
-        // Without a campaign, we let the call still ring (popup polls
-        // ActiveCall directly) but skip lead creation.
-        if (!propertyId && leadCampaignId) {
+        // Always create a lead for an unknown caller. Campaign-owned
+        // dialed numbers attribute the lead; otherwise it lands in
+        // the "Others" bucket (tags=['others'], source='Others') so
+        // the call doesn't vanish from the inbox.
+        if (!propertyId) {
           propertyId = await autoCreateInboundLead({
             fromPhone,
             leadCampaignId,
@@ -522,11 +521,8 @@ async function handleCallEvent(eventType: string, payload: any) {
             existingContactId,
           })
           console.log(
-            `[webhook/telnyx call.initiated] auto-created lead ${propertyId ?? '(failed)'} for ${fromPhone} under campaign ${leadCampaignId}`,
-          )
-        } else if (!propertyId) {
-          console.warn(
-            `[webhook/telnyx call.initiated] no campaign owns dialed number ${toPhone} — skipping auto-create. Assign this number to a Lead Campaign to enable auto-lead creation.`,
+            `[webhook/telnyx call.initiated] auto-created lead ${propertyId ?? '(failed)'} for ${fromPhone}` +
+              (leadCampaignId ? ` under campaign ${leadCampaignId}` : ' in "Others" bucket (no campaign owns the dialed number)'),
           )
         }
 
@@ -695,15 +691,21 @@ async function autoCreateInboundLead(args: {
 
   try {
     const result = await sequelize.transaction(async (tx) => {
+      // When no campaign owns the dialed number, mark the lead so
+      // the operator can find it in a triage view. We set:
+      //   source = 'Others'   (vs. 'Inbound Call' for attributed)
+      //   tags  = ['others']  (filterable in the leads list)
+      // and skip the leadCampaignId FK so Sequelize doesn't try
+      // to insert null into a NOT NULL column.
+      const isOthers = !leadCampaignId
       const property = await Property.create(
         {
           leadType,
           leadStatus: 'ACTIVE',
           propertyStatus: 'LEAD',
           activeLeadStage: 'NEW_LEAD',
-          source: 'Inbound Call',
-          // Skip the FK when null so Sequelize doesn't try to insert null
-          // into a NOT NULL column on schemas that require it.
+          source: isOthers ? 'Others' : 'Inbound Call',
+          tags: isOthers ? ['others'] : [],
           ...(leadCampaignId ? { leadCampaignId } : {}),
         } as any,
         { transaction: tx },
