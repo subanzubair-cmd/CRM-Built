@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { ActiveCall } from '@crm/database'
 import { hangupCall } from '@/lib/twilio-calls'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -18,7 +18,7 @@ export async function POST(
 
   const { id } = await params
 
-  const activeCall = await (prisma as any).activeCall.findUnique({ where: { id } })
+  const activeCall = await ActiveCall.findByPk(id)
   if (!activeCall) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 })
   }
@@ -31,10 +31,7 @@ export async function POST(
       await hangupCall(activeCall.agentCallSid)
     }
 
-    await (prisma as any).activeCall.update({
-      where: { id },
-      data: { status: 'COMPLETED', endedAt: new Date() },
-    })
+    await activeCall.update({ status: 'COMPLETED', endedAt: new Date() })
 
     return NextResponse.json({ success: true })
   } catch (err) {

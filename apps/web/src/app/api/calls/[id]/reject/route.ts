@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  ActiveCall,
+  Property,
+  PropertyTeamAssignment,
+  Op,
+} from '@crm/database'
 import { requirePermission, hasPermission } from '@/lib/auth-utils'
 
 type Params = { params: Promise<{ id: string }> }
@@ -20,15 +25,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params
   const body = await req.json().catch(() => ({}))
 
-  const call = await (prisma as any).activeCall.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      agentUserId: true,
-      propertyId: true,
-      property: { select: { assignedToId: true } },
-    },
+  const call = await ActiveCall.findByPk(id, {
+    attributes: ['id', 'status', 'agentUserId', 'propertyId'],
   })
   if (!call) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 })
@@ -36,12 +34,18 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const isAdmin = hasPermission(session, 'admin.all')
   if (!isAdmin && call.agentUserId !== userId) {
-    const isPropertyAssignee = call.property?.assignedToId === userId
+    let isPropertyAssignee = false
+    if (call.propertyId) {
+      const property = await Property.findByPk(call.propertyId, {
+        attributes: ['assignedToId'],
+      })
+      isPropertyAssignee = property?.assignedToId === userId
+    }
     const teamMember = isPropertyAssignee || !call.propertyId
       ? null
-      : await (prisma as any).propertyTeamAssignment.findFirst({
+      : await PropertyTeamAssignment.findOne({
           where: { propertyId: call.propertyId, userId },
-          select: { id: true },
+          attributes: ['id'],
         })
     if (!isPropertyAssignee && !teamMember) {
       return NextResponse.json(
@@ -51,22 +55,22 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
   }
 
-  const updated = await (prisma as any).activeCall.updateMany({
-    where: { id, status: { in: ['INITIATING', 'RINGING'] } },
-    data: {
+  const [count] = await ActiveCall.update(
+    {
       status: 'REJECTED',
       rejectedReason: body.reason ?? 'declined',
       endedAt: new Date(),
     },
-  })
+    { where: { id, status: { [Op.in]: ['INITIATING', 'RINGING'] } } },
+  )
 
-  if (updated.count === 0) {
+  if (count === 0) {
     return NextResponse.json(
       { error: 'Call is no longer available to reject.' },
       { status: 409 },
     )
   }
 
-  const refreshed = await (prisma as any).activeCall.findUnique({ where: { id } })
+  const refreshed = await ActiveCall.findByPk(id)
   return NextResponse.json({ success: true, data: refreshed })
 }

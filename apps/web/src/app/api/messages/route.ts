@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import {
+  Contact,
+  PropertyContact,
+  Property,
+  Conversation,
+  Message,
+  ActivityLog,
+  Op,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 
@@ -30,76 +39,84 @@ export async function POST(req: NextRequest) {
   // Resolve contactId if not passed: prefer primary contact, fall back to contact matching phone
   let resolvedContactId: string | null = contactId ?? null
   if (!resolvedContactId && contactPhone) {
-    const contact = await prisma.contact.findFirst({
-      where: { OR: [{ phone: contactPhone }, { phone2: contactPhone }] },
-      select: { id: true },
+    const contact = await Contact.findOne({
+      where: { [Op.or]: [{ phone: contactPhone }, { phone2: contactPhone }] },
+      attributes: ['id'],
     })
     resolvedContactId = contact?.id ?? null
   }
   if (!resolvedContactId) {
-    const primary = await prisma.propertyContact.findFirst({
+    const primary = await PropertyContact.findOne({
       where: { propertyId, isPrimary: true },
-      select: { contactId: true },
+      attributes: ['contactId'],
     })
     resolvedContactId = primary?.contactId ?? null
   }
 
   // Resolve leadCampaignId for attribution
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    select: { leadCampaignId: true },
+  const property = await Property.findByPk(propertyId, {
+    attributes: ['leadCampaignId'],
   })
   const leadCampaignId = property?.leadCampaignId ?? null
 
-  // Per-contact Conversation (one thread per propertyId+contactId)
+  // Per-contact Conversation (one thread per propertyId+contactId).
+  // Null contactId is allowed but the unique index treats it as a single
+  // bucket per property — matches Prisma's @@unique([propertyId, contactId])
+  // semantics (Postgres NULLs are distinct, so multiple null-contact
+  // conversations could in theory exist; we mirror that ambiguity by
+  // using `findOne` with `null` rather than a strict findOrCreate).
   let conversation = resolvedContactId
-    ? await prisma.conversation.findUnique({
-        where: { propertyId_contactId: { propertyId, contactId: resolvedContactId } },
+    ? await Conversation.findOne({
+        where: { propertyId, contactId: resolvedContactId },
       })
-    : await prisma.conversation.findFirst({ where: { propertyId, contactId: null } })
+    : await Conversation.findOne({ where: { propertyId, contactId: null } })
 
   if (!conversation) {
-    conversation = await prisma.conversation.create({
-      data: {
-        propertyId,
-        contactId: resolvedContactId,
-        contactPhone: contactPhone ?? null,
-        isRead: true,
-        lastMessageAt: new Date(),
-      },
+    conversation = await Conversation.create({
+      propertyId,
+      contactId: resolvedContactId,
+      contactPhone: contactPhone ?? null,
+      isRead: true,
+      lastMessageAt: new Date(),
     })
   } else {
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { lastMessageAt: new Date(), isRead: true },
-    })
+    await conversation.update({ lastMessageAt: new Date(), isRead: true })
   }
 
-  const message = await prisma.message.create({
-    data: {
-      propertyId,
-      conversationId: conversation.id,
-      contactId: resolvedContactId,
-      leadCampaignId,
-      channel,
-      direction,
-      body: messageBody,
-      subject,
-      sentById: userId,
-    },
-  })
-
-  await Promise.all([
-    prisma.activityLog.create({
-      data: {
+  // Wrap the message + activity-log + property timestamp in a single
+  // transaction so a failure in any one step rolls back the others.
+  const message = await sequelize.transaction(async (tx) => {
+    const created = await Message.create(
+      {
+        propertyId,
+        conversationId: conversation!.id,
+        contactId: resolvedContactId,
+        leadCampaignId,
+        channel,
+        direction,
+        body: messageBody,
+        subject: subject ?? null,
+        sentById: userId,
+      },
+      { transaction: tx },
+    )
+    await ActivityLog.create(
+      {
         propertyId,
         userId,
         action: 'MESSAGE_LOGGED',
-        detail: { description: `${channel} ${direction === 'INBOUND' ? 'received' : 'logged'}` },
+        detail: {
+          description: `${channel} ${direction === 'INBOUND' ? 'received' : 'logged'}`,
+        },
       },
-    }),
-    prisma.property.update({ where: { id: propertyId }, data: { lastActivityAt: new Date() } }),
-  ])
+      { transaction: tx },
+    )
+    await Property.update(
+      { lastActivityAt: new Date() },
+      { where: { id: propertyId }, transaction: tx },
+    )
+    return created
+  })
 
   // Emit domain event
   await emitEvent({
