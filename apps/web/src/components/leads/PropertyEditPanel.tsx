@@ -88,7 +88,7 @@ export function PropertyEditPanel({ propertyId, initialValues, users, campaignTy
     leadCampaignId: initialValues.leadCampaignId ?? '',
     defaultOutboundNumber: initialValues.defaultOutboundNumber ?? '',
     assignedToId: initialValues.assignedToId ?? '',
-    tags: initialValues.tags.join(', '),
+    tags: (initialValues.tags ?? []).join(', '),
   })
 
   // Listen for the global "open edit" event dispatched by the Actions menu

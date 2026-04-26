@@ -282,20 +282,22 @@ export async function getAbandonedLeadsMatrix(
     ORDER BY p."activeLeadStage"
   `
 
-  const rows = await sequelize.query<{
-    stage: string
-    no_drip: string
-    no_tasks: string
-    neither: string
-  }>(
-    marketIds === null || marketIds === undefined
-      ? `${baseSql} ${groupBy}`
-      : `${baseSql} AND p."marketId" = ANY(:marketIds::text[]) ${groupBy}`,
-    {
-      replacements: marketIds && marketIds.length ? { marketIds } : { marketIds: marketIds ?? [] },
-      type: QueryTypes.SELECT,
-    },
-  )
+  const rows = marketIds === null || marketIds === undefined
+    ? await sequelize.query<{
+        stage: string
+        no_drip: string
+        no_tasks: string
+        neither: string
+      }>(`${baseSql} ${groupBy}`, { type: QueryTypes.SELECT })
+    : await sequelize.query<{
+        stage: string
+        no_drip: string
+        no_tasks: string
+        neither: string
+      }>(
+        `${baseSql} AND p."marketId" = ANY($1::text[]) ${groupBy}`,
+        { bind: [marketIds], type: QueryTypes.SELECT },
+      )
 
   const stageMap: Record<string, AbandonedRow> = {}
   for (const r of rows) {

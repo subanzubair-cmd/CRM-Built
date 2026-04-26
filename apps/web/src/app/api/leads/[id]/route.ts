@@ -273,8 +273,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     activityEntries.push({ action: 'STAGE_CHANGE', detail: `Inventory stage changed to ${data.inventoryStage}` })
   }
   if (data.tags !== undefined && existing) {
-    const added = data.tags.filter((t: string) => !(existing.tags as string[]).includes(t))
-    const removed = (existing.tags as string[]).filter((t: string) => !data.tags!.includes(t))
+    const existingTags = (existing.tags ?? []) as string[]
+    const added = data.tags.filter((t: string) => !existingTags.includes(t))
+    const removed = existingTags.filter((t: string) => !data.tags!.includes(t))
     if (added.length > 0) {
       activityEntries.push({ action: 'TAG_ADDED', detail: `Tags added: ${added.join(', ')}` })
     }
@@ -461,7 +462,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     void emitEvent({ type: DomainEvents.LEAD_UNDER_CONTRACT, propertyId: id, userId, actorType: 'user', payload: { exitStrategy: data.exitStrategy } })
   }
   if (data.tags !== undefined) {
-    const addedTags = data.tags.filter((t: string) => !(existing.tags as string[]).includes(t))
+    const addedTags = data.tags.filter((t: string) => !((existing.tags ?? []) as string[]).includes(t))
     if (addedTags.length > 0) {
       void emitEvent({ type: DomainEvents.TAG_ADDED, propertyId: id, userId, actorType: 'user', payload: { tags: addedTags } })
     }
@@ -496,7 +497,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
   // Tag-added trigger (already has domain event above — add automation enqueue)
   if (data.tags !== undefined) {
-    const addedTags = data.tags.filter((t: string) => !(existing.tags as string[]).includes(t))
+    const addedTags = data.tags.filter((t: string) => !((existing.tags ?? []) as string[]).includes(t))
     if (addedTags.length > 0) {
       void enqueueAutomation({ trigger: 'TAG_ADDED', propertyId: id, meta: { tags: addedTags } })
     }

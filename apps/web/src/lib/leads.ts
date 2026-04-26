@@ -222,11 +222,13 @@ export async function getLeadCommStats(propertyIds: string[]): Promise<Record<st
     FROM "Property" p
     LEFT JOIN "Message" m ON m."propertyId" = p.id
     LEFT JOIN "Task" t ON t."propertyId" = p.id
-    WHERE p.id = ANY(:propertyIds)
+    WHERE p.id = ANY($1)
     GROUP BY p.id
     `,
     {
-      replacements: { propertyIds },
+      // Use bind (typed parameter passing) instead of replacements (string
+      // interpolation) so Postgres receives the JS array as a real text[].
+      bind: [propertyIds],
       type: QueryTypes.SELECT,
     },
   )

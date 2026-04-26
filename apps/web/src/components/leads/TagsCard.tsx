@@ -6,12 +6,12 @@ import { Tag, X, Plus } from 'lucide-react'
 
 interface Props {
   propertyId: string
-  initialTags: string[]
+  initialTags: string[] | null | undefined
 }
 
 export function TagsCard({ propertyId, initialTags }: Props) {
   const router = useRouter()
-  const [tags, setTags] = useState<string[]>(initialTags)
+  const [tags, setTags] = useState<string[]>(initialTags ?? [])
   const [input, setInput] = useState('')
   const [adding, setAdding] = useState(false)
   const [saving, setSaving] = useState(false)

@@ -1,13 +1,15 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2020",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
     "outDir": "./dist",
-    "rootDir": "./src",
     "paths": {
       "@crm/shared": ["../../packages/shared/src/index.ts"],
       "@crm/database": ["../../packages/database/src/index.ts"]
