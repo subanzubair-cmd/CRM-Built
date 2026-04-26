@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { FinancialGoal } from '@crm/database'
 
 export async function DELETE(
   _req: NextRequest,
@@ -11,11 +11,11 @@ export async function DELETE(
   const userId = ((session as any)?.user?.id ?? '') as string
   const { id } = await params
 
-  const goal = await (prisma as any).financialGoal.findUnique({ where: { id } })
+  const goal = await FinancialGoal.findByPk(id)
   if (!goal || goal.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  await (prisma as any).financialGoal.delete({ where: { id } })
+  await goal.destroy()
   return NextResponse.json({ ok: true })
 }

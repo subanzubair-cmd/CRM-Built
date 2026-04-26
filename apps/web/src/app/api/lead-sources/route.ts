@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { LeadSource } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -17,9 +17,10 @@ export async function GET() {
   const deny = requirePermission(session, 'settings.view')
   if (deny) return deny
 
-  const sources = await (prisma as any).leadSource.findMany({
-    select: { id: true, name: true, isActive: true, isSystem: true },
-    orderBy: { name: 'asc' },
+  const sources = await LeadSource.findAll({
+    attributes: ['id', 'name', 'isActive', 'isSystem'],
+    order: [['name', 'ASC']],
+    raw: true,
   })
 
   return NextResponse.json({ data: sources })
@@ -40,21 +41,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const existing = await (prisma as any).leadSource.findUnique({
+  const existing = await LeadSource.findOne({
     where: { name: parsed.data.name },
+    attributes: ['id'],
   })
   if (existing) {
     return NextResponse.json({ error: 'Lead source already exists' }, { status: 409 })
   }
 
-  const source = await (prisma as any).leadSource.create({
-    data: {
-      name: parsed.data.name,
-      isActive: true,
-      isSystem: false,
-    },
-    select: { id: true, name: true, isActive: true, isSystem: true },
+  const source = await LeadSource.create({
+    name: parsed.data.name,
+    isActive: true,
+    isSystem: false,
   })
 
-  return NextResponse.json({ data: source }, { status: 201 })
+  return NextResponse.json(
+    {
+      data: {
+        id: source.id,
+        name: source.name,
+        isActive: source.isActive,
+        isSystem: source.isSystem,
+      },
+    },
+    { status: 201 },
+  )
 }

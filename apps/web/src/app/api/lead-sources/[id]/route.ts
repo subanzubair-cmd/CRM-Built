@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { LeadSource, LeadCampaign } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -28,7 +28,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const source = await (prisma as any).leadSource.findUnique({ where: { id } })
+  const source = await LeadSource.findByPk(id)
   if (!source) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
@@ -42,8 +42,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   // Check for name collision when renaming
   if (parsed.data.name && parsed.data.name !== source.name) {
-    const duplicate = await (prisma as any).leadSource.findUnique({
+    const duplicate = await LeadSource.findOne({
       where: { name: parsed.data.name },
+      attributes: ['id'],
     })
     if (duplicate) {
       return NextResponse.json(
@@ -53,13 +54,16 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
   }
 
-  const updated = await (prisma as any).leadSource.update({
-    where: { id },
-    data: parsed.data,
-    select: { id: true, name: true, isActive: true, isSystem: true },
-  })
+  await source.update(parsed.data)
 
-  return NextResponse.json({ data: updated })
+  return NextResponse.json({
+    data: {
+      id: source.id,
+      name: source.name,
+      isActive: source.isActive,
+      isSystem: source.isSystem,
+    },
+  })
 }
 
 /**
@@ -74,26 +78,21 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const source = await (prisma as any).leadSource.findUnique({
-    where: { id },
-    include: { _count: { select: { leadCampaigns: true } } },
-  })
+  const source = await LeadSource.findByPk(id)
   if (!source) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const hasReferences = (source._count?.leadCampaigns ?? 0) > 0
+  const referenceCount = await LeadCampaign.count({ where: { leadSourceId: id } })
+  const hasReferences = referenceCount > 0
 
   if (!source.isSystem && !hasReferences) {
-    await (prisma as any).leadSource.delete({ where: { id } })
+    await source.destroy()
     return NextResponse.json({ success: true, deleted: true })
   }
 
   // Soft deactivate — system source or has references
-  await (prisma as any).leadSource.update({
-    where: { id },
-    data: { isActive: false },
-  })
+  await source.update({ isActive: false })
 
   return NextResponse.json({ success: true, deleted: false })
 }

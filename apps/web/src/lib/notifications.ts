@@ -1,24 +1,36 @@
-import { prisma } from '@/lib/prisma'
-import { User, Role, Op } from '@crm/database'
+import {
+  User,
+  Role,
+  Notification,
+  PropertyTeamAssignment,
+  Op,
+} from '@crm/database'
 
-type NotificationType = 'NEW_LEAD' | 'MESSAGE_RECEIVED' | 'TASK_DUE' | 'STAGE_CHANGE' | 'MENTION' | 'SYSTEM'
+type NotificationType =
+  | 'NEW_LEAD'
+  | 'MESSAGE_RECEIVED'
+  | 'TASK_DUE'
+  | 'STAGE_CHANGE'
+  | 'MENTION'
+  | 'SYSTEM'
 
 const FALLBACK_ROLE_NAMES = ['Lead Manager', 'Co-Owner', 'Owner']
 
 export async function getUnreadNotifications(userId: string) {
-  return prisma.notification.findMany({
+  return Notification.findAll({
     where: { userId, isRead: false },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
-    select: {
-      id: true,
-      type: true,
-      title: true,
-      body: true,
-      propertyId: true,
-      isRead: true,
-      createdAt: true,
-    },
+    order: [['createdAt', 'DESC']],
+    limit: 20,
+    attributes: [
+      'id',
+      'type',
+      'title',
+      'body',
+      'propertyId',
+      'isRead',
+      'createdAt',
+    ],
+    raw: true,
   })
 }
 
@@ -59,18 +71,20 @@ async function resolveRecipients(
       status: 'ACTIVE',
     },
     attributes: ['id'],
+    raw: true,
   })
 
   let recipients: string[] = peers.map((p) => p.id)
 
   if (recipients.length === 0) {
     // Fallback: any active non-vacationing user holding one of the fallback
-    // role names. Two-step query because the original Prisma version used
-    // a relation filter (`role: { name: { in: ... } }`) and Sequelize doesn't
-    // do those without an `include` join.
+    // role names. Two-step query because Sequelize doesn't do nested
+    // relation filters (`role: { name: { in: ... } }`) without an explicit
+    // include join.
     const fallbackRoles = await Role.findAll({
       where: { name: { [Op.in]: FALLBACK_ROLE_NAMES } },
       attributes: ['id'],
+      raw: true,
     })
     if (fallbackRoles.length > 0) {
       const fallbackUsers = await User.findAll({
@@ -80,6 +94,7 @@ async function resolveRecipients(
           status: 'ACTIVE',
         },
         attributes: ['id'],
+        raw: true,
       })
       recipients = fallbackUsers.map((u) => u.id)
     }
@@ -107,10 +122,11 @@ export async function createNotification(opts: {
 
     // Step 2: if we have a propertyId, also notify property team members
     if (opts.propertyId) {
-      const teamAssignments = await (prisma as any).propertyTeamAssignment.findMany({
+      const teamAssignments = await PropertyTeamAssignment.findAll({
         where: { propertyId: opts.propertyId },
-        select: { userId: true, roleId: true },
-      }) as Array<{ userId: string; roleId: string }>
+        attributes: ['userId', 'roleId'],
+        raw: true,
+      })
 
       for (const t of teamAssignments) {
         // Skip team member if they are the original user — already handled above
@@ -127,15 +143,15 @@ export async function createNotification(opts: {
     if (recipients.length === 0) return
 
     // Step 3: bulk insert, deduplicated
-    await prisma.notification.createMany({
-      data: recipients.map((uid) => ({
+    await Notification.bulkCreate(
+      recipients.map((uid) => ({
         userId: uid,
         type: opts.type,
         title: opts.title,
         body: opts.body,
         propertyId: opts.propertyId ?? null,
       })),
-    })
+    )
   } catch (err) {
     console.error('[notifications] createNotification failed:', err)
   }

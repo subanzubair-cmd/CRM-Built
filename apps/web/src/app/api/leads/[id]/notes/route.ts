@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  Note,
+  ActivityLog,
+  Property,
+  sequelize,
+} from '@crm/database'
 import { z } from 'zod'
 
 const CreateNoteSchema = z.object({
@@ -19,25 +24,33 @@ export async function POST(req: NextRequest, { params }: Params) {
   const parsed = CreateNoteSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const note = await prisma.note.create({
-    data: {
-      propertyId: id,
-      authorId: userId,
-      body: parsed.data.content,
-    },
-  })
-
-  await Promise.all([
-    prisma.activityLog.create({
-      data: {
+  // Wrap the three writes in a transaction so the note + activity log
+  // entry + lastActivityAt bump either all commit or all roll back.
+  // Matches the Prisma `Promise.all` semantics with stronger atomicity.
+  const note = await sequelize.transaction(async (tx) => {
+    const created = await Note.create(
+      {
+        propertyId: id,
+        authorId: userId,
+        body: parsed.data.content,
+      },
+      { transaction: tx },
+    )
+    await ActivityLog.create(
+      {
         propertyId: id,
         userId,
         action: 'NOTE_ADDED',
         detail: { description: 'Note added' },
       },
-    }),
-    prisma.property.update({ where: { id }, data: { lastActivityAt: new Date() } }),
-  ])
+      { transaction: tx },
+    )
+    await Property.update(
+      { lastActivityAt: new Date() },
+      { where: { id }, transaction: tx },
+    )
+    return created
+  })
 
   return NextResponse.json({ success: true, data: note }, { status: 201 })
 }

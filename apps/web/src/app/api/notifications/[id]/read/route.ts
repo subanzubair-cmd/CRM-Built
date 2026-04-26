@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Notification } from '@crm/database'
 
 export async function POST(
   _req: NextRequest,
@@ -10,11 +10,12 @@ export async function POST(
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  const userId = ((session as any)?.user?.id ?? '') as string
 
-  await prisma.notification.updateMany({
-    where: { id, userId: ((session as any)?.user?.id ?? '') as string },
-    data: { isRead: true, readAt: new Date() },
-  })
+  await Notification.update(
+    { isRead: true, readAt: new Date() },
+    { where: { id, userId } },
+  )
 
   return new NextResponse(null, { status: 204 })
 }

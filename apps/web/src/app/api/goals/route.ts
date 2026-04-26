@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { FinancialGoal } from '@crm/database'
 import { z } from 'zod'
 
 const GoalSchema = z.object({
@@ -18,9 +18,10 @@ export async function GET(req: NextRequest) {
     ? parseInt(req.nextUrl.searchParams.get('year')!)
     : new Date().getFullYear()
 
-  const goals = await (prisma as any).financialGoal.findMany({
+  const goals = await FinancialGoal.findAll({
     where: { userId, year },
-    orderBy: { type: 'asc' },
+    order: [['type', 'ASC']],
+    raw: true,
   })
 
   return NextResponse.json({ goals })
@@ -37,11 +38,15 @@ export async function POST(req: NextRequest) {
 
   const { year, type, target } = parsed.data
 
-  const goal = await (prisma as any).financialGoal.upsert({
-    where: { userId_year_type: { userId, year, type } },
-    update: { target },
-    create: { userId, year, type, target },
+  // Composite-unique upsert on (userId, year, type) — replicates Prisma's
+  // findUnique+update / create with the @@unique([userId, year, type]) key.
+  const [goal, created] = await FinancialGoal.findOrCreate({
+    where: { userId, year, type },
+    defaults: { userId, year, type, target },
   })
+  if (!created) {
+    await goal.update({ target })
+  }
 
   return NextResponse.json({ goal }, { status: 201 })
 }
