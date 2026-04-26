@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Appointment } from '@crm/database'
 import { enqueueCalendarSync } from '@/lib/queue'
 import { z } from 'zod'
 
@@ -28,10 +28,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (parsed.data.startAt) updates.startAt = new Date(parsed.data.startAt)
   if (parsed.data.endAt) updates.endAt = new Date(parsed.data.endAt)
 
-  const appointment = await prisma.appointment.update({
-    where: { id },
-    data: updates,
-  })
+  const appointment = await Appointment.findByPk(id)
+  if (!appointment) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await appointment.update(updates)
 
   await enqueueCalendarSync({ action: 'update', appointmentId: appointment.id })
 
@@ -45,12 +44,18 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params
 
   // Fetch googleEventId before deleting so the worker can remove it from Google Calendar
-  const existing = await prisma.appointment.findUnique({ where: { id }, select: { id: true, googleEventId: true } })
+  const existing = await Appointment.findByPk(id, {
+    attributes: ['id', 'googleEventId'],
+  })
 
-  await prisma.appointment.delete({ where: { id } })
+  await Appointment.destroy({ where: { id } })
 
   if (existing?.googleEventId) {
-    await enqueueCalendarSync({ action: 'delete', appointmentId: id, googleEventId: existing.googleEventId })
+    await enqueueCalendarSync({
+      action: 'delete',
+      appointmentId: id,
+      googleEventId: existing.googleEventId,
+    })
   }
 
   return NextResponse.json({ success: true })

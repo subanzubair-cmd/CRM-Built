@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { prisma } from '@/lib/prisma'
+import { Appointment, Property, Op } from '@crm/database'
 import { enqueueCalendarSync } from '@/lib/queue'
 import { z } from 'zod'
 
@@ -24,35 +24,36 @@ export async function GET(req: NextRequest) {
   const from = searchParams.get('from')
   const to = searchParams.get('to')
 
-  const where = {
-    ...(from || to
-      ? {
-          startAt: {
-            ...(from ? { gte: new Date(from) } : {}),
-            ...(to ? { lte: new Date(to) } : {}),
-          },
-        }
-      : {
-          startAt: { gte: new Date() },
-        }),
+  const where: Record<string, any> = {}
+  if (from || to) {
+    const range: Record<symbol, Date> = {}
+    if (from) range[Op.gte] = new Date(from)
+    if (to) range[Op.lte] = new Date(to)
+    where.startAt = range
+  } else {
+    where.startAt = { [Op.gte]: new Date() }
   }
 
-  const appointments = await prisma.appointment.findMany({
+  const appointments = await Appointment.findAll({
     where,
-    include: {
-      property: {
-        select: {
-          id: true,
-          streetAddress: true,
-          city: true,
-          state: true,
-          leadType: true,
-          propertyStatus: true,
-        },
+    include: [
+      {
+        model: Property,
+        as: 'property',
+        attributes: [
+          'id',
+          'streetAddress',
+          'city',
+          'state',
+          'leadType',
+          'propertyStatus',
+        ],
       },
-    },
-    orderBy: { startAt: 'asc' },
-    take: 500,
+    ],
+    order: [['startAt', 'ASC']],
+    limit: 500,
+    raw: true,
+    nest: true,
   })
 
   return NextResponse.json({ data: appointments })
@@ -67,12 +68,14 @@ export async function POST(req: NextRequest) {
   const parsed = CreateAppointmentSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const appointment = await prisma.appointment.create({
-    data: {
-      ...parsed.data,
-      startAt: new Date(parsed.data.startAt),
-      endAt: new Date(parsed.data.endAt),
-    },
+  const appointment = await Appointment.create({
+    propertyId: parsed.data.propertyId,
+    title: parsed.data.title,
+    description: parsed.data.description ?? null,
+    startAt: new Date(parsed.data.startAt),
+    endAt: new Date(parsed.data.endAt),
+    location: parsed.data.location ?? null,
+    attendees: parsed.data.attendees,
   })
 
   await enqueueCalendarSync({ action: 'create', appointmentId: appointment.id })

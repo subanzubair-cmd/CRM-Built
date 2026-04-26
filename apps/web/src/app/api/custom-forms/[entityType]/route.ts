@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { CustomFormConfig } from '@crm/database'
 import { z } from 'zod'
 
 const VALID_ENTITY_TYPES = ['leads', 'buyers', 'vendors', 'dispo', 'inventory']
@@ -16,8 +16,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Invalid entity type' }, { status: 400 })
   }
 
-  const config = await prisma.customFormConfig.findUnique({
+  const config = await CustomFormConfig.findOne({
     where: { entityType },
+    raw: true,
   })
 
   return NextResponse.json({ data: config ?? { entityType, sections: [] } })
@@ -49,11 +50,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const config = await prisma.customFormConfig.upsert({
+  const sectionsJson = JSON.parse(JSON.stringify(parsed.data.sections))
+  const [config, created] = await CustomFormConfig.findOrCreate({
     where: { entityType },
-    create: { entityType, sections: JSON.parse(JSON.stringify(parsed.data.sections)) },
-    update: { sections: JSON.parse(JSON.stringify(parsed.data.sections)) },
+    defaults: { entityType, sections: sectionsJson },
   })
+  if (!created) {
+    await config.update({ sections: sectionsJson })
+  }
 
   return NextResponse.json({ success: true, data: config })
 }

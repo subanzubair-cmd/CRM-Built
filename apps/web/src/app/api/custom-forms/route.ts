@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { CustomFormConfig } from '@crm/database'
 import { z } from 'zod'
-
-const VALID_ENTITY_TYPES = ['leads', 'buyers', 'vendors', 'dispo', 'inventory']
 
 const UpsertSchema = z.object({
   entityType: z.enum(['leads', 'buyers', 'vendors', 'dispo', 'inventory'] as const),
@@ -23,8 +21,9 @@ export async function GET() {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const configs = await prisma.customFormConfig.findMany({
-    orderBy: { entityType: 'asc' },
+  const configs = await CustomFormConfig.findAll({
+    order: [['entityType', 'ASC']],
+    raw: true,
   })
 
   return NextResponse.json({ data: configs })
@@ -39,12 +38,16 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
   const { entityType, sections } = parsed.data
+  const sectionsJson = JSON.parse(JSON.stringify(sections))
 
-  const config = await prisma.customFormConfig.upsert({
+  // Composite-unique upsert on entityType (which is the unique column).
+  const [config, created] = await CustomFormConfig.findOrCreate({
     where: { entityType },
-    create: { entityType, sections: JSON.parse(JSON.stringify(sections)) },
-    update: { sections: JSON.parse(JSON.stringify(sections)) },
+    defaults: { entityType, sections: sectionsJson },
   })
+  if (!created) {
+    await config.update({ sections: sectionsJson })
+  }
 
   return NextResponse.json({ success: true, data: config })
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Webhook } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -34,11 +34,16 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const webhook = await prisma.webhook.findUnique({ where: { id } })
+  const webhook = await Webhook.findByPk(id)
   if (!webhook) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const updated = await prisma.webhook.update({ where: { id }, data: parsed.data })
-  return NextResponse.json({ data: updated })
+  // events comes through as a readonly tuple from zod's enum.array; cast to a
+  // mutable string[] for Sequelize's TEXT[] column.
+  const updates: Record<string, unknown> = { ...parsed.data }
+  if (parsed.data.events) updates.events = [...parsed.data.events]
+
+  await webhook.update(updates)
+  return NextResponse.json({ data: webhook })
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -47,9 +52,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (deny) return deny
 
   const { id } = await params
-  const webhook = await prisma.webhook.findUnique({ where: { id } })
+  const webhook = await Webhook.findByPk(id)
   if (!webhook) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  await prisma.webhook.delete({ where: { id } })
+  await webhook.destroy()
   return NextResponse.json({ success: true })
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { prisma } from '@/lib/prisma'
+import { Webhook } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -24,8 +24,9 @@ export async function GET(_req: NextRequest) {
   const deny = requirePermission(session, 'settings.manage')
   if (deny) return deny
 
-  const webhooks = await prisma.webhook.findMany({
-    orderBy: { createdAt: 'desc' },
+  const webhooks = await Webhook.findAll({
+    order: [['createdAt', 'DESC']],
+    raw: true,
   })
 
   return NextResponse.json({ data: webhooks })
@@ -42,12 +43,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
   }
 
-  const webhook = await prisma.webhook.create({
-    data: {
-      friendlyName: parsed.data.friendlyName,
-      endpointUrl: parsed.data.endpointUrl,
-      events: parsed.data.events,
-    },
+  const webhook = await Webhook.create({
+    friendlyName: parsed.data.friendlyName,
+    endpointUrl: parsed.data.endpointUrl,
+    events: [...parsed.data.events],
   })
 
   return NextResponse.json({ data: webhook }, { status: 201 })
