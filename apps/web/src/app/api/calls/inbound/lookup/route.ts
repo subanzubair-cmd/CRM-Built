@@ -9,6 +9,7 @@ import {
   User,
   Op,
 } from '@crm/database'
+import { phoneVariants } from '@crm/shared'
 
 export async function GET(req: NextRequest) {
   const session = await auth()
@@ -17,11 +18,15 @@ export async function GET(req: NextRequest) {
   const phone = req.nextUrl.searchParams.get('phone')
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
 
+  // Match across every phone format variant — until legacy contacts
+  // are migrated to E.164, a Telnyx hit of "+14697997747" must still
+  // find a contact stored as "4697997747" or "(469) 799-7747".
+  const variants = phoneVariants(phone)
   const contactRows = await Contact.findAll({
     where: {
       [Op.or]: [
-        { phone },
-        { phone2: phone },
+        { phone: { [Op.in]: variants } },
+        { phone2: { [Op.in]: variants } },
       ],
     },
     attributes: ['id', 'firstName', 'lastName', 'phone', 'type'],

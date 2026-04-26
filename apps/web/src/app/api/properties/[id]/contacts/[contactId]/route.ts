@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
 import { updatePropertyContact, removeContactFromProperty } from '@/lib/contacts'
+import { toE164 } from '@crm/shared'
 
 const UpdateContactSchema = z.object({
   firstName: z.string().min(1).max(100).optional(),
@@ -27,8 +28,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const parsed = UpdateContactSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
+  // Normalize phone to E.164 if present, so updates round-trip with
+  // inbound webhooks. Pass-through if unparseable so we don't lose data.
+  const normalized = parsed.data.phone !== undefined
+    ? { ...parsed.data, phone: parsed.data.phone ? (toE164(parsed.data.phone) ?? parsed.data.phone) : parsed.data.phone }
+    : parsed.data
+
   try {
-    await updatePropertyContact(id, contactId, parsed.data)
+    await updatePropertyContact(id, contactId, normalized)
     return NextResponse.json({ success: true })
   } catch (err) {
     console.error('[contacts] update error:', err)

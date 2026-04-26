@@ -1,5 +1,6 @@
 export * from './types/index'
 export * from './schemas/index'
 export { normalizeAddress } from './utils/normalizeAddress'
+export { toE164, phoneVariants, formatPhoneForDisplay } from './utils/normalizePhone'
 export { substituteTemplateVars, buildTemplateContext } from './utils/templateVars'
 export type { TemplateContext } from './utils/templateVars'

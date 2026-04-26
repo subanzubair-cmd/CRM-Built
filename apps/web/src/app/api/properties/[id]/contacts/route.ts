@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
 import { addContactToProperty } from '@/lib/contacts'
+import { toE164 } from '@crm/shared'
 
 const AddContactSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -26,8 +27,14 @@ export async function POST(
   const parsed = AddContactSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
+  // Normalize phone to E.164 so it round-trips with inbound webhooks.
+  const normalized = {
+    ...parsed.data,
+    phone: parsed.data.phone ? (toE164(parsed.data.phone) ?? parsed.data.phone) : parsed.data.phone,
+  }
+
   try {
-    const result = await addContactToProperty(id, parsed.data)
+    const result = await addContactToProperty(id, normalized)
     return NextResponse.json({ success: true, data: result }, { status: 201 })
   } catch (err) {
     console.error('[contacts] add error:', err)

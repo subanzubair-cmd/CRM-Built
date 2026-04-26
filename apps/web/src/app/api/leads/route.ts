@@ -13,7 +13,7 @@ import {
   sequelize,
 } from '@crm/database'
 import { z } from 'zod'
-import { normalizeAddress } from '@crm/shared'
+import { normalizeAddress, toE164 } from '@crm/shared'
 import { enqueueAutomation } from '@/lib/queue'
 import { requirePermission } from '@/lib/auth-utils'
 import { checkRateLimit } from '@/lib/rate-limit'
@@ -142,11 +142,15 @@ export async function POST(req: NextRequest) {
         detail: { description: `Lead created from ${propertyData.source ?? 'manual entry'}` },
       } as any, { transaction: tx })
 
+      // Normalize the contact phone to E.164 (+1XXXXXXXXXX) so it
+      // matches the format inbound webhooks use. Falls back to the
+      // raw input if the value can't be parsed (e.g., international).
+      const normalizedPhone = contactPhone ? (toE164(contactPhone) ?? contactPhone) : null
       const contact = await Contact.create({
         type: propertyData.leadType === 'DIRECT_TO_SELLER' ? 'SELLER' : 'AGENT',
         firstName: contactFirstName,
         lastName: contactLastName ?? '',
-        phone: contactPhone ?? null,
+        phone: normalizedPhone,
         email: contactEmail ?? null,
       } as any, { transaction: tx })
 

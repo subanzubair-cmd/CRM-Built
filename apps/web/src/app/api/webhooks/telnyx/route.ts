@@ -10,11 +10,13 @@ import {
   Message,
   ActiveCall,
   ActivityLog,
+  User,
   Op,
   sequelize,
 } from '@crm/database'
 import { getActiveCommConfig } from '@/lib/comm-provider'
 import { recordHit, classifySource, snapshotHeaders } from '@/lib/webhook-log'
+import { toE164, phoneVariants } from '@crm/shared'
 
 /**
  * POST /api/webhooks/telnyx — UNIFIED Telnyx webhook (SMS + Voice).
@@ -209,6 +211,39 @@ async function resolveCampaignByPhone(
   return { leadCampaignId: null, leadCampaignType: null }
 }
 
+/**
+ * Property requires createdById (NOT NULL FK to User), but webhook
+ * requests have no session. Resolve a user to attribute webhook-
+ * created leads to:
+ *   1. The LeadCampaign's owner (assignedToId) — best semantic fit,
+ *      this is "their" lead.
+ *   2. Fall back to the first User in the system (typically Admin).
+ * Returns null only if there are zero users — in which case the
+ * webhook caller should bail.
+ *
+ * Cached for the lifetime of the process (and any campaign-specific
+ * cache miss falls through to the global fallback so the cache can't
+ * go stale after a campaign assignment changes).
+ */
+let cachedFallbackUserId: string | null = null
+async function resolveSystemUserId(leadCampaignId: string | null): Promise<string | null> {
+  if (leadCampaignId) {
+    const lc = await LeadCampaign.findByPk(leadCampaignId, {
+      attributes: ['assignedToId'],
+      raw: true,
+    }) as any
+    if (lc?.assignedToId) return lc.assignedToId
+  }
+  if (cachedFallbackUserId) return cachedFallbackUserId
+  const u = await User.findOne({
+    attributes: ['id'],
+    order: [['createdAt', 'ASC']],
+    raw: true,
+  }) as any
+  cachedFallbackUserId = u?.id ?? null
+  return cachedFallbackUserId
+}
+
 // ─── SMS events ────────────────────────────────────────────────────────
 
 async function handleSmsEvent(eventType: string, payload: any) {
@@ -312,8 +347,17 @@ async function handleSmsEvent(eventType: string, payload: any) {
 async function findAllLeadsForPhone(
   phone: string,
 ): Promise<Array<{ propertyId: string; contactId: string }>> {
+  // Match across every format variant the phone might be stored as
+  // — until the legacy data is migrated to E.164, contacts saved as
+  // "4697997747" still need to match a Telnyx hit of "+14697997747".
+  const variants = phoneVariants(phone)
   const rows = await Contact.findAll({
-    where: { [Op.or]: [{ phone }, { phone2: phone }] },
+    where: {
+      [Op.or]: [
+        { phone: { [Op.in]: variants } },
+        { phone2: { [Op.in]: variants } },
+      ],
+    },
     attributes: ['id'],
     include: [
       {
@@ -483,9 +527,16 @@ async function handleCallEvent(eventType: string, payload: any) {
         // 2) Look up the caller. If they're tied to ANY existing
         //    property — under any campaign — attribute the call there
         //    (no duplicate lead). Otherwise auto-create a lead so the
-        //    call doesn't vanish.
+        //    call doesn't vanish. Tolerant phone match handles legacy
+        //    contacts stored without the E.164 + prefix.
+        const callerVariants = phoneVariants(fromPhone)
         const contactRow = await Contact.findOne({
-          where: { [Op.or]: [{ phone: fromPhone }, { phone2: fromPhone }] },
+          where: {
+            [Op.or]: [
+              { phone: { [Op.in]: callerVariants } },
+              { phone2: { [Op.in]: callerVariants } },
+            ],
+          },
           include: [
             {
               model: PropertyContact,
@@ -692,6 +743,18 @@ async function autoCreateInboundLead(args: {
   console.log(
     `[webhook/telnyx] autoCreateInboundLead START fromPhone=${fromPhone} leadCampaignId=${leadCampaignId ?? '(null)'} leadCampaignType=${leadCampaignType ?? '(null)'} existingContactId=${existingContactId ?? '(null)'} → leadType=${leadType} (isOthers=${!leadCampaignId})`,
   )
+
+  // Property requires createdById; resolve the campaign owner
+  // (or the first user as fallback) so webhook leads have an owner.
+  const systemUserId = await resolveSystemUserId(leadCampaignId)
+  if (!systemUserId) {
+    console.error(
+      '[webhook/telnyx] autoCreateInboundLead ABORT: no User in DB to attribute lead to. Seed at least one user.',
+    )
+    return null
+  }
+  console.log(`[webhook/telnyx] resolved system user ${systemUserId}`)
+
   try {
     const result = await sequelize.transaction(async (tx) => {
       // When no campaign owns the dialed number, mark the lead so
@@ -711,6 +774,8 @@ async function autoCreateInboundLead(args: {
             activeLeadStage: 'NEW_LEAD',
             source: isOthers ? 'Others' : 'Inbound Call',
             tags: isOthers ? ['others'] : [],
+            createdById: systemUserId,
+            assignedToId: systemUserId,
             ...(leadCampaignId ? { leadCampaignId } : {}),
           } as any,
           { transaction: tx },
@@ -727,11 +792,16 @@ async function autoCreateInboundLead(args: {
       let contactId = existingContactId
       if (!contactId) {
         try {
+          // Always store phone in canonical E.164 so future lookups
+          // match without depending on whichever format the caller
+          // sent. toE164 returns null for unparseable input, so fall
+          // back to the raw value to avoid losing data.
+          const normalizedPhone = toE164(fromPhone) ?? fromPhone
           const contact = await Contact.create(
             {
               firstName: 'Unknown',
               lastName: 'Caller',
-              phone: fromPhone,
+              phone: normalizedPhone,
               type: contactType,
             } as any,
             { transaction: tx },
