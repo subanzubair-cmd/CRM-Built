@@ -1,47 +1,45 @@
 'use client'
 
-import dynamic from 'next/dynamic'
+import { useEffect, useState } from 'react'
+import { InboundCallNotification } from '@/components/calls/InboundCallNotification'
+import { ActiveCallBar } from '@/components/calls/ActiveCallBar'
 
 /**
- * ClientCallShell — wraps the inbound-call popup + persistent on-call
- * bar with `ssr: false` so they never render in the server-side HTML.
+ * ClientCallShell — defers the inbound-call popup + persistent on-call
+ * bar until AFTER hydration so they never appear in the server-side
+ * HTML.
  *
- * Why this exists: the (app) layout is a server component, so any
- * 'use client' component placed inside it (InboundCallNotification,
- * ActiveCallBar) STILL gets server-rendered with its initial state —
- * even if that initial render is null. The ensuing hydration step
- * compares server tree to client tree.
+ * Why we don't render them on the server:
+ *   - The (app) layout is a server component. Any 'use client'
+ *     component placed inside it still gets server-rendered with its
+ *     initial state, and the ensuing hydration step compares server
+ *     tree to client tree.
+ *   - Browser extensions (1Password, Grammarly, dark-mode injectors,
+ *     etc.) routinely inject or wrap DOM nodes around the layout
+ *     before React hydrates, causing structural mismatches that
+ *     `suppressHydrationWarning` can't silence.
  *
- * Browser extensions (1Password, Grammarly, dark-mode injectors,
- * Honey, etc.) routinely inject or wrap DOM nodes around the layout
- * before React hydrates. That causes a structural mismatch at the
- * AppLayout div level — server has `<div>...children...</div>`, but
- * client has `<header>` (or whatever the extension reordered to)
- * directly under TimezoneProvider. suppressHydrationWarning only
- * suppresses one level deep — the structural shift can't be silenced.
- *
- * Loading these via `dynamic({ ssr: false })` means they don't appear
- * in the server HTML at all. The hydration tree and the server tree
- * agree (both empty here), so any extension shenanigans happen AFTER
- * React has finished hydrating — they can no longer cause a mismatch.
+ * Originally this used `dynamic({ ssr: false })`, but Next.js wraps
+ * dynamic-imported components in a React.lazy + Suspense boundary,
+ * and HMR sometimes serves stale Suspense markers in the SSR HTML
+ * after the layout structure changes — producing the exact hydration
+ * error we were trying to avoid (`<Suspense>` server vs `<div>`
+ * client at the layout root). A simple mount-on-effect pattern
+ * achieves the same "client-only" outcome with zero Suspense
+ * boundaries, so both server and client trees see plain `null` at
+ * this slot until effects run after hydration.
  */
-const InboundCallNotification = dynamic(
-  () =>
-    import('@/components/calls/InboundCallNotification').then(
-      (m) => m.InboundCallNotification,
-    ),
-  { ssr: false },
-)
-
-const ActiveCallBar = dynamic(
-  () => import('@/components/calls/ActiveCallBar').then((m) => m.ActiveCallBar),
-  { ssr: false },
-)
 
 export function ActiveCallBarClient() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  if (!mounted) return null
   return <ActiveCallBar />
 }
 
 export function InboundCallNotificationClient() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  if (!mounted) return null
   return <InboundCallNotification />
 }

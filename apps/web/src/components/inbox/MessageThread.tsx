@@ -190,15 +190,20 @@ export function MessageThread({ messages: initialMessages }: Props) {
   }, [])
 
   return (
-    <div className="space-y-4 px-4 py-3">
+    <div className="space-y-3 py-2">
       {grouped.map((group) => (
         <div key={group.date}>
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-1 px-2">
             <div className="flex-1 h-px bg-gray-100" />
             <span className="text-[11px] text-gray-400 font-medium">{group.date}</span>
             <div className="flex-1 h-px bg-gray-100" />
           </div>
-          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden bg-white">
+          {/* No nested rounded rectangle — the outer Comm & Notes tab
+              already provides the card boundary. Removing the inner
+              border lets each row use the full width available so the
+              recording player + From/To meta don't have to compete
+              with stacked horizontal padding. */}
+          <div className="divide-y divide-gray-50">
             {group.msgs.map((msg) => {
               const isNote = msg.channel === 'NOTE'
               if (isNote) {
@@ -234,9 +239,10 @@ export function MessageThread({ messages: initialMessages }: Props) {
                   channel={msg.channel}
                   direction={msg.direction}
                   primary={isOutbound ? msg.to ?? null : msg.from ?? null}
+                  // From / To always rendered for SMS / CALL / EMAIL.
+                  fromAddress={msg.from ?? null}
+                  toAddress={msg.to ?? null}
                   byName={isOutbound ? (msg.sentBy?.name ?? null) : null}
-                  bySecondary={null}
-                  toSecondary={isOutbound && msg.channel === 'SMS' ? msg.to ?? null : null}
                   body={msg.channel === 'CALL' ? null : msg.body}
                   outcomeLabel={outcomeLabel}
                   outcomeKind={outcomeKind}

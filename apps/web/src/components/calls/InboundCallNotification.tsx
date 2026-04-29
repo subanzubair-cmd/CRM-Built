@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Phone, PhoneOff, X, Minimize2, Maximize2, ExternalLink } from 'lucide-react'
+import { toast } from 'sonner'
 import { useCallCleanup } from '@/components/calls/useCallCleanup'
 import { useTelnyxCall } from '@/components/calls/useTelnyxCall'
 import { useTabTitleIndicator } from '@/components/calls/useTabTitleIndicator'
@@ -209,15 +210,45 @@ export function InboundCallNotification() {
 
     // 3) Tell Telnyx (and the WebRTC SDK if we have an INVITE) to
     //    accept. We do this BEFORE navigation so the call is live by
-    //    the time the lead detail page renders.
+    //    the time the lead detail page renders. The fetch result is
+    //    awaited and inspected — if the server refuses (RBAC, race,
+    //    call already gone), we surface a toast and bail out of
+    //    navigation so the user doesn't land on the lead page
+    //    thinking the call is live when it isn't.
+    let answerOk = true
     try {
       if (incomingWebrtcCall) {
         await tx.answer(incomingWebrtcCall)
       } else {
-        await fetch(`/api/calls/${callId}/answer`, { method: 'POST' })
+        const res = await fetch(`/api/calls/${callId}/answer`, { method: 'POST' })
+        if (!res.ok) {
+          answerOk = false
+          const json = await res.json().catch(() => ({}))
+          const msg =
+            (typeof json?.error === 'string' && json.error) ||
+            `Couldn’t answer the call (${res.status}).`
+          toast.error(msg)
+        }
       }
     } catch (err) {
+      answerOk = false
       console.error('[inbound] answer failed:', err)
+      toast.error(err instanceof Error ? err.message : 'Couldn’t answer the call.')
+    }
+
+    if (!answerOk) {
+      // Roll back the optimistic claim so the popup can re-arm if
+      // the call comes back around (or another tab can grab it).
+      setAnsweredHere(null)
+      try {
+        window.localStorage.removeItem('crm.activeCall.id')
+      } catch {
+        /* ignore */
+      }
+      setActiveCall(null)
+      setLookup(null)
+      setIncomingWebrtcCall(null)
+      return
     }
 
     // 4) Client-side navigation to the lead detail. router.push is
@@ -242,24 +273,80 @@ export function InboundCallNotification() {
     setLookup(null)
   }
 
-  async function handleReject() {
+  function handleReject() {
     if (!activeCall) return
     const callId = activeCall.id
-    // Broadcast first so other tabs dismiss instantly.
+    const sdkCall = incomingWebrtcCall
+
+    // OPTIMISTIC DISMISS — popup goes away the instant the user
+    // clicks Reject. Broadcast first so other tabs dismiss too.
     sync.broadcastClaim(callId)
-    if (incomingWebrtcCall) {
-      await tx.reject(incomingWebrtcCall)
-    }
-    await fetch(`/api/calls/${callId}/reject`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: 'declined' }),
-    })
     setDismissed((prev) => new Set(prev).add(callId))
     setActiveCall(null)
     setLookup(null)
     setIncomingWebrtcCall(null)
     setAnsweredHere(null)
+
+    // Three-prong reject (best-effort, parallel):
+    //
+    //   1) SDK 603 Decline — terminates the WebRTC SIP leg. For
+    //      SIP-Credential routing this usually triggers Telnyx to
+    //      fork BYE upstream too, but it's not guaranteed.
+    //   2) Server REST hangup — POSTs /v2/calls/{id}/actions/hangup
+    //      with the call_control_id. Works if Telnyx exposes call
+    //      control for the connection (most modern accounts).
+    //   3) Local DB transition — marks the ActiveCall REJECTED so
+    //      the row leaves the Live Calls panel.
+    //
+    // Each prong runs independently — if any one of them succeeds
+    // in killing the call, we're done. The toast shows what the
+    // server side said back from Telnyx so we can pinpoint failures.
+    if (sdkCall) {
+      try {
+        void tx.reject(sdkCall)
+        console.log('[inbound/reject] SDK reject fired')
+      } catch (err) {
+        console.warn('[inbound/reject] SDK reject threw:', err)
+      }
+    }
+
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/calls/${callId}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'declined' }),
+        })
+        const json = await res.json().catch(() => null)
+        console.group('[inbound/reject] FULL DIAGNOSTIC')
+        console.log('callId:', callId)
+        console.log('http status:', res.status)
+        console.log('response json:', json)
+        console.log('providerHangup:', json?.providerHangup)
+        console.log('localTransition:', json?.localTransition)
+        console.groupEnd()
+
+        const ph = json?.providerHangup
+        const stamp = `Telnyx HTTP ${ph?.status ?? '—'}${ph?.detail ? ` · ${ph.detail}` : ''}`
+        if (ph?.ok) {
+          toast.success(`Reject accepted by Telnyx (${stamp}).`, {
+            duration: 8000,
+          })
+        } else if (ph?.attempted) {
+          toast.error(`Telnyx refused reject — ${stamp}`, { duration: 30000 })
+        } else {
+          toast.error(
+            `Reject not sent to Telnyx: ${ph?.detail ?? 'unknown'}`,
+            { duration: 30000 },
+          )
+        }
+      } catch (err) {
+        console.warn('[inbound/reject] server-side failed:', err)
+        toast.error(
+          `Reject request failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    })()
   }
 
   function handleClose() {

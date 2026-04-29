@@ -2,10 +2,7 @@ import { auth } from '@/auth'
 import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { GlobalHeader } from '@/components/layout/GlobalHeader'
-import {
-  InboundCallNotificationClient,
-  ActiveCallBarClient,
-} from '@/components/calls/ClientCallShell'
+import { AppShellClient } from '@/components/layout/AppShellClient'
 import { TimezoneProvider } from '@/components/providers/TimezoneProvider'
 import { getCompanySettings } from '@/lib/company-settings'
 
@@ -19,29 +16,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // regardless of the user's machine locale.
   const { timezone } = await getCompanySettings()
 
+  // GlobalHeader and Sidebar are SERVER components — they await auth()
+  // and hit the DB. We render them here on the server and pass the
+  // resulting JSX tree as props to AppShellClient (a client
+  // component). AppShellClient never imports them, so its bundle
+  // doesn't transitively pull in Sequelize / pg / @crm/database.
+  // It only decides WHEN to mount them (after hydration) so browser
+  // extensions can't trip a structural hydration mismatch.
   return (
-    // InboundCallNotification is moved to the end of the tree (it uses
-    // fixed positioning so visual order is irrelevant) so it can never
-    // be the first child a browser extension wraps — that's the
-    // commonest cause of the React hydration warning we were seeing.
-    // suppressHydrationWarning is still set on the wrapper as a belt
-    // for any other extension-driven attribute mismatches.
     <TimezoneProvider timezone={timezone}>
-      <div className="flex flex-col h-screen bg-slate-50" suppressHydrationWarning>
-        {/* Persistent on-call header — only renders for the tab that
-            claimed the active call. Survives all client-side nav.
-            Loaded with ssr:false to avoid browser-extension hydration
-            mismatch at the layout level. */}
-        <ActiveCallBarClient />
-        <GlobalHeader />
-        <div className="flex flex-1 overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 overflow-auto p-5">
-            {children}
-          </main>
-        </div>
-        <InboundCallNotificationClient />
-      </div>
+      <AppShellClient header={<GlobalHeader />} sidebar={<Sidebar />}>
+        {children}
+      </AppShellClient>
     </TimezoneProvider>
   )
 }

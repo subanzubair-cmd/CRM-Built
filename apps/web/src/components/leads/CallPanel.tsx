@@ -171,18 +171,62 @@ export function CallPanel({
   // Panel state
   const [minimized, setMinimized] = useState(false)
 
-  /* ─── Fetch Twilio numbers ──────────────────────────────────────── */
-
+  /* ─── Fetch Twilio numbers + lead's saved default ────────────────
+   *
+   * Two-stage load to keep "Sending From" snappy:
+   *
+   *   Stage 1 (fast — the dropdown options):
+   *     /api/twilio-numbers  →  set list + tentatively pre-select
+   *                             nums[0] so the picker is never blank.
+   *
+   *   Stage 2 (also fast — the saved default):
+   *     /api/leads/[id]/sender  →  upgrade selection to the lead's
+   *                                 saved defaultOutboundNumber, or
+   *                                 the campaign's phone number when
+   *                                 no per-lead default is set.
+   *
+   * Both fetches run in parallel; we don't wait for stage 2 before
+   * showing stage 1's result. End priority: lead default > campaign
+   * number > nums[0]. The user only sees a "switch" if a saved
+   * default exists and differs from nums[0], and that swap happens in
+   * the same render tick most of the time. */
   useEffect(() => {
+    let cancelled = false
+    let appliedSavedDefault = false
+
     fetch('/api/twilio-numbers')
       .then((r) => r.json())
-      .then((json) => {
-        const nums: TwilioNumber[] = json.data ?? []
+      .then((numsJson) => {
+        if (cancelled) return
+        const nums: TwilioNumber[] = numsJson?.data ?? []
         setTwilioNumbers(nums)
-        if (nums.length > 0) setSelectedNumber(nums[0].number)
+        // Only pre-select nums[0] if the saved-default fetch hasn't
+        // already set something better. Avoids a flash from default →
+        // nums[0] → default.
+        if (!appliedSavedDefault && nums.length > 0) {
+          setSelectedNumber((current) => current || nums[0].number)
+        }
       })
       .catch(() => {})
-  }, [])
+
+    fetch(`/api/leads/${propertyId}/sender`)
+      .then((r) => r.json())
+      .then((senderJson) => {
+        if (cancelled) return
+        const leadDefault: string | null = senderJson?.defaultOutboundNumber ?? null
+        const campaignNumber: string | null = senderJson?.campaignNumber ?? null
+        const preferred = leadDefault || campaignNumber
+        if (preferred) {
+          appliedSavedDefault = true
+          setSelectedNumber(preferred)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [propertyId])
 
   /* ─── Fetch tasks ───────────────────────────────────────────────── */
 

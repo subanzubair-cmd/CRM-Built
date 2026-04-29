@@ -121,9 +121,11 @@ function CommRow({ comm }: { comm: CommsRow }) {
       direction={comm.direction}
       primary={primary ?? null}
       name={counterpartyName || undefined}
+      // From / To always rendered — phone numbers for CALL/SMS,
+      // email addresses for EMAIL.
+      fromAddress={comm.from ?? null}
+      toAddress={comm.to ?? null}
       byName={isOutbound ? (comm.sentBy?.name ?? null) : null}
-      bySecondary={isOutbound ? (comm.sentBy?.phone ?? null) : null}
-      toSecondary={!isOutbound ? null : comm.to ?? null}
       body={isCall ? null /* outcome line covers it */ : comm.body}
       outcomeLabel={outcomeLabel}
       outcomeKind={outcomeKind}

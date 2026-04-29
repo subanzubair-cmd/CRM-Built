@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { X, Loader2, Clock, Paperclip, ChevronDown } from 'lucide-react'
+import { X, Loader2, Clock, Paperclip, ChevronDown, Check } from 'lucide-react'
+import { toast } from 'sonner'
 
 /* ── Types ── */
 
@@ -83,17 +84,49 @@ export function SendSmsModal({
   const charCount = message.length
   const segmentCount = Math.max(1, Math.ceil(charCount / 160))
 
-  /* ── Fetch Twilio numbers on mount ── */
+  /* ── Fetch Twilio numbers + lead's saved default on mount ──
+   *
+   * Two-stage load (matches CallPanel):
+   *   1) /api/twilio-numbers          → pre-select nums[0] immediately.
+   *   2) /api/leads/[id]/sender       → upgrade to saved default.
+   *
+   * Both fire in parallel. The picker is never blank — and if a saved
+   * default exists, the swap from nums[0] → saved default happens
+   * within the same render tick most of the time. */
   useEffect(() => {
+    let cancelled = false
+    let appliedSavedDefault = false
+
     fetch('/api/twilio-numbers')
       .then((r) => r.json())
-      .then((json) => {
-        const nums: TwilioNumber[] = json.data ?? []
+      .then((numsJson) => {
+        if (cancelled) return
+        const nums: TwilioNumber[] = numsJson?.data ?? []
         setTwilioNumbers(nums)
-        if (nums.length > 0) setSelectedFromNumber(nums[0].number)
+        if (!appliedSavedDefault && nums.length > 0) {
+          setSelectedFromNumber((current) => current || nums[0].number)
+        }
       })
       .catch(() => {})
-  }, [])
+
+    fetch(`/api/leads/${propertyId}/sender`)
+      .then((r) => r.json())
+      .then((senderJson) => {
+        if (cancelled) return
+        const leadDefault: string | null = senderJson?.defaultOutboundNumber ?? null
+        const campaignNumber: string | null = senderJson?.campaignNumber ?? null
+        const preferred = leadDefault || campaignNumber
+        if (preferred) {
+          appliedSavedDefault = true
+          setSelectedFromNumber(preferred)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [propertyId])
 
   /* ── Fetch SMS templates on mount ── */
   useEffect(() => {
@@ -112,18 +145,53 @@ export function SendSmsModal({
     if (tpl) setMessage(tpl.body)
   }
 
-  /* ── Set default outbound number for lead ── */
-  async function handleSetDefaultNumber() {
-    if (fromScope === 'default' && selectedFromNumber) {
-      try {
-        await fetch(`/api/leads/${propertyId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultOutboundNumber: selectedFromNumber }),
-        })
-      } catch {
-        // Non-blocking — still send the message
+  /* ── Save default outbound number for lead ──
+   *
+   * Used in two paths:
+   *   1) The user clicks the new "Confirm" button in the picker —
+   *      saves immediately, shows a toast, collapses the picker.
+   *   2) The user clicks "Send Right Away" while still on the
+   *      "Set as default for this lead" radio — handleSend() awaits
+   *      this before dispatching the SMS so the chosen number is
+   *      both the sender AND the new default in one step.
+   *
+   * Idempotent — a no-op when fromScope !== 'default'. */
+  const [savingDefault, setSavingDefault] = useState(false)
+  async function handleSetDefaultNumber(opts?: { silent?: boolean }) {
+    if (fromScope !== 'default' || !selectedFromNumber) return false
+    setSavingDefault(true)
+    try {
+      const res = await fetch(`/api/leads/${propertyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultOutboundNumber: selectedFromNumber }),
+      })
+      if (!res.ok) throw new Error('Save failed')
+      if (!opts?.silent) {
+        toast.success(`${selectedFromNumber} saved as default for this lead`)
       }
+      return true
+    } catch (err) {
+      if (!opts?.silent) {
+        toast.error('Failed to save default number')
+      }
+      return false
+    } finally {
+      setSavingDefault(false)
+    }
+  }
+
+  /* Standalone "Confirm" button handler — saves + collapses the
+   * picker so the affordance feels like a real action, not a hidden
+   * side-effect of sending. */
+  async function handleConfirmDefault() {
+    const ok = await handleSetDefaultNumber()
+    if (ok) {
+      setShowFromPicker(false)
+      // Reset scope so the next reopen of the picker doesn't keep
+      // re-saving on send. The number is now the saved default; the
+      // user can change it again later if needed.
+      setFromScope('this_message')
     }
   }
 
@@ -142,8 +210,11 @@ export function SendSmsModal({
     setError(null)
 
     try {
-      // If user chose to set number as default, do that first
-      await handleSetDefaultNumber()
+      // If user chose to set number as default, do that first.
+      // Silent so the send-success toast isn't preceded by a second
+      // "saved as default" toast — the user just clicked Send, the
+      // default save is implicit.
+      await handleSetDefaultNumber({ silent: true })
 
       const scheduledAt = buildScheduledAt()
 
@@ -277,6 +348,26 @@ export function SendSmsModal({
                     <span className="text-xs text-gray-600">Set as default for this lead</span>
                   </label>
                 </div>
+
+                {/* Confirm — only visible while the user is on the
+                    "Set as default" radio. Mirrors the Call Panel's
+                    Confirm button so the user can save the default
+                    independently of sending the message. */}
+                {fromScope === 'default' && (
+                  <button
+                    type="button"
+                    onClick={handleConfirmDefault}
+                    disabled={savingDefault || !selectedFromNumber}
+                    className="mt-1 w-full flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium py-2 rounded-lg transition-colors active:scale-[0.99]"
+                  >
+                    {savingDefault ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5" />
+                    )}
+                    Confirm
+                  </button>
+                )}
               </div>
             )}
           </div>

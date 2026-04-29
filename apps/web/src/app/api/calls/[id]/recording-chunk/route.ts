@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PassThrough } from 'stream'
+import { pipeline } from 'stream/promises'
 import { auth } from '@/auth'
 import { ActiveCall } from '@crm/database'
 import { minioClient, BUCKET, ensureBucket } from '@/lib/minio'
@@ -62,51 +64,110 @@ export async function POST(req: NextRequest, { params }: Params) {
   return NextResponse.json({ ok: true, seq, size: buf.length })
 }
 
+/**
+ * Finalize the recording by streaming each chunk object out of MinIO
+ * and into a single destination object — without ever holding the
+ * full recording in memory.
+ *
+ * A 4-hour call at 5-second chunks is ~2,880 chunks * ~30 KB ≈ 86 MB.
+ * The previous Buffer.concat approach loaded all of that into the Node
+ * heap on every finalize; under concurrent finalizes this OOMs the
+ * server. Streaming through a PassThrough lets MinIO's putObject use
+ * its internal multipart upload, so memory stays flat regardless of
+ * call length.
+ */
 async function finalizeRecording(callId: string, total: number) {
   const activeCall = await ActiveCall.findByPk(callId)
   if (!activeCall) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 })
   }
 
-  // Concatenate the chunks. MediaRecorder emits an init segment in chunk 0
-  // and continuation segments after; concatenating raw bytes yields a
-  // playable WebM/MP4 in practice. Long-term we'd remux server-side, but
-  // this works for typical sales calls (<30 min).
-  const chunks: Buffer[] = []
+  // Probe chunk 0 for content-type so the final object reports the
+  // right MIME. Bail if the very first chunk is missing — that means
+  // recording never actually started and there's nothing to assemble.
   let firstContentType = 'audio/webm'
-  let totalSize = 0
-  for (let i = 0; i < total; i++) {
-    const chunkKey = `recordings/${callId}/chunk-${String(i).padStart(5, '0')}.bin`
-    try {
-      const stream = await minioClient.getObject(BUCKET, chunkKey)
-      const stat = await minioClient.statObject(BUCKET, chunkKey)
-      if (i === 0) firstContentType = stat.metaData?.['content-type'] || firstContentType
-      const buf = await streamToBuffer(stream)
-      chunks.push(buf)
-      totalSize += buf.length
-    } catch (err) {
-      console.warn(`[recording-chunk] missing chunk ${i} for call ${callId}:`, err)
-    }
-  }
-
-  if (chunks.length === 0) {
+  try {
+    const stat = await minioClient.statObject(
+      BUCKET,
+      `recordings/${callId}/chunk-00000.bin`,
+    )
+    firstContentType = stat.metaData?.['content-type'] || firstContentType
+  } catch {
     return NextResponse.json({ ok: false, error: 'no chunks found' }, { status: 404 })
   }
 
-  const merged = Buffer.concat(chunks, totalSize)
   const ext = firstContentType.includes('mp4') ? 'mp4' : 'webm'
-  const yyyymm = new Date().toISOString().slice(0, 7)
+  // Partition by the call's actual start month, NOT finalize-now,
+  // so a call that crosses midnight on the last day of the month
+  // doesn't get filed under the wrong month's prefix. Falls back to
+  // current time only when the row has no startedAt (shouldn't
+  // happen — column is NOT NULL — but defensive).
+  const startedAt = (activeCall as any).startedAt as Date | null
+  const endedAtRaw = (activeCall as any).endedAt as Date | null
+  const partitionDate = startedAt ? new Date(startedAt) : new Date()
+  const yyyymm = partitionDate.toISOString().slice(0, 7)
   const finalKey = `recordings/${yyyymm}/${callId}.${ext}`
-  await minioClient.putObject(BUCKET, finalKey, merged, merged.length, {
+
+  // Compute duration BEFORE the upload — we need to write it into
+  // the WebM EBML header on the first chunk so the new-tab native
+  // audio preview shows duration immediately (and renders the
+  // 3-dot download menu without waiting for the file to be played
+  // through). For calls where endedAt isn't set yet (webhook
+  // didn't land), fall back to "now" so we still inject something
+  // sensible.
+  const endedAtForDuration = endedAtRaw ?? new Date()
+  const recordingDuration =
+    startedAt
+      ? Math.max(
+          1,
+          Math.round(
+            (new Date(endedAtForDuration).getTime() - new Date(startedAt).getTime()) / 1000,
+          ),
+        )
+      : null
+
+  // Upload reads from `through` while the loop below writes chunk
+  // bytes into it. MinIO's putObject does multipart internally for
+  // streams so memory stays bounded.
+  const through = new PassThrough({ highWaterMark: 1 * 1024 * 1024 })
+  const uploadPromise = minioClient.putObject(BUCKET, finalKey, through, undefined, {
     'Content-Type': firstContentType,
   })
 
+  ;(async () => {
+    let written = 0
+    for (let i = 0; i < total; i++) {
+      const chunkKey = `recordings/${callId}/chunk-${String(i).padStart(5, '0')}.bin`
+      try {
+        const stream = await minioClient.getObject(BUCKET, chunkKey)
+        await pipeline(stream, through, { end: false })
+        written++
+      } catch (err) {
+        // Single missing chunk doesn't kill the whole recording; the
+        // surrounding chunks still produce a playable file.
+        console.warn(`[recording-chunk] missing chunk ${i} for call ${callId}:`, err)
+      }
+    }
+    through.end()
+    return written
+  })().catch((err) => {
+    console.error('[recording-chunk] streaming concat failed:', err)
+    through.destroy(err instanceof Error ? err : new Error(String(err)))
+  })
+
+  try {
+    await uploadPromise
+  } catch (err) {
+    console.error('[recording-chunk] putObject failed:', err)
+    return NextResponse.json({ ok: false, error: 'finalize failed' }, { status: 500 })
+  }
+
   await activeCall.update({
     recordingStorageKey: finalKey,
-    recordingDuration: null, // populated by browser metadata or post-processing later
+    recordingDuration,
   } as any)
 
-  // Clean up the per-chunk objects (best-effort).
+  // Clean up the per-chunk objects (best-effort, parallel).
   await Promise.all(
     Array.from({ length: total }, (_, i) =>
       minioClient
@@ -115,14 +176,5 @@ async function finalizeRecording(callId: string, total: number) {
     ),
   )
 
-  return NextResponse.json({ ok: true, storageKey: finalKey, size: merged.length })
-}
-
-async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    stream.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
-    stream.on('end', () => resolve(Buffer.concat(chunks)))
-    stream.on('error', reject)
-  })
+  return NextResponse.json({ ok: true, storageKey: finalKey, durationSec: recordingDuration })
 }

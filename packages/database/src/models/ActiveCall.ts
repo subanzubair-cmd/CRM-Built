@@ -56,6 +56,15 @@ export class ActiveCall extends Model<
 
   @Column(DataType.TEXT) declare customerPhone: string | null
 
+  /**
+   * CRM-side phone number for this call.
+   *   OUTBOUND → the agent's outbound caller-ID (we dialed FROM).
+   *   INBOUND  → the CRM number that received (we were dialed AT).
+   * Used by /api/messages to populate Message.from / Message.to so
+   * the activity feed shows both sides for every call.
+   */
+  @Column(DataType.TEXT) declare crmNumber: string | null
+
   @AllowNull(false)
   @Default('INITIATING')
   @Column(DataType.TEXT)
@@ -142,6 +151,7 @@ export interface ActiveCallAttributes {
   leadCampaignId: string | null
   agentUserId: string | null
   customerPhone: string | null
+  crmNumber: string | null
   status: string
   supervisorMode: string | null
   direction: string

@@ -160,40 +160,57 @@ export async function GET(_req: NextRequest) {
   // plausibly live; a healthy call never needs this long in any one
   // phase. Anything past this is stuck and should be treated as ended.
   //
-  //   INITIATING > 2 min  → FAILED  (network dropped, SDK never connected)
-  //   RINGING    > 5 min  → NO_ANSWER (Telnyx default ring is ~30s; 5min
-  //                                    means a webhook was missed)
-  //   ACTIVE     > 4 hours → COMPLETED (no real human call lasts that long)
+  //   INITIATING > 2 min  → FAILED
+  //   RINGING    > 5 min  → NO_ANSWER
+  //   ACTIVE     > 4 hours → COMPLETED
+  //
+  // Throttle: Live Calls polls this endpoint every 3s × N tabs × N
+  // agents, and the sweep is a write. Without dedup, every poll
+  // serializes UPDATEs against the webhook handler and burns DB
+  // round-trips that almost never have anything to do. We gate the
+  // sweep behind a 30s in-process cooldown — way longer than any
+  // poll cycle, way shorter than the smallest sweep threshold.
+  const SWEEP_COOLDOWN_MS = 30_000
+  const sweepKey = '__crm_calls_sweep_at__'
+  const g = globalThis as any
+  const lastSweepAt: number = g[sweepKey] ?? 0
   const now = Date.now()
-  await Promise.all([
-    ActiveCall.update(
-      { status: 'FAILED', endedAt: new Date() } as any,
-      {
-        where: {
-          status: 'INITIATING',
-          startedAt: { [Op.lt]: new Date(now - 2 * 60 * 1000) },
+  if (now - lastSweepAt > SWEEP_COOLDOWN_MS) {
+    g[sweepKey] = now
+    // Fire-and-forget so the GET response time isn't held up by the
+    // UPDATE round-trips. Sweep results land asynchronously and
+    // affect the NEXT poll cycle, which is fine — these are
+    // already-stale rows being trimmed.
+    void Promise.all([
+      ActiveCall.update(
+        { status: 'FAILED', endedAt: new Date() } as any,
+        {
+          where: {
+            status: 'INITIATING',
+            startedAt: { [Op.lt]: new Date(now - 2 * 60 * 1000) },
+          },
         },
-      },
-    ).catch((err) => console.warn('[GET /api/calls] sweep INITIATING failed:', err)),
-    ActiveCall.update(
-      { status: 'NO_ANSWER', endedAt: new Date() } as any,
-      {
-        where: {
-          status: 'RINGING',
-          startedAt: { [Op.lt]: new Date(now - 5 * 60 * 1000) },
+      ).catch((err) => console.warn('[GET /api/calls] sweep INITIATING failed:', err)),
+      ActiveCall.update(
+        { status: 'NO_ANSWER', endedAt: new Date() } as any,
+        {
+          where: {
+            status: 'RINGING',
+            startedAt: { [Op.lt]: new Date(now - 5 * 60 * 1000) },
+          },
         },
-      },
-    ).catch((err) => console.warn('[GET /api/calls] sweep RINGING failed:', err)),
-    ActiveCall.update(
-      { status: 'COMPLETED', endedAt: new Date() } as any,
-      {
-        where: {
-          status: 'ACTIVE',
-          startedAt: { [Op.lt]: new Date(now - 4 * 60 * 60 * 1000) },
+      ).catch((err) => console.warn('[GET /api/calls] sweep RINGING failed:', err)),
+      ActiveCall.update(
+        { status: 'COMPLETED', endedAt: new Date() } as any,
+        {
+          where: {
+            status: 'ACTIVE',
+            startedAt: { [Op.lt]: new Date(now - 4 * 60 * 60 * 1000) },
+          },
         },
-      },
-    ).catch((err) => console.warn('[GET /api/calls] sweep ACTIVE failed:', err)),
-  ])
+      ).catch((err) => console.warn('[GET /api/calls] sweep ACTIVE failed:', err)),
+    ])
+  }
 
   try {
     const calls = await ActiveCall.findAll({

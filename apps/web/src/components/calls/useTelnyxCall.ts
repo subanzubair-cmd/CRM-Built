@@ -52,17 +52,23 @@ export function useTelnyxCall(): UseTelnyxCallApi {
   const [isMuted, setIsMuted] = useState(false)
   const [rawCall, setRawCall] = useState<any | null>(null)
 
-  // Recorder lifecycle is driven by call state.
-  useCallRecorder({ callId, rawCall, active: state === 'active' })
+  // Recorder + audio playback share the same lifecycle gate.
+  //
+  // We deliberately do NOT gate the recorder on `state === 'active'`:
+  // the Telnyx WebRTC SDK doesn't reliably fire an 'active' callUpdate
+  // notification on every call (the SDK's internal state machine and
+  // its public callUpdate stream don't always agree), so anchoring on
+  // 'active' caused recordings to silently never start. Instead, we
+  // arm both hooks while the call is in flight and let each hook's
+  // internal "wait for live remote audio" logic decide when to actually
+  // attach. The recorder's tryStart poll only fires MediaRecorder once
+  // a live audio track is present, so a few seconds of ringback are not
+  // captured before the answer.
+  const callInFlight =
+    state === 'connecting' || state === 'ringing' || state === 'active'
 
-  // Audio playback — attach the remote stream to a hidden <audio>
-  // element so the agent actually hears the customer + ringback.
-  // Active during ringing AND active so the agent hears the ringback
-  // tone Telnyx feeds back during the connecting/ringing phase.
-  useCallAudioPlayback({
-    rawCall,
-    active: state === 'ringing' || state === 'active' || state === 'connecting',
-  })
+  useCallRecorder({ callId, rawCall, active: callInFlight })
+  useCallAudioPlayback({ rawCall, active: callInFlight })
 
   const client = useMemo(() => getTelnyxClient(), [])
 
@@ -197,8 +203,37 @@ export function useTelnyxCall(): UseTelnyxCallApi {
   const reject = useCallback(async (incomingCall?: any) => {
     const target = incomingCall ?? rawCall
     if (!target) return
+    // For SIP Credential connections, Telnyx routes calls at the SIP
+    // layer and only obeys SIP-protocol signals to terminate. Our
+    // earlier 486 Busy sometimes left the call alive for the full
+    // No-Answer timeout (especially with "Simultaneous Ringing"
+    // enabled on the connection) because Telnyx interprets 486 as
+    // "this endpoint is busy, keep trying" instead of "end the call
+    // entirely".
+    //
+    // 603 Decline is the SIP code for "the called party explicitly
+    // declined this call — end it now". The Telnyx WebRTC SDK maps
+    // `hangup({ cause: 'CALL_REJECTED', causeCode: 21 })` to 603.
+    // This is the correct signal for both Voice API Application AND
+    // Credential SIP Connection setups, so we use it
+    // unconditionally for inbound rejects.
     try {
-      target.hangup()
+      if (typeof target.hangup === 'function') {
+        try {
+          target.hangup({ cause: 'CALL_REJECTED', causeCode: 21 })
+        } catch {
+          // Some SDK builds reject the cause object. Fall back to
+          // the SDK's own reject() (which sends 486 — not ideal,
+          // but better than nothing).
+          if (typeof target.reject === 'function') {
+            target.reject()
+          } else {
+            target.hangup()
+          }
+        }
+      } else if (typeof target.reject === 'function') {
+        target.reject()
+      }
     } catch (err) {
       console.warn('[useTelnyxCall] reject error:', err)
     }

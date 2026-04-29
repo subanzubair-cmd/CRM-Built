@@ -85,5 +85,16 @@ export {
   TEMPLATE_TYPE_VALUES,
 } from './enums'
 
-// Migration runner — exposed so apps/api can call `migrateUp()` at boot.
-export { migrateUp, migrateStatus, umzug, bootstrapFromPrismaHistory } from './migrations-umzug/umzug'
+// NOTE: migration runner exports (`migrateUp`, `migrateStatus`,
+// `umzug`, `bootstrapFromPrismaHistory`) are deliberately NOT
+// re-exported from this barrel. The `umzug` package transitively
+// imports `@rushstack/ts-command-line` which depends on Node's
+// `child_process` — pulling that into a client bundle (which
+// happens whenever a client component imports a model from this
+// barrel) breaks the build with `Module not found: child_process`.
+// The migration CLI and its tests import directly from
+// `./migrations-umzug/umzug` instead, and apps/api can do the
+// same. If a future caller really needs the runner from the
+// barrel, give it its own subpath export (e.g.
+// `@crm/database/migrations`) so it doesn't poison the
+// model-import path.

@@ -174,11 +174,24 @@ export async function getConversationMessages(propertyId: string, limit = 200) {
   )
   if (callIds.length > 0) {
     const { ActiveCall } = await import('@crm/database')
+    const { getActiveCommConfig } = await import('@/lib/comm-provider')
     const calls = await ActiveCall.findAll({
       where: { id: callIds },
-      attributes: ['id', 'cost', 'costCurrency', 'recordingStorageKey', 'startedAt', 'endedAt', 'status'],
+      attributes: [
+        'id',
+        'cost',
+        'costCurrency',
+        'recordingStorageKey',
+        'startedAt',
+        'endedAt',
+        'status',
+        'crmNumber',
+        'customerPhone',
+        'direction',
+      ],
       raw: true,
     }) as any[]
+    const commDefault = (await getActiveCommConfig())?.defaultNumber ?? null
     const byId = new Map<string, any>(calls.map((c) => [c.id, c]))
     for (const m of messages) {
       if (m.channel === 'CALL' && m.twilioSid) {
@@ -191,6 +204,17 @@ export async function getConversationMessages(propertyId: string, limit = 200) {
             ? Math.max(0, Math.round((new Date(c.endedAt).getTime() - new Date(c.startedAt).getTime()) / 1000))
             : null
           m.callStatus = c.status ?? null
+          // Read-time fallback: if Message.from / Message.to weren't
+          // populated when the disposition was saved (e.g. before the
+          // auto-fill landed), derive them from ActiveCall and the
+          // active comm provider's default outbound number so the
+          // activity row never goes blank for a known call.
+          if (!m.from || !m.to) {
+            const isInbound = (c.direction ?? m.direction) === 'INBOUND'
+            const crm = c.crmNumber || commDefault
+            if (!m.from) m.from = isInbound ? c.customerPhone : crm
+            if (!m.to) m.to = isInbound ? crm : c.customerPhone
+          }
         }
       }
     }

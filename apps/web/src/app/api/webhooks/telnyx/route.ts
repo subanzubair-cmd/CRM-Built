@@ -225,14 +225,36 @@ async function resolveCampaignByPhone(
  * Cached for the lifetime of the process — User rows are stable
  * within a session and the fallback is a single global read.
  */
+/** First-User fallback for ActivityLog.userId when the inbound flow
+ *  has no real authenticated agent. Cached for performance, but the
+ *  cache is verified-still-valid each time: if the cached user has
+ *  been deleted/disabled (FK insertion would fail), we re-resolve so
+ *  inbound lead creation doesn't silently break.
+ *
+ *  `forceRefresh` is used by the FK-error recovery path below so a
+ *  failed insert can re-enter this function, drop the stale cache,
+ *  and pick a different user. */
 let cachedFallbackUserId: string | null = null
-async function resolveSystemUserId(_leadCampaignId: string | null): Promise<string | null> {
-  if (cachedFallbackUserId) return cachedFallbackUserId
-  const u = await User.findOne({
+async function resolveSystemUserId(
+  _leadCampaignId: string | null,
+  opts?: { forceRefresh?: boolean },
+): Promise<string | null> {
+  if (cachedFallbackUserId && !opts?.forceRefresh) {
+    // Re-validate the cached id is still pointing at a live user.
+    // Cheap (PK lookup); avoids the FK insertion failure that
+    // previously left inbound webhooks returning ok+error silently.
+    const stillExists = (await User.findByPk(cachedFallbackUserId, {
+      attributes: ['id'],
+      raw: true,
+    })) as { id: string } | null
+    if (stillExists) return cachedFallbackUserId
+    cachedFallbackUserId = null
+  }
+  const u = (await User.findOne({
     attributes: ['id'],
     order: [['createdAt', 'ASC']],
     raw: true,
-  }) as any
+  })) as any
   cachedFallbackUserId = u?.id ?? null
   return cachedFallbackUserId
 }
@@ -573,6 +595,10 @@ async function handleCallEvent(eventType: string, payload: any) {
         await ActiveCall.create({
           conferenceName: callControlId,
           customerPhone: fromPhone,
+          // crmNumber = the CRM number we were dialed AT. Lets
+          // /api/messages auto-fill Message.to for inbound CALL
+          // messages so both sides show in the activity row.
+          crmNumber: toPhone ?? null,
           direction: 'INBOUND',
           status: 'RINGING',
           ...(propertyId ? { propertyId } : {}),
@@ -739,7 +765,7 @@ async function autoCreateInboundLead(args: {
 
   // Property requires createdById; resolve the campaign owner
   // (or the first user as fallback) so webhook leads have an owner.
-  const systemUserId = await resolveSystemUserId(leadCampaignId)
+  let systemUserId = await resolveSystemUserId(leadCampaignId)
   if (!systemUserId) {
     console.error(
       '[webhook/telnyx] autoCreateInboundLead ABORT: no User in DB to attribute lead to. Seed at least one user.',
@@ -835,6 +861,68 @@ async function autoCreateInboundLead(args: {
     )
     return result
   } catch (err: any) {
+    // Force-refresh the cached fallback user once on FK / constraint
+    // failures involving createdById or assignedToId — the cached
+    // user was likely deleted or disabled. Retry with a fresh pick.
+    const looksLikeFallbackUserDeleted =
+      err?.name === 'SequelizeForeignKeyConstraintError' &&
+      typeof err?.message === 'string' &&
+      /createdById|assignedToId/.test(err.message)
+    if (looksLikeFallbackUserDeleted) {
+      console.warn(
+        '[webhook/telnyx] FK error suggests cached fallback user is gone; refreshing and retrying once.',
+      )
+      const fresh = await resolveSystemUserId(leadCampaignId, { forceRefresh: true })
+      if (fresh && fresh !== systemUserId) {
+        systemUserId = fresh
+        try {
+          // One retry with the fresh user. We re-enter the same
+          // transaction body via a minimal inline create — duplicating
+          // the full block isn't worth the bytes, and a single
+          // refresh is enough to recover.
+          const result = await sequelize.transaction(async (tx) => {
+            const isOthers = !leadCampaignId
+            const property = await Property.create(
+              {
+                leadType,
+                leadStatus: 'ACTIVE',
+                propertyStatus: 'LEAD',
+                activeLeadStage: 'NEW_LEAD',
+                source: isOthers ? 'Others' : 'Inbound Call',
+                tags: isOthers ? ['others'] : [],
+                createdById: systemUserId,
+                assignedToId: systemUserId,
+                ...(leadCampaignId ? { leadCampaignId } : {}),
+              } as any,
+              { transaction: tx },
+            )
+            let contactId = existingContactId
+            if (!contactId) {
+              const normalizedPhone = toE164(fromPhone) ?? fromPhone
+              const contact = await Contact.create(
+                { firstName: 'Unknown', lastName: 'Caller', phone: normalizedPhone, type: contactType } as any,
+                { transaction: tx },
+              )
+              contactId = contact.id
+            }
+            await PropertyContact.create(
+              { propertyId: property.id, contactId, isPrimary: true } as any,
+              { transaction: tx },
+            )
+            return property.id
+          })
+          console.log(
+            `[webhook/telnyx] autoCreateInboundLead RECOVERED on retry property=${result} from=${fromPhone}`,
+          )
+          return result
+        } catch (retryErr: any) {
+          console.error(
+            '[webhook/telnyx] autoCreateInboundLead retry FAILED:',
+            retryErr?.message,
+          )
+        }
+      }
+    }
     console.error(
       `[webhook/telnyx] autoCreateInboundLead FAILED at top level for ${fromPhone}:`,
       err?.name,

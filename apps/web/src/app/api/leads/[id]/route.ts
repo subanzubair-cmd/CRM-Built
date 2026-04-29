@@ -16,6 +16,7 @@ import {
   Conversation,
   EsignDocument,
   LeadCampaign,
+  TwilioNumber,
   Contact,
   sequelize,
 } from '@crm/database'
@@ -87,27 +88,45 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const property = await Property.findByPk(id, {
+  const property = (await Property.findByPk(id, {
     attributes: [
       'id', 'contractPrice', 'offerPrice', 'askingPrice', 'expectedProfit',
       'exitStrategy', 'propertyStatus', 'offerType', 'offerDate',
       'expectedProfitDate', 'contractDate', 'scheduledClosingDate', 'contingencies',
+      // defaultOutboundNumber + the campaign's phone number drive the
+      // SendSmsModal / CallPanel "Sending From" pre-selection. Without
+      // these, the modals fell back to twilioNumbers[0] and the user's
+      // saved per-lead default was never honored.
+      'defaultOutboundNumber', 'leadCampaignId',
     ],
-    raw: true,
-  }) as any
+    include: [
+      {
+        model: LeadCampaign,
+        as: 'leadCampaign',
+        attributes: ['id'],
+        include: [
+          { model: TwilioNumber, as: 'phoneNumber', attributes: ['number'] },
+        ],
+      },
+    ],
+  })) as any
   if (!property) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const json = property.get({ plain: true })
 
   return NextResponse.json({
     data: {
-      ...property,
-      contractPrice: property.contractPrice ? Number(property.contractPrice) : null,
-      offerPrice: property.offerPrice ? Number(property.offerPrice) : null,
-      askingPrice: property.askingPrice ? Number(property.askingPrice) : null,
-      expectedProfit: property.expectedProfit ? Number(property.expectedProfit) : null,
-      offerDate: property.offerDate ? new Date(property.offerDate).toISOString() : null,
-      expectedProfitDate: property.expectedProfitDate ? new Date(property.expectedProfitDate).toISOString() : null,
-      contractDate: property.contractDate ? new Date(property.contractDate).toISOString() : null,
-      scheduledClosingDate: property.scheduledClosingDate ? new Date(property.scheduledClosingDate).toISOString() : null,
+      ...json,
+      contractPrice: json.contractPrice ? Number(json.contractPrice) : null,
+      offerPrice: json.offerPrice ? Number(json.offerPrice) : null,
+      askingPrice: json.askingPrice ? Number(json.askingPrice) : null,
+      expectedProfit: json.expectedProfit ? Number(json.expectedProfit) : null,
+      offerDate: json.offerDate ? new Date(json.offerDate).toISOString() : null,
+      expectedProfitDate: json.expectedProfitDate ? new Date(json.expectedProfitDate).toISOString() : null,
+      contractDate: json.contractDate ? new Date(json.contractDate).toISOString() : null,
+      scheduledClosingDate: json.scheduledClosingDate ? new Date(json.scheduledClosingDate).toISOString() : null,
+      // Flatten the campaign join so the modal can read it directly.
+      campaignNumber: json.leadCampaign?.phoneNumber?.number ?? null,
     },
   })
 }

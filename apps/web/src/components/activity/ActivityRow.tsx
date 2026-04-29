@@ -9,28 +9,22 @@ import {
   FileText,
   ExternalLink,
   Sparkles,
-  Webhook,
-  CheckCircle2,
-  XCircle,
-  ArrowRight,
 } from 'lucide-react'
 import Link from 'next/link'
 import { CallRecordingPlayer } from '@/components/calls/CallRecordingPlayer'
 
 /**
- * ActivityRow — unified row used by `/activity` and the lead-detail
- * Comm & Notes timeline. Everything channel-specific is data-driven so
- * the same component renders inbound/outbound calls, SMS, emails, and
- * notes consistently:
+ * ActivityRow — minimal, tight, single-row activity entry shared by
+ * `/activity` and the lead-detail Comm & Notes timeline.
  *
- *   ┌──────┬───────────────────────────────────────────────┐
- *   │ icon │ Counterparty (name or phone) │  timestamp     │
- *   │ box  │ ↳ phone arrow secondary                       │
- *   │      │ By <agent> · <agent phone>                    │
- *   │      │ [✓ LEAD CONNECTED (Other)]                    │
- *   │      │ <body, sms/email/note text>                   │
- *   │      │ [▶ Play] [Cost $] · [✨ Summ.] [L:-] [A:-] [🪝]│
- *   └──────┴───────────────────────────────────────────────┘
+ * Design principles:
+ *   - Tiny channel icon in a soft circle (no oversized colored boxes).
+ *   - Single bold headline (counterparty name OR direction verb when
+ *     no name resolves — never duplicated with the From/To meta).
+ *   - One thin meta line of dot-separated facts.
+ *   - Live actions (recording player, cost) and AI placeholders sit on
+ *     a compact row that wraps + clips inside the parent container so
+ *     the recording player never bleeds past the right edge.
  */
 
 export interface ActivityRowProps {
@@ -40,15 +34,15 @@ export interface ActivityRowProps {
   primary: string | null
   /** Counterparty name (resolved contact). */
   name?: string | null
-  /** Sender display ("By <name>") for outbound messages. */
+  /** Sender phone or email — ALWAYS rendered when provided. */
+  fromAddress?: string | null
+  /** Recipient phone or email — ALWAYS rendered when provided. */
+  toAddress?: string | null
+  /** Sender display ("By <name>") — typically only for outbound. */
   byName?: string | null
-  /** Sender phone/email for outbound. */
-  bySecondary?: string | null
-  /** Recipient identifier ("To <number>") for outbound SMS/email. */
-  toSecondary?: string | null
   /** Body text — main message content for SMS/email/note. */
   body?: string | null
-  /** Optional outcome line shown as a chip below the header. */
+  /** Optional outcome line — colored inline label, calls only. */
   outcomeLabel?: string | null
   outcomeKind?: 'connected' | 'not-connected' | null
   /** Cost line — already formatted ("$0.0042"). */
@@ -62,31 +56,51 @@ export interface ActivityRowProps {
   leadHref?: string | null
 }
 
-function ChannelIcon({ channel, direction }: { channel: string; direction?: string | null }) {
+function ChannelIcon({
+  channel,
+  direction,
+  isMissed,
+}: {
+  channel: string
+  direction?: string | null
+  isMissed?: boolean
+}) {
+  // 12px icons keep the row compact. strokeWidth 1.75 reads as a
+  // refined glyph rather than a chunky button.
+  const props = { className: 'w-3 h-3', strokeWidth: 1.75 }
   if (channel === 'CALL') {
-    if (direction === 'INBOUND') return <PhoneIncoming className="w-4 h-4" strokeWidth={2.25} />
-    if (direction === 'OUTBOUND') return <PhoneOutgoing className="w-4 h-4" strokeWidth={2.25} />
-    return <PhoneMissed className="w-4 h-4" strokeWidth={2.25} />
+    if (isMissed) return <PhoneMissed {...props} />
+    if (direction === 'INBOUND') return <PhoneIncoming {...props} />
+    if (direction === 'OUTBOUND') return <PhoneOutgoing {...props} />
+    return <PhoneMissed {...props} />
   }
-  if (channel === 'SMS') return <MessageSquare className="w-4 h-4" strokeWidth={2.25} />
-  if (channel === 'EMAIL') return <Mail className="w-4 h-4" strokeWidth={2.25} />
-  return <FileText className="w-4 h-4" strokeWidth={2.25} />
+  if (channel === 'SMS') return <MessageSquare {...props} />
+  if (channel === 'EMAIL') return <Mail {...props} />
+  return <FileText {...props} />
 }
 
-/** Per-channel colors for the icon box + icon stroke. */
-function channelTheme(channel: string, direction?: string | null) {
+/** Channel-tinted icon — a soft circle with a colored glyph.
+ *  Direction is the primary signal: INBOUND green / OUTBOUND blue
+ *  across SMS, CALL, and EMAIL so the user can scan a long feed and
+ *  see who reached out vs who was reached. An inbound CALL with no
+ *  conversation evidence (no recording AND no disposition outcome) is
+ *  treated as MISSED and gets the rose tint instead of green. */
+function channelTheme(
+  channel: string,
+  direction?: string | null,
+  isMissed?: boolean,
+) {
   if (channel === 'CALL') {
-    if (direction === 'INBOUND') {
-      return { box: 'bg-emerald-50 ring-1 ring-emerald-100', icon: 'text-emerald-700' }
-    }
-    if (direction === 'OUTBOUND') {
-      return { box: 'bg-sky-50 ring-1 ring-sky-100', icon: 'text-sky-700' }
-    }
-    return { box: 'bg-rose-50 ring-1 ring-rose-100', icon: 'text-rose-700' }
+    if (isMissed) return 'bg-rose-50 text-rose-700'
+    if (direction === 'INBOUND') return 'bg-emerald-50 text-emerald-700'
+    if (direction === 'OUTBOUND') return 'bg-sky-50 text-sky-700'
+    return 'bg-rose-50 text-rose-700'
   }
-  if (channel === 'SMS') return { box: 'bg-blue-50 ring-1 ring-blue-100', icon: 'text-blue-700' }
-  if (channel === 'EMAIL') return { box: 'bg-violet-50 ring-1 ring-violet-100', icon: 'text-violet-700' }
-  return { box: 'bg-gray-50 ring-1 ring-gray-100', icon: 'text-gray-600' }
+  if (channel === 'SMS' || channel === 'EMAIL') {
+    if (direction === 'INBOUND') return 'bg-emerald-50 text-emerald-700'
+    return 'bg-sky-50 text-sky-700'
+  }
+  return 'bg-gray-50 text-gray-600'
 }
 
 function formatPhone(raw: string | null | undefined): string {
@@ -101,58 +115,26 @@ function formatPhone(raw: string | null | undefined): string {
   return raw
 }
 
-/** Outcome chip — colored capsule for LEAD CONNECTED / NOT-CONNECTED. */
-function OutcomeChip({
-  label,
-  kind,
-}: {
-  label: string
-  kind: 'connected' | 'not-connected' | null
-}) {
-  const isConnected = kind === 'connected'
-  const isNot = kind === 'not-connected'
-  const cls = isConnected
-    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-    : isNot
-    ? 'bg-rose-50 text-rose-700 ring-rose-200'
-    : 'bg-gray-50 text-gray-700 ring-gray-200'
-  const Icon = isConnected ? CheckCircle2 : isNot ? XCircle : null
-  return (
-    <span
-      className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ring-1 ${cls}`}
-    >
-      {Icon && <Icon className="w-3 h-3" />}
-      {label}
-    </span>
-  )
+function formatAddress(channel: string, raw: string | null | undefined): string {
+  if (!raw) return ''
+  if (channel === 'EMAIL') return raw
+  return formatPhone(raw)
 }
 
-/** Small disabled "coming soon" pill — used for the summary placeholder
- *  buttons until those features are wired. Faded but uniform so they
- *  don't fight the live actions for attention. */
-function PlaceholderPill({
-  children,
-  title,
-  tone = 'neutral',
-}: {
-  children: React.ReactNode
-  title: string
-  tone?: 'neutral' | 'pink'
-}) {
-  const cls =
-    tone === 'pink'
-      ? 'border-pink-200 text-pink-600 hover:bg-pink-50'
-      : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-  return (
-    <button
-      type="button"
-      disabled
-      title={title + ' (coming soon)'}
-      className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-white transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${cls}`}
-    >
-      {children}
-    </button>
-  )
+function directionVerb(channel: string, direction?: string | null, isMissed?: boolean): string {
+  if (channel === 'CALL') {
+    if (isMissed) return 'Missed call'
+    if (direction === 'OUTBOUND') return 'Outbound call'
+    if (direction === 'INBOUND') return 'Inbound call'
+    return 'Missed call'
+  }
+  if (channel === 'SMS') return direction === 'OUTBOUND' ? 'Outbound SMS' : 'Inbound SMS'
+  if (channel === 'EMAIL') return direction === 'OUTBOUND' ? 'Outbound email' : 'Inbound email'
+  return 'Note'
+}
+
+function Dot() {
+  return <span className="text-gray-300 select-none">·</span>
 }
 
 export function ActivityRow(props: ActivityRowProps) {
@@ -161,9 +143,9 @@ export function ActivityRow(props: ActivityRowProps) {
     direction,
     primary,
     name,
+    fromAddress,
+    toAddress,
     byName,
-    bySecondary,
-    toSecondary,
     body,
     outcomeLabel,
     outcomeKind,
@@ -177,150 +159,173 @@ export function ActivityRow(props: ActivityRowProps) {
   const isCall = channel === 'CALL'
   const isSms = channel === 'SMS'
   const isEmail = channel === 'EMAIL'
-  const theme = channelTheme(channel, direction)
 
-  // Compute the headline: prefer the resolved counterparty name if we
-  // have one. Phone becomes the secondary line when name is shown.
-  const formattedPrimary = primary ? formatPhone(primary) : null
-  const headline = name || formattedPrimary || '—'
-  const showSecondaryPhone = !!name && !!formattedPrimary
+  // An inbound call with no recording AND no disposition outcome is a
+  // missed call — the agent never picked up so there's no
+  // conversation. Re-color the icon + relabel the headline so a feed
+  // of unanswered inbound calls reads as red, not green.
+  const isMissedCall =
+    isCall &&
+    direction === 'INBOUND' &&
+    !hasRecording &&
+    !outcomeLabel
 
-  const directionVerb = isCall
-    ? direction === 'OUTBOUND'
-      ? 'Outbound call'
-      : direction === 'INBOUND'
-      ? 'Inbound call'
-      : 'Missed call'
-    : isSms
-    ? direction === 'OUTBOUND'
-      ? 'Outbound SMS'
-      : 'Inbound SMS'
-    : isEmail
-    ? direction === 'OUTBOUND'
-      ? 'Outbound email'
-      : 'Inbound email'
-    : 'Note'
+  const themeClass = channelTheme(channel, direction, isMissedCall)
+  const verb = directionVerb(channel, direction ?? null, isMissedCall)
+  const headline = name || verb
+  const showVerbSuffix = !!name
+
+  const fromFormatted = formatAddress(channel, fromAddress)
+  const toFormatted = formatAddress(channel, toAddress)
+
+  const fromToNode =
+    fromFormatted || toFormatted ? (
+      <span className="inline-flex items-baseline gap-1.5 flex-wrap">
+        {fromFormatted && (
+          <span className="inline-flex items-baseline gap-1">
+            <span className="text-gray-400">From</span>
+            <span className={`text-[12.5px] text-gray-700 ${isEmail ? '' : 'font-mono'}`}>
+              {fromFormatted}
+            </span>
+          </span>
+        )}
+        {fromFormatted && toFormatted && <span className="text-gray-300">→</span>}
+        {toFormatted && (
+          <span className="inline-flex items-baseline gap-1">
+            <span className="text-gray-400">To</span>
+            <span className={`text-[12.5px] text-gray-700 ${isEmail ? '' : 'font-mono'}`}>
+              {toFormatted}
+            </span>
+          </span>
+        )}
+      </span>
+    ) : null
+
+  // Missed calls: recolor the headline + the (optional) verb suffix
+  // rose so the entire row's identity reads as "this was missed" at a
+  // glance — not just the icon.
+  const headlineColor = isMissedCall ? 'text-rose-700' : 'text-gray-900'
+  const verbColor = isMissedCall ? 'text-rose-500' : 'text-gray-400'
 
   const headlineNode = (
-    <div className="flex items-baseline gap-2 flex-wrap min-w-0">
-      <span className="font-semibold text-gray-900 truncate">{headline}</span>
-      <span className="text-[10px] uppercase tracking-wide text-gray-400 font-medium">
-        {directionVerb}
-      </span>
-    </div>
+    <span className="inline-flex items-baseline gap-1.5 min-w-0">
+      <span className={`text-[13px] font-semibold ${headlineColor} truncate`}>{headline}</span>
+      {showVerbSuffix && (
+        <span className={`text-[11.5px] ${verbColor} whitespace-nowrap`}>· {verb}</span>
+      )}
+    </span>
   )
 
+  // LEAD NOT-CONNECTED uses amber, NOT rose — rose is reserved for
+  // missed calls. The two states are visually distinct now: missed =
+  // "we never picked up" (red), not-connected = "we did pick up but
+  // didn't reach the lead" (amber/warn).
+  const outcomeColor =
+    outcomeKind === 'connected'
+      ? 'text-emerald-700'
+      : outcomeKind === 'not-connected'
+      ? 'text-amber-700'
+      : 'text-gray-600'
+
   return (
-    <div className="px-5 py-4 flex items-start gap-3.5 group hover:bg-gray-50/40 transition-colors">
+    <div className="px-3 py-2 flex items-start gap-2.5 group hover:bg-gray-50/60 transition-colors">
+      {/* Tiny channel chip — 20×20 dot with colored glyph. */}
       <div
-        className={`w-10 h-10 rounded-xl ${theme.box} flex items-center justify-center flex-shrink-0 mt-0.5 ${theme.icon}`}
+        className={`w-5 h-5 rounded-full ${themeClass} flex items-center justify-center flex-shrink-0 mt-[3px]`}
       >
-        <ChannelIcon channel={channel} direction={direction ?? null} />
+        <ChannelIcon channel={channel} direction={direction ?? null} isMissed={isMissedCall} />
       </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
+      {/* min-w-0 + overflow-hidden are what keep the recording player
+          (and any long phone string) from bleeding past the right edge
+          when the row sits in a narrow container. */}
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="min-w-0 flex-1 truncate">
             {leadHref ? (
-              <Link href={leadHref} className="hover:underline decoration-gray-300 underline-offset-2">
+              <Link
+                href={leadHref}
+                className="hover:underline decoration-gray-300 underline-offset-2"
+              >
                 {headlineNode}
               </Link>
             ) : (
               headlineNode
             )}
-
-            {/* Secondary phone — shown only when we already used the
-                name as the headline. Avoids printing the number twice. */}
-            {showSecondaryPhone && (
-              <p className="text-xs font-mono text-gray-500 mt-0.5">{formattedPrimary}</p>
-            )}
-
-            {/* Agent + recipient meta. Calls only have "By"; outbound
-                SMS/email also show a "→ To" leg so the path is clear. */}
-            {(byName || toSecondary) && (
-              <p className="text-xs text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
-                {byName && (
-                  <>
-                    <span className="text-gray-400">By</span>
-                    <span className="font-medium text-gray-700">{byName}</span>
-                    {bySecondary && (
-                      <span className="font-mono text-gray-400">· {formatPhone(bySecondary)}</span>
-                    )}
-                  </>
-                )}
-                {byName && toSecondary && <ArrowRight className="w-3 h-3 text-gray-300" />}
-                {toSecondary && (
-                  <>
-                    <span className="text-gray-400">To</span>
-                    <span className="font-mono text-gray-600">{formatPhone(toSecondary)}</span>
-                  </>
-                )}
-              </p>
-            )}
-
-            {/* Outcome chip (calls only). */}
-            {outcomeLabel && (
-              <div className="mt-2">
-                <OutcomeChip label={outcomeLabel} kind={outcomeKind ?? null} />
-              </div>
-            )}
-
-            {/* Body — SMS / email text. Notes use a separate row. */}
-            {body && !isCall && (
-              <p className="text-sm text-gray-800 mt-2 leading-relaxed whitespace-pre-wrap break-words">
-                {body}
-              </p>
-            )}
           </div>
-
-          <span className="text-[11px] text-gray-400 whitespace-nowrap flex-shrink-0 mt-0.5">
+          <span className="text-[12.5px] text-gray-400 whitespace-nowrap flex-shrink-0">
             {timestamp}
           </span>
         </div>
 
-        {/* Action row: live affordances first (recording, cost), then a
-            soft divider, then the AI/automation placeholders. Single
-            line so the row stays compact. */}
-        {(isCall || isSms || isEmail) && (
-          <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-            {isCall && hasRecording && callIdForRecording && (
-              <CallRecordingPlayer callId={callIdForRecording} />
-            )}
-            {isCall && costFormatted && (
-              <span
-                className="inline-flex items-center text-[11px] font-mono font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full ring-1 ring-emerald-100"
-                title="Provider cost for this call"
-              >
-                {costFormatted}
+        {/* Meta — From → To plus By <Agent>. */}
+        {(fromToNode || byName) && (
+          <div className="text-[12.5px] text-gray-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+            {fromToNode}
+            {fromToNode && byName && <Dot />}
+            {byName && (
+              <span className="inline-flex items-baseline gap-1">
+                <span className="text-gray-400">By</span>
+                <span className="text-gray-700">{byName}</span>
               </span>
             )}
-            {/* Visual divider between live actions and placeholders.
-                Hidden when there are no live actions to avoid an
-                orphan separator. */}
-            {(isCall && (hasRecording || costFormatted)) && (
-              <span className="h-3 w-px bg-gray-200 mx-0.5" aria-hidden />
+          </div>
+        )}
+
+        {/* Outcome — calls only. Sized 2pt smaller than the headline
+            so "LEAD CONNECTED / NOT-CONNECTED" sits as a tight,
+            secondary status under the channel label rather than
+            competing with it. */}
+        {outcomeLabel && (
+          <p className={`text-[11px] font-semibold mt-1 ${outcomeColor}`}>{outcomeLabel}</p>
+        )}
+
+        {/* Body — SMS / email text only. */}
+        {body && !isCall && (
+          <p className="text-[14.5px] text-gray-700 mt-1 leading-snug whitespace-pre-wrap break-words">
+            {body}
+          </p>
+        )}
+
+        {/* Action row — recording player on its own row when present
+            (so it can use the full available width without overflowing),
+            cost + summary on a separate compact strip. */}
+        {isCall && hasRecording && callIdForRecording && (
+          <div className="mt-1.5 max-w-full overflow-hidden">
+            <CallRecordingPlayer callId={callIdForRecording} />
+          </div>
+        )}
+
+        {(isCall || isSms || isEmail) && (
+          <div className="mt-1.5 flex items-center gap-2 flex-wrap text-[12.5px]">
+            {isCall && costFormatted && (
+              <>
+                <span className="font-mono text-emerald-700" title="Provider cost">
+                  {costFormatted}
+                </span>
+                <Dot />
+              </>
             )}
-            <PlaceholderPill title="Generate AI summary" tone="pink">
+            <button
+              type="button"
+              disabled
+              title="Generate AI summary (coming soon)"
+              className="inline-flex items-center gap-1 text-pink-600 hover:text-pink-700 disabled:cursor-not-allowed disabled:opacity-70"
+            >
               <Sparkles className="w-3 h-3" />
-              Summ.
-            </PlaceholderPill>
-            <PlaceholderPill title="Lead status update">L: -</PlaceholderPill>
-            <PlaceholderPill title="Action items">A: -</PlaceholderPill>
-            <PlaceholderPill title="Trigger webhook">
-              <Webhook className="w-3 h-3" />
-            </PlaceholderPill>
+              <span className="font-medium">Summ.</span>
+            </button>
           </div>
         )}
       </div>
 
-      {/* Quick link icon for rows that have a lead context. */}
       {leadHref && (
         <Link
           href={leadHref}
-          className="text-gray-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-2"
+          className="text-gray-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1"
           title="Open lead detail"
         >
-          <ExternalLink className="w-3.5 h-3.5" />
+          <ExternalLink className="w-3 h-3" />
         </Link>
       )}
     </div>

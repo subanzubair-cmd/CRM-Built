@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { requirePermission, hasPermission } from '@/lib/auth-utils'
 import { checkDndByPhone } from '@/lib/dnd'
 import { rateLimitMutation } from '@/lib/rate-limit'
+import { getActiveCommConfig } from '@/lib/comm-provider'
 
 /**
  * POST /api/calls/start — WebRTC variant of /api/calls.
@@ -90,10 +91,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Final fallback: the active comm provider's `defaultNumber`
+  // (Settings → SMS & Phone Number Integration → Default Outbound
+  // Number). Without this fallback, calling a property that has no
+  // defaultOutboundNumber AND no campaign phone leaves callerNumber
+  // empty — the browser SDK still dials (using its own default) but
+  // we can't persist crmNumber, so the activity row shows no From/To.
+  const commConfig = await getActiveCommConfig()
   const callerNumber =
-    fromNumber ??
-    propertyContext?.defaultOutboundNumber ??
-    propertyContext?.campaignNumber ??
+    fromNumber ||
+    propertyContext?.defaultOutboundNumber ||
+    propertyContext?.campaignNumber ||
+    commConfig?.defaultNumber ||
     ''
 
   const conferenceName = `webrtc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -101,6 +110,10 @@ export async function POST(req: NextRequest) {
   const call = await ActiveCall.create({
     conferenceName,
     customerPhone: toNumber,
+    // crmNumber = the agent's outbound caller-ID (the number we dialed
+    // FROM). Lets /api/messages auto-fill Message.from on the
+    // disposition save so the activity row always shows both sides.
+    crmNumber: callerNumber || null,
     direction: 'OUTBOUND',
     status: 'INITIATING',
     agentUserId: userId,

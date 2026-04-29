@@ -1,5 +1,6 @@
 import { ActivityLog, Property, User, Message, ActiveCall, Contact, Op } from '@crm/database'
 import type { WhereOptions } from '@crm/database'
+import { getActiveCommConfig } from '@/lib/comm-provider'
 
 export interface ActivityFeedFilter {
   propertyId?: string
@@ -136,25 +137,58 @@ export async function getRecentComms(limit = 100): Promise<CommsRow[]> {
   if (callIds.length > 0) {
     const calls = await ActiveCall.findAll({
       where: { id: callIds },
-      attributes: ['id', 'cost', 'costCurrency', 'recordingStorageKey', 'startedAt', 'endedAt', 'status'],
+      attributes: [
+        'id',
+        'cost',
+        'costCurrency',
+        'recordingStorageKey',
+        'startedAt',
+        'endedAt',
+        'status',
+        // Needed for the read-time From/To fallback below.
+        'crmNumber',
+        'customerPhone',
+        'direction',
+      ],
       raw: true,
     }) as any[]
     for (const c of calls) callsById.set(c.id, c)
   }
+
+  // Fallback for the CRM-side number when an old ActiveCall row was
+  // created before crmNumber persistence existed. Uses the active
+  // comm provider's default outbound number — same value the SDK
+  // would have actually dialed from.
+  const commDefault = (await getActiveCommConfig())?.defaultNumber ?? null
 
   return messages.map((m) => {
     const callRow = m.channel === 'CALL' && m.twilioSid ? callsById.get(m.twilioSid) : null
     const durationSec = callRow?.startedAt && callRow?.endedAt
       ? Math.max(0, Math.round((new Date(callRow.endedAt).getTime() - new Date(callRow.startedAt).getTime()) / 1000))
       : null
+
+    // Read-time From/To enrichment for CALL messages whose Message
+    // row was saved before the auto-fill landed. We derive from the
+    // ActiveCall (and ultimately the comm provider default) so the
+    // activity row never goes blank for a known call.
+    let derivedFrom = m.from
+    let derivedTo = m.to
+    if (m.channel === 'CALL' && callRow && (!derivedFrom || !derivedTo)) {
+      const isInbound = (callRow.direction ?? m.direction) === 'INBOUND'
+      const crm = callRow.crmNumber || commDefault
+      const customer = callRow.customerPhone
+      if (!derivedFrom) derivedFrom = isInbound ? customer : crm
+      if (!derivedTo) derivedTo = isInbound ? crm : customer
+    }
+
     return {
       id: m.id,
       channel: m.channel,
       direction: m.direction,
       body: m.body,
       subject: m.subject,
-      from: m.from,
-      to: m.to,
+      from: derivedFrom,
+      to: derivedTo,
       twilioSid: m.twilioSid,
       createdAt: m.createdAt,
       property: m.property?.id ? m.property : null,

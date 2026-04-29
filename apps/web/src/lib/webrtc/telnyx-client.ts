@@ -14,6 +14,12 @@
  * coupling to the SDK's internals.
  */
 
+// Side-effect import — installs the `console.error` filter for
+// known-benign Telnyx noise. MUST come BEFORE the @telnyx/webrtc
+// import so the SDK's Logger picks up our patched console.error
+// when its module evaluates (the SDK captures the reference at init
+// time; a patch applied later inside getTelnyxClient is too late).
+import './console-patch'
 import { TelnyxRTC } from '@telnyx/webrtc'
 
 type Listener<T = any> = (data: T) => void
@@ -152,7 +158,19 @@ class TelnyxClientImpl {
     // the Telnyx SDK directly.
     client.on('telnyx.ready', () => this.emit('ready'))
     client.on('telnyx.error', (err: unknown) => {
-      console.error('[telnyx-client] SDK error:', err)
+      // Empty `{}` payloads come through routinely — Telnyx's SDK
+      // emits them on transient state transitions (mid-BYE, rapid
+      // answer/reject, peer renegotiation). Treat anything without a
+      // meaningful message as warn-level noise so we don't fire the
+      // dev overlay's red banner; only escalate when there's a real
+      // error message to surface.
+      const e = err as { message?: string; code?: string | number; cause?: unknown } | null
+      const hasMessage = !!(e && (e.message || e.code))
+      if (hasMessage) {
+        console.error('[telnyx-client] SDK error:', err)
+      } else {
+        console.warn('[telnyx-client] SDK error (empty payload, ignored):', err)
+      }
       this.emit('error', err)
     })
     client.on('telnyx.notification', (notification: TelnyxNotification) => {
@@ -239,6 +257,9 @@ class TelnyxClientImpl {
 }
 
 // Module-scoped singleton — one SIP registration per browser tab.
+// Note: console-noise filter is installed via `./console-patch`
+// (see import at top of file), which runs before @telnyx/webrtc
+// loads so the SDK's Logger captures the filtered console.error.
 let instance: TelnyxClientImpl | null = null
 export function getTelnyxClient(): TelnyxClientImpl {
   if (!instance) instance = new TelnyxClientImpl()

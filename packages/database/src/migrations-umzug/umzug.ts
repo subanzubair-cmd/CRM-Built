@@ -44,6 +44,10 @@ import {
   up as rejectModeUp,
   down as rejectModeDown,
 } from './20260426050000-add-reject-mode'
+import {
+  up as crmNumberUp,
+  down as crmNumberDown,
+} from './20260426060000-add-crm-number-to-active-call'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -104,6 +108,13 @@ const migrations = [
       rejectModeUp({ name: '20260426050000-add-reject-mode', context }),
     down: ({ context }: { context: any }) =>
       rejectModeDown({ name: '20260426050000-add-reject-mode', context }),
+  },
+  {
+    name: '20260426060000-add-crm-number-to-active-call',
+    up: ({ context }: { context: any }) =>
+      crmNumberUp({ name: '20260426060000-add-crm-number-to-active-call', context }),
+    down: ({ context }: { context: any }) =>
+      crmNumberDown({ name: '20260426060000-add-crm-number-to-active-call', context }),
   },
 ]
 
