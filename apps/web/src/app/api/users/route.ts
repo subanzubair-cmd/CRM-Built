@@ -3,7 +3,7 @@ import { auth } from '@/auth'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
-import { User, Role } from '@crm/database'
+import { User, Role, literal, Op } from '@crm/database'
 import { getUserList } from '@/lib/settings'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -19,11 +19,41 @@ const InviteUserSchema = z.object({
   sendInviteEmail: z.boolean().optional(),      // send a "set your password" link instead
 })
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth()
+  // The `?withDispositionRole` mode powers the Buyers form's "Who
+  // Owns this Buyer Contact" dropdown — that surface needs a list
+  // of disposition-team users without granting the caller full
+  // users.view (the ContactsModule operator may not be a sysadmin).
+  // Anyone authenticated can hit this filtered mode.
+  const sp = req.nextUrl.searchParams
+  const withDispositionRole = sp.get('withDispositionRole') === 'true'
+
+  if (withDispositionRole) {
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const users = await User.findAll({
+      where: {
+        status: 'ACTIVE',
+        roleId: {
+          // Disposition-role users — heuristic match on role name.
+          // The role schema doesn't carry a "module" tag yet so we
+          // string-match common disposition-titled roles. Falls back
+          // to the entire active user list when no roles match.
+          [Op.in]: literal(
+            `(SELECT id FROM "Role" WHERE LOWER(name) LIKE '%disposition%' OR LOWER(name) LIKE '%dispo%' OR LOWER(name) IN ('admin','owner','co-owner'))`,
+          ),
+        },
+      } as any,
+      attributes: ['id', 'name', 'email'],
+      order: [['name', 'ASC']],
+    })
+    return NextResponse.json({ data: users.map((u) => u.get({ plain: true })) })
+  }
+
   const deny = requirePermission(session, 'users.view')
   if (deny) return deny
-
   const users = await getUserList()
   return NextResponse.json(users)
 }

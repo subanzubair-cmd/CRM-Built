@@ -4,13 +4,44 @@ import { Buyer, Contact, Op, literal } from '@crm/database'
 import { getMarketScope } from '@/lib/auth-utils'
 import { z } from 'zod'
 
+/**
+ * `phones` / `emails` arrays match the Contact model's new multi-value
+ * shape. Each entry is `{ label, number/email }`. The first entry is
+ * mirrored to the legacy `phone` / `email` columns at write time so
+ * existing readers keep working without a coordinated migration.
+ */
+const PhoneSchema = z.object({
+  label: z.string().min(1).max(40).default('primary'),
+  number: z.string().min(1).max(40),
+})
+const EmailSchema = z.object({
+  label: z.string().min(1).max(40).default('primary'),
+  email: z.string().email(),
+})
+
 const CreateBuyerSchema = z.object({
   firstName: z.string().min(1).max(100),
   lastName: z.string().max(100).optional(),
+  /** Contact.type — Buyer (BUYER) or Agent (AGENT). Maps to the
+   *  spec's "Contact Type *" radio. */
+  contactType: z.enum(['BUYER', 'AGENT']).default('BUYER'),
   email: z.string().email().optional(),
-  phone: z.string().max(20).optional(),
+  phone: z.string().max(40).optional(),
+  /** Multi-value phones/emails. If passed, the first entry overrides
+   *  the legacy `phone` / `email` fields. */
+  phones: z.array(PhoneSchema).default([]),
+  emails: z.array(EmailSchema).default([]),
+  mailingAddress: z.string().max(500).optional(),
+  howHeardAbout: z.string().max(120).optional(),
+  assignedUserId: z.string().nullable().optional(),
   notes: z.string().max(2000).optional(),
   preferredMarkets: z.array(z.string()).default([]),
+  targetCities: z.array(z.string()).default([]),
+  targetZips: z.array(z.string()).default([]),
+  targetCounties: z.array(z.string()).default([]),
+  targetStates: z.array(z.string()).default([]),
+  customQuestions: z.record(z.unknown()).default({}),
+  vipFlag: z.boolean().default(false),
 })
 
 export async function GET(req: NextRequest) {
@@ -71,15 +102,22 @@ export async function POST(req: NextRequest) {
   const parsed = CreateBuyerSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const { firstName, lastName, email, phone, notes, preferredMarkets } = parsed.data
+  const data = parsed.data
 
-  if (phone || email) {
+  // Compute the canonical primary phone/email — pulled from phones[0] /
+  // emails[0] when present, else fall back to the legacy phone/email
+  // fields. This keeps existing readers (e.g. the legacy buyers blast
+  // route) working while the multi-value UI rolls out.
+  const primaryPhone = data.phones[0]?.number ?? data.phone ?? null
+  const primaryEmail = data.emails[0]?.email ?? data.email ?? null
+
+  if (primaryPhone || primaryEmail) {
     const duplicateContact = await Contact.findOne({
       where: {
-        type: 'BUYER',
+        type: data.contactType,
         [Op.or]: [
-          ...(phone ? [{ phone }] : []),
-          ...(email ? [{ email }] : []),
+          ...(primaryPhone ? [{ phone: primaryPhone }] : []),
+          ...(primaryEmail ? [{ email: primaryEmail }] : []),
         ],
       },
       include: [{ model: Buyer, as: 'buyerProfile', attributes: ['id'] }],
@@ -87,24 +125,35 @@ export async function POST(req: NextRequest) {
     if (duplicateContact) {
       const dup = duplicateContact.get({ plain: true }) as any
       return NextResponse.json({
-        error: `A buyer with this ${dup.phone === phone ? 'phone number' : 'email'} already exists: ${dup.firstName} ${dup.lastName ?? ''}`.trim(),
+        error: `A ${data.contactType === 'AGENT' ? 'agent' : 'buyer'} with this ${dup.phone === primaryPhone ? 'phone number' : 'email'} already exists: ${dup.firstName} ${dup.lastName ?? ''}`.trim(),
         existingBuyerId: dup.buyerProfile?.id,
       }, { status: 409 })
     }
   }
 
   const contact = await Contact.create({
-    type: 'BUYER',
-    firstName,
-    lastName,
-    email,
-    phone,
+    type: data.contactType,
+    firstName: data.firstName,
+    lastName: data.lastName,
+    email: primaryEmail,
+    phone: primaryPhone,
+    phones: data.phones,
+    emails: data.emails,
+    mailingAddress: data.mailingAddress,
+    howHeardAbout: data.howHeardAbout,
+    assignedUserId: data.assignedUserId ?? null,
   } as any)
 
   const buyerRow = await Buyer.create({
     contactId: contact.id,
-    preferredMarkets,
-    notes,
+    preferredMarkets: data.preferredMarkets,
+    targetCities: data.targetCities,
+    targetZips: data.targetZips,
+    targetCounties: data.targetCounties,
+    targetStates: data.targetStates,
+    customQuestions: data.customQuestions,
+    vipFlag: data.vipFlag,
+    notes: data.notes,
   } as any)
 
   const buyer = await Buyer.findByPk(buyerRow.id, {
