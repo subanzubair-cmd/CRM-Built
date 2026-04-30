@@ -8,6 +8,7 @@ const TABS = [
   { key: 'contacts', label: 'Contacts' },
   { key: 'inbox', label: 'Inbox' },
   { key: 'sms-campaign', label: 'SMS Campaign' },
+  { key: 'import-log', label: 'Import Log' },
 ] as const
 
 interface Props {

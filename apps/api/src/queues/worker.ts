@@ -119,14 +119,18 @@ async function fireNoContactAutomations(): Promise<void> {
 }
 
 // ── CSV Import Worker ──────────────────────────────────────────────────────────
+import { processCsvImportJob, type CsvImportJobData } from '../lib/csv-import-executor.js'
+
 new Worker(
   'csv-import',
   async (job) => {
-    // CSV import processing lands in Phase H — for now log so the
-    // queue health check stays clean.
-    console.log(`[csv-import] job ${job.id} — processor not yet implemented`)
+    if (job.name === 'process') {
+      await processCsvImportJob(job.data as CsvImportJobData)
+      return
+    }
+    console.log(`[csv-import] unknown job name: ${job.name}`)
   },
-  { connection },
+  { connection, concurrency: 2 },
 )
 
 // ── Bulk SMS Send Worker ───────────────────────────────────────────────────────

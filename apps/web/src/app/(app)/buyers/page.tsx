@@ -11,6 +11,7 @@ import {
 import { BuyerTable } from '@/components/buyers/BuyerTable'
 import { BuyersHeader } from '@/components/buyers/BuyersHeader'
 import { BuyersPageLayout } from '@/components/buyers/BuyersPageLayout'
+import { ImportLogClient } from '@/components/buyers/ImportLogClient'
 import { Users, Mail, Phone, Handshake, UserCheck, Trophy, MessageSquare, Megaphone } from 'lucide-react'
 
 interface PageProps {
@@ -32,6 +33,7 @@ export default async function BuyersPage({ searchParams }: PageProps) {
       {tab === 'contacts' && <ContactsTab searchParams={sp} session={session} />}
       {tab === 'inbox' && <InboxTab />}
       {tab === 'sms-campaign' && <SmsCampaignTab />}
+      {tab === 'import-log' && <ImportLogClient />}
     </BuyersPageLayout>
   )
 }
