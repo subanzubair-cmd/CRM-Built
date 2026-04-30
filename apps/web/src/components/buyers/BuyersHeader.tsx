@@ -22,9 +22,10 @@ export function BuyersHeader() {
           <button
             onClick={() => setBlastOpen(true)}
             className="flex items-center gap-1.5 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 transition-colors"
+            title="Send a one-off email to all eligible buyers"
           >
             <Send className="w-3.5 h-3.5" />
-            Send Blast
+            Send Email Blast
           </button>
           <button
             onClick={() => setModalOpen(true)}

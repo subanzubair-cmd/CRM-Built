@@ -12,9 +12,9 @@
  * calls router.refresh() so the server component re-runs.
  */
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Pencil, UserX, UserCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Pencil, UserX, UserCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { BuyerFormModal } from './BuyerFormModal'
 
@@ -40,8 +40,41 @@ type Snapshot = {
 
 export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
   const router = useRouter()
+  const params = useSearchParams()
   const [editOpen, setEditOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  // Auto-open the edit modal when arriving via the row-action
+  // "Edit" button on /buyers (which appends ?edit=1).
+  useEffect(() => {
+    if (params?.get('edit') === '1') {
+      setEditOpen(true)
+      // Drop the query so a refresh doesn't keep re-opening it.
+      const url = new URL(window.location.href)
+      url.searchParams.delete('edit')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [params])
+
+  async function deleteBuyer() {
+    if (
+      !confirm(
+        `Mark "${[snapshot.firstName, snapshot.lastName].filter(Boolean).join(' ') || 'this buyer'}" as inactive? They stop appearing in active lists but their data is preserved.`,
+      )
+    )
+      return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/buyers/${snapshot.buyerId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed.')
+      toast.success('Buyer marked inactive.')
+      router.push('/buyers')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function toggleActive() {
     if (!confirm(snapshot.isActive ? 'Mark this buyer as Inactive?' : 'Mark this buyer as Active?'))
@@ -81,6 +114,15 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
       >
         {snapshot.isActive ? <UserX className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
         {snapshot.isActive ? 'Mark Inactive' : 'Mark Active'}
+      </button>
+      <button
+        type="button"
+        onClick={deleteBuyer}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+        Delete
       </button>
 
       <BuyerFormModal

@@ -45,6 +45,21 @@ const UpdateBuyerSchema = z.object({
 
 type Params = { params: Promise<{ id: string }> }
 
+export async function GET(_req: NextRequest, { params }: Params) {
+  // Read access uses the loose `contacts.view` gate — anybody who
+  // can see the contacts list can read a single record.
+  const session = await auth()
+  if (!session?.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { id } = await params
+  const buyer = await Buyer.findByPk(id, {
+    include: [{ model: Contact, as: 'contact' }],
+  })
+  if (!buyer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json({ data: buyer.get({ plain: true }) })
+}
+
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'contacts.edit')

@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
-import { UserCheck, UserX, Send, Mail } from 'lucide-react'
+import { UserCheck, UserX, Send, Mail, Pencil, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { BuyerBlastModal } from './BuyerBlastModal'
 import { BulkSmsModal } from './BulkSmsModal'
 import { BuyerFilterBar } from './BuyerFilterBar'
@@ -35,6 +36,23 @@ export function BuyerTable({ rows, total }: Props) {
   const [blastOpen, setBlastOpen] = useState(false)
   const [bulkSmsOpen, setBulkSmsOpen] = useState(false)
   const [filter, setFilter] = useState<QuickFilterState>({ enabled: [], values: {} })
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function deleteBuyer(id: string, name: string) {
+    if (!confirm(`Mark "${name}" as inactive? This is a soft delete — they stop appearing in active lists but their data is preserved for reporting.`))
+      return
+    setDeletingId(id)
+    try {
+      const res = await fetch(`/api/buyers/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed.')
+      toast.success(`"${name}" marked inactive.`)
+      router.refresh()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id))
   const someSelected = rows.some((r) => selectedIds.has(r.id))
@@ -145,6 +163,7 @@ export function BuyerTable({ rows, total }: Props) {
               <th className="text-left px-4 py-2.5">Deals</th>
               <th className="text-left px-4 py-2.5">Status</th>
               <th className="text-left px-4 py-2.5">Added</th>
+              <th className="text-center px-4 py-2.5">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -202,6 +221,39 @@ export function BuyerTable({ rows, total }: Props) {
                 </td>
                 <td className="px-4 py-3 text-[11px] text-gray-400">
                   {formatDistanceToNow(new Date(row.createdAt), { addSuffix: true })}
+                </td>
+                <td
+                  className="px-4 py-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/buyers/${row.id}?edit=1`)}
+                      className="p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      title="Edit buyer"
+                      aria-label="Edit buyer"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        deleteBuyer(
+                          row.id,
+                          [row.contact.firstName, row.contact.lastName]
+                            .filter(Boolean)
+                            .join(' ') || 'this buyer',
+                        )
+                      }
+                      disabled={deletingId === row.id}
+                      className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                      title="Delete buyer"
+                      aria-label="Delete buyer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

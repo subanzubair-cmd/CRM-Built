@@ -12,10 +12,12 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
-import { Send, UserCheck, UserX } from 'lucide-react'
+import { Send, UserCheck, UserX, Pencil, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { BulkSmsModal } from '@/components/buyers/BulkSmsModal'
 import { BuyerFilterBar } from '@/components/buyers/BuyerFilterBar'
 import type { QuickFilterState } from '@/components/buyers/BuyerQuickFilter'
+import { VendorFormModal } from './VendorFormModal'
 
 interface VendorRow {
   id: string
@@ -42,6 +44,24 @@ export function VendorTable({ rows, total }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkSmsOpen, setBulkSmsOpen] = useState(false)
   const [filter, setFilter] = useState<QuickFilterState>({ enabled: [], values: {} })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function deleteVendor(id: string, name: string) {
+    if (!confirm(`Mark "${name}" as inactive? This is a soft delete — they stop appearing in active lists but their data is preserved.`))
+      return
+    setDeletingId(id)
+    try {
+      const res = await fetch(`/api/vendors/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed.')
+      toast.success(`"${name}" marked inactive.`)
+      router.refresh()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id))
   const someSelected = rows.some((r) => selectedIds.has(r.id))
@@ -132,6 +152,7 @@ export function VendorTable({ rows, total }: Props) {
                 <th className="text-left px-4 py-2.5">Markets</th>
                 <th className="text-left px-4 py-2.5">Status</th>
                 <th className="text-left px-4 py-2.5">Added</th>
+                <th className="text-center px-4 py-2.5">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -196,6 +217,39 @@ export function VendorTable({ rows, total }: Props) {
                   <td className="px-4 py-3 text-[11px] text-gray-400">
                     {formatDistanceToNow(new Date(row.createdAt), { addSuffix: true })}
                   </td>
+                  <td
+                    className="px-4 py-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(row.id)}
+                        className="p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                        title="Edit vendor"
+                        aria-label="Edit vendor"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          deleteVendor(
+                            row.id,
+                            [row.contact.firstName, row.contact.lastName]
+                              .filter(Boolean)
+                              .join(' ') || 'this vendor',
+                          )
+                        }
+                        disabled={deletingId === row.id}
+                        className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                        title="Delete vendor"
+                        aria-label="Delete vendor"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -213,6 +267,14 @@ export function VendorTable({ rows, total }: Props) {
             setSelectedIds(new Set())
           }}
           onSent={(blastId) => router.push(`/vendors/sms-campaigns/${blastId}`)}
+        />
+      )}
+
+      {editingId && (
+        <VendorFormModal
+          open={!!editingId}
+          onClose={() => setEditingId(null)}
+          vendorId={editingId}
         />
       )}
     </>

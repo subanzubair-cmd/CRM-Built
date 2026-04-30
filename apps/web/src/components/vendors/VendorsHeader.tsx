@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Plus } from 'lucide-react'
-import { AddVendorModal } from './AddVendorModal'
+import { VendorFormModal } from './VendorFormModal'
 
 export function VendorsHeader() {
   const [modalOpen, setModalOpen] = useState(false)
@@ -12,7 +12,9 @@ export function VendorsHeader() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Vendors</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Contractors, title companies, and service providers</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Contractors, title companies, and service providers
+          </p>
         </div>
         <button
           onClick={() => setModalOpen(true)}
@@ -22,7 +24,7 @@ export function VendorsHeader() {
           Add Vendor
         </button>
       </div>
-      <AddVendorModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <VendorFormModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </>
   )
 }
