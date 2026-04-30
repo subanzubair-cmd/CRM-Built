@@ -5,7 +5,6 @@ import {
   Users, Phone, PhoneCall, Plug, Zap, GitBranch, FileText, Tag, List, ArrowLeft, Globe2,
 } from 'lucide-react'
 import { getUserList, getRoleList, getCampaignListSimple, getLeadCampaignListSimple } from '@/lib/settings'
-import { AutomationsPanel } from '@/components/settings/AutomationsPanel'
 import { StatusAutomationsPanel } from '@/components/settings/StatusAutomationsPanel'
 import { TemplatesPanel } from '@/components/settings/TemplatesPanel'
 import { UsersList } from '@/components/settings/UsersList'
@@ -33,6 +32,14 @@ interface SettingCard {
   description: string
   icon: CardIcon
   label: string
+  /**
+   * Optional override for the card's link target. Most cards stay
+   * inside Settings via `?tab=<key>`; cards that point to a top-level
+   * page (e.g. Drip Campaigns lives at /campaigns) set this so the
+   * card jumps straight there rather than trying to render an inline
+   * panel.
+   */
+  href?: string
 }
 
 interface SettingSection {
@@ -59,7 +66,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
   {
     label: 'Automation',
     cards: [
-      { key: 'automations', title: 'Drip Campaigns', description: 'Add/Manage drip campaign automations', icon: Zap, label: 'Automations' },
+      { key: 'automations', title: 'Drip Campaigns', description: 'Add/Manage drip campaign automations', icon: Zap, label: 'Automations', href: '/drip-campaigns' },
       { key: 'status-automations', title: 'Status Automations', description: 'Manage tasks, drips, and stage triggers', icon: GitBranch, label: 'Status Automations' },
     ],
   },
@@ -92,6 +99,11 @@ export default async function SettingsPage({ searchParams }: PageProps) {
   const { tab } = await searchParams
   const currentUserId = (session.user as any).id as string
 
+  // The Drip Campaigns card moved to its own top-level page. Redirect
+  // any stale `?tab=automations` bookmark there so users don't land
+  // on the old (unrelated) AutomationsPanel rule editor.
+  if (tab === 'automations') redirect('/campaigns')
+
   const [users, roles, campaigns, leadCampaigns] = await Promise.all([
     getUserList(),
     getRoleList(),
@@ -120,7 +132,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
                   return (
                     <Link
                       key={card.key}
-                      href={`/settings?tab=${card.key}`}
+                      href={card.href ?? `/settings?tab=${card.key}`}
                       className="flex items-start gap-3 p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-300 hover:shadow-sm transition-all group"
                     >
                       <div className="w-10 h-10 rounded-lg bg-gray-50 group-hover:bg-blue-50 flex items-center justify-center flex-shrink-0 transition-colors">
@@ -183,8 +195,6 @@ export default async function SettingsPage({ searchParams }: PageProps) {
       {tab === 'call-flow' && (
         <CallFlowPanel canEdit={hasPermission(session, 'settings.manage')} />
       )}
-
-      {tab === 'automations' && <AutomationsPanel />}
 
       {tab === 'status-automations' && <StatusAutomationsPanel />}
 

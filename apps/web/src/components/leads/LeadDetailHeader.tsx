@@ -15,6 +15,7 @@ import { MergeLeadModal } from './MergeLeadModal'
 import { MoveToBuyerModal } from './MoveToBuyerModal'
 import { MoveToVendorModal } from './MoveToVendorModal'
 import { DeadLeadReasonModal } from './DeadLeadReasonModal'
+import { ActivateDripModal } from '@/components/campaigns/ActivateDripModal'
 
 /* ── Pipeline stages + move-out statuses ── */
 const DTS_PIPELINE_STAGES = [
@@ -159,6 +160,7 @@ export function LeadDetailHeader({
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [showBuyerModal, setShowBuyerModal] = useState(false)
   const [showVendorModal, setShowVendorModal] = useState(false)
+  const [showActivateDrip, setShowActivateDrip] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
 
   // Close actions dropdown on outside click
@@ -425,6 +427,21 @@ export function LeadDetailHeader({
         <MoveToVendorModal propertyId={id} contacts={contacts ?? []} onClose={() => setShowVendorModal(false)} />
       )}
 
+      <ActivateDripModal
+        open={showActivateDrip}
+        onClose={() => setShowActivateDrip(false)}
+        // Lead detail surfaces always operate on a Property — both
+        // LEADS and SOLD modules use subjectType=PROPERTY. We pick
+        // module by surface (TM/inventory/dispo currently route here
+        // for sold-side surfaces; we treat the full lead detail as
+        // LEADS for now since the activation modal's purpose on
+        // those surfaces is to enroll the seller for follow-up).
+        subjectType="PROPERTY"
+        subjectId={id}
+        module={viewContext === 'sold' ? 'SOLD' : 'LEADS'}
+        onActivated={() => router.refresh()}
+      />
+
       <div className="bg-white">
         {/* ═══ ROW 1 — Breadcrumb + Nav + Actions ═══ */}
         <div className="flex items-center justify-between py-2">
@@ -546,16 +563,13 @@ export function LeadDetailHeader({
                       {/* Automate */}
                       <div className="px-4 py-2 border-t border-gray-100">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Automate</p>
-                        <button onClick={async () => {
-                          setShowActions(false)
-                          const res = await fetch(`/api/campaigns`)
-                          if (res.ok) {
-                            const data = await res.json()
-                            const campaigns = data.data ?? data ?? []
-                            if (campaigns.length === 0) { alert('No campaigns available'); return }
-                            await patch({ campaignName: campaigns[0].name })
-                          }
-                        }} className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
+                        <button
+                          onClick={() => {
+                            setShowActions(false)
+                            setShowActivateDrip(true)
+                          }}
+                          className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors"
+                        >
                           <Zap className="w-4 h-4" /> Activate Drip
                         </button>
                       </div>
@@ -593,16 +607,13 @@ export function LeadDetailHeader({
                           <button onClick={() => { patch({ isFavorited: !isFavorited }); setShowActions(false) }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <Heart className="w-4 h-4" /> {isFavorited ? 'Unfavorite' : 'Favorite'}
                           </button>
-                          <button onClick={async () => {
-                            setShowActions(false)
-                            const res = await fetch(`/api/campaigns`)
-                            if (res.ok) {
-                              const data = await res.json()
-                              const campaigns = data.data ?? data ?? []
-                              if (campaigns.length === 0) { alert('No campaigns available'); return }
-                              await patch({ campaignName: campaigns[0].name })
-                            }
-                          }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
+                          <button
+                            onClick={() => {
+                              setShowActions(false)
+                              setShowActivateDrip(true)
+                            }}
+                            className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors"
+                          >
                             <Zap className="w-4 h-4" /> Activate Drip
                           </button>
                         </div>

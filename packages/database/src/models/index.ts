@@ -225,3 +225,7 @@ export {
   WebFormConfig,
   CompanySettings,
 }
+
+// Type-only re-exports — keep separate so client bundlers don't try to
+// pull runtime symbols for them.
+export type { CampaignStepConfig } from './CampaignStep'

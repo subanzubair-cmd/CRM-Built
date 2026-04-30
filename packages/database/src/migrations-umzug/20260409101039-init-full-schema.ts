@@ -11,10 +11,15 @@
  * never re-runs.
  */
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { MigrationFn } from 'umzug'
 import type { QueryInterface } from 'sequelize'
 
+// __dirname doesn't exist in ESM — derive it from import.meta.url so
+// this migration keeps reading the sibling .sql file regardless of
+// how it's loaded (umzug CLI, vitest, or app boot).
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const SQL_PATH = resolve(__dirname, 'sql', '20260409101039-init-full-schema.sql')
 
 export const up: MigrationFn<QueryInterface> = async ({ context }) => {

@@ -1,9 +1,15 @@
+import Link from 'next/link'
+import { ArrowLeft } from 'lucide-react'
 import { auth } from '@/auth'
 import { redirect, notFound } from 'next/navigation'
 import { getCampaignById } from '@/lib/campaigns'
 import { CampaignStepBuilder } from '@/components/campaigns/CampaignStepBuilder'
 import { EnrollmentList } from '@/components/campaigns/EnrollmentList'
-import { CampaignAiToggle } from '@/components/campaigns/CampaignAiToggle'
+// Conversational AI toggle is intentionally hidden per the customer
+// build of the drip-campaigns module. The DB column is preserved so
+// the feature can be brought back without a data migration; just
+// re-import + re-render the component below if/when that happens.
+// import { CampaignAiToggle } from '@/components/campaigns/CampaignAiToggle'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -17,10 +23,25 @@ const STATUS_BADGE: Record<string, string> = {
   ARCHIVED: 'bg-gray-100 text-gray-400',
 }
 
+function moduleLabel(m: string): string {
+  switch (m) {
+    case 'LEADS':
+      return 'Leads'
+    case 'BUYERS':
+      return 'Buyers'
+    case 'VENDORS':
+      return 'Vendors'
+    case 'SOLD':
+      return 'Sold'
+    default:
+      return m
+  }
+}
+
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params
   const campaign = await getCampaignById(id)
-  return { title: campaign?.name || 'Campaign' }
+  return { title: campaign?.name || 'Drip Campaign' }
 }
 
 export default async function CampaignDetailPage({ params }: PageProps) {
@@ -33,6 +54,13 @@ export default async function CampaignDetailPage({ params }: PageProps) {
 
   return (
     <div>
+      <Link
+        href="/drip-campaigns"
+        className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 transition-colors mb-2"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" />
+        Back to Drip Campaigns
+      </Link>
       <div className="flex items-start justify-between mb-5">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -57,7 +85,11 @@ export default async function CampaignDetailPage({ params }: PageProps) {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 space-y-4">
-          <CampaignStepBuilder campaignId={campaign.id} steps={campaign.steps as any} />
+          <CampaignStepBuilder
+            campaignId={campaign.id}
+            campaignModule={(campaign as any).module ?? 'LEADS'}
+            steps={campaign.steps as any}
+          />
         </div>
         <div className="space-y-4">
           <EnrollmentList campaignId={campaign.id} enrollments={campaign.enrollments as any} />
@@ -81,7 +113,12 @@ export default async function CampaignDetailPage({ params }: PageProps) {
                 <span className="font-medium">{campaign.enrollments.length}</span>
               </div>
             </div>
-            <CampaignAiToggle campaignId={campaign.id} initialEnabled={(campaign as any).aiEnabled ?? false} />
+            <div className="flex justify-between items-center pt-1.5 border-t border-gray-100 mt-2">
+              <span className="text-gray-500 text-sm">Module</span>
+              <span className="font-medium text-sm">
+                {moduleLabel((campaign as any).module ?? 'LEADS')}
+              </span>
+            </div>
           </div>
         </div>
       </div>

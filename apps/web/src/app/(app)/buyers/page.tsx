@@ -248,11 +248,11 @@ async function SmsCampaignTab() {
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">SMS campaigns targeting buyer contacts</p>
         <Link
-          href="/campaigns"
+          href="/drip-campaigns"
           className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
         >
           <Megaphone className="w-3.5 h-3.5" />
-          + New Campaign
+          + New Drip Campaign
         </Link>
       </div>
 

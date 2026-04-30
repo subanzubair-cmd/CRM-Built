@@ -48,6 +48,18 @@ import {
   up as crmNumberUp,
   down as crmNumberDown,
 } from './20260426060000-add-crm-number-to-active-call'
+import {
+  up as campaignModuleUp,
+  down as campaignModuleDown,
+} from './20260428100000-add-campaign-module'
+import {
+  up as campaignStepExtUp,
+  down as campaignStepExtDown,
+} from './20260428100100-extend-campaign-step'
+import {
+  up as campaignEnrollExtUp,
+  down as campaignEnrollExtDown,
+} from './20260428100200-extend-campaign-enrollment'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -115,6 +127,27 @@ const migrations = [
       crmNumberUp({ name: '20260426060000-add-crm-number-to-active-call', context }),
     down: ({ context }: { context: any }) =>
       crmNumberDown({ name: '20260426060000-add-crm-number-to-active-call', context }),
+  },
+  {
+    name: '20260428100000-add-campaign-module',
+    up: ({ context }: { context: any }) =>
+      campaignModuleUp({ name: '20260428100000-add-campaign-module', context }),
+    down: ({ context }: { context: any }) =>
+      campaignModuleDown({ name: '20260428100000-add-campaign-module', context }),
+  },
+  {
+    name: '20260428100100-extend-campaign-step',
+    up: ({ context }: { context: any }) =>
+      campaignStepExtUp({ name: '20260428100100-extend-campaign-step', context }),
+    down: ({ context }: { context: any }) =>
+      campaignStepExtDown({ name: '20260428100100-extend-campaign-step', context }),
+  },
+  {
+    name: '20260428100200-extend-campaign-enrollment',
+    up: ({ context }: { context: any }) =>
+      campaignEnrollExtUp({ name: '20260428100200-extend-campaign-enrollment', context }),
+    down: ({ context }: { context: any }) =>
+      campaignEnrollExtDown({ name: '20260428100200-extend-campaign-enrollment', context }),
   },
 ]
 

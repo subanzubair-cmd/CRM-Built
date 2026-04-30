@@ -13,7 +13,9 @@ import { Market } from './Market'
 import {
   CAMPAIGN_TYPE_VALUES,
   CAMPAIGN_STATUS_VALUES,
+  CAMPAIGN_MODULE_VALUES,
   LEAD_TYPE_VALUES,
+  type CampaignModule,
 } from '../enums'
 
 /**
@@ -60,11 +62,32 @@ export class Campaign extends Model<
   @Column(DataType.ARRAY(DataType.TEXT))
   declare tags: string[]
 
+  /**
+   * Single-select module the campaign targets. Drives status-option
+   * lists in Status Change steps + the polymorphic subjectType on
+   * CampaignEnrollment. Existing rows backfilled to LEADS.
+   */
+  @AllowNull(false)
+  @Default('LEADS')
+  @Column(DataType.ENUM(...CAMPAIGN_MODULE_VALUES))
+  declare module: CampaignModule
+
+  /**
+   * @deprecated Replaced by `module` (single-select). Kept on the
+   * row for one version so the legacy filter UI still loads. New
+   * code should not read or write this.
+   */
   @AllowNull(false)
   @Default([])
   @Column(DataType.ARRAY(DataType.ENUM(...LEAD_TYPE_VALUES)))
   declare leadTypes: Array<'DIRECT_TO_SELLER' | 'DIRECT_TO_AGENT'>
 
+  /**
+   * Conversational-AI integration toggle. UI for this is hidden in
+   * v1 (per spec — "we are not going to add any AI feature just yet"),
+   * but the column is retained so the future AI feature can reuse it
+   * without a migration.
+   */
   @AllowNull(false)
   @Default(false)
   @Column(DataType.BOOLEAN)
@@ -89,6 +112,8 @@ export interface CampaignAttributes {
   description: string | null
   marketId: string | null
   tags: string[]
+  module: CampaignModule
+  /** @deprecated use `module` */
   leadTypes: Array<'DIRECT_TO_SELLER' | 'DIRECT_TO_AGENT'>
   aiEnabled: boolean
   createdAt: Date

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { Role } from '@crm/database'
+import { Role, literal } from '@crm/database'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/auth-utils'
 
@@ -10,13 +10,27 @@ const CreateRoleSchema = z.object({
   permissions: z.array(z.string()).default([]),
 })
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth()
   const deny = requirePermission(session, 'settings.view')
   if (deny) return deny
 
+  // `?withUsers=true` filters down to roles that actually have at
+  // least one ACTIVE user assigned. The drip-campaign Task editor
+  // uses this so the responsibility dropdown doesn't list roles like
+  // "Bookkeeper" when no Bookkeeper user exists yet — the spec calls
+  // for "roles that have at least one user".
+  const withUsers = req.nextUrl.searchParams.get('withUsers') === 'true'
+
+  const where = withUsers
+    ? literal(
+        `"Role"."id" IN (SELECT DISTINCT "roleId" FROM "User" WHERE "roleId" IS NOT NULL AND "status" = 'ACTIVE')`,
+      )
+    : undefined
+
   const roles = await Role.findAll({
     attributes: ['id', 'name', 'description', 'permissions', 'isSystem'],
+    where: where as any,
     order: [['name', 'ASC']],
   })
   return NextResponse.json(roles)

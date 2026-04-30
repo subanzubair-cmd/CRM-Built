@@ -187,6 +187,105 @@ export const AutomationTrigger = {
 export type AutomationTrigger = (typeof AutomationTrigger)[keyof typeof AutomationTrigger]
 export const AUTOMATION_TRIGGER_VALUES = Object.values(AutomationTrigger) as AutomationTrigger[]
 
+/**
+ * Module a drip campaign targets. Single-select per campaign — drives
+ * status-option lists (Status Change step) and the polymorphic
+ * subjectType on CampaignEnrollment.
+ */
+export const CampaignModule = {
+  LEADS: 'LEADS',
+  BUYERS: 'BUYERS',
+  VENDORS: 'VENDORS',
+  SOLD: 'SOLD',
+} as const
+export type CampaignModule = (typeof CampaignModule)[keyof typeof CampaignModule]
+export const CAMPAIGN_MODULE_VALUES = Object.values(CampaignModule) as CampaignModule[]
+
+/**
+ * What a CampaignStep does when it fires. Replaces the old
+ * `channel` column on CampaignStep — channel was message-only and
+ * couldn't represent task / webhook / tag / status-change actions.
+ *
+ * Values explicitly OUT of scope (skipped per spec): RVM, DIRECT_MAIL,
+ * OUTBOUND_VOICE_AI, SMS_ASSIST.
+ */
+export const CampaignStepActionType = {
+  SMS: 'SMS',
+  EMAIL: 'EMAIL',
+  TASK: 'TASK',
+  WEBHOOK: 'WEBHOOK',
+  TAG_CHANGE: 'TAG_CHANGE',
+  STATUS_CHANGE: 'STATUS_CHANGE',
+  DRIP_ENROLL: 'DRIP_ENROLL',
+} as const
+export type CampaignStepActionType =
+  (typeof CampaignStepActionType)[keyof typeof CampaignStepActionType]
+export const CAMPAIGN_STEP_ACTION_TYPE_VALUES = Object.values(
+  CampaignStepActionType,
+) as CampaignStepActionType[]
+
+/**
+ * Time unit for step delay + reminder offsets. The pair
+ * (delayAmount: int, delayUnit: enum) replaces the old
+ * (delayDays, delayHours) pair so we can express "5 minutes" or
+ * "2 weeks" without overflow tricks.
+ */
+export const CampaignDelayUnit = {
+  MINUTES: 'MINUTES',
+  HOURS: 'HOURS',
+  DAYS: 'DAYS',
+  WEEKS: 'WEEKS',
+  MONTHS: 'MONTHS',
+} as const
+export type CampaignDelayUnit = (typeof CampaignDelayUnit)[keyof typeof CampaignDelayUnit]
+export const CAMPAIGN_DELAY_UNIT_VALUES = Object.values(CampaignDelayUnit) as CampaignDelayUnit[]
+
+/**
+ * Subject types for the polymorphic CampaignEnrollment row. PROPERTY
+ * covers Leads + Sold (both back onto Property under the hood);
+ * BUYER + VENDOR back onto their own tables.
+ */
+export const CampaignEnrollmentSubjectType = {
+  PROPERTY: 'PROPERTY',
+  BUYER: 'BUYER',
+  VENDOR: 'VENDOR',
+} as const
+export type CampaignEnrollmentSubjectType =
+  (typeof CampaignEnrollmentSubjectType)[keyof typeof CampaignEnrollmentSubjectType]
+export const CAMPAIGN_ENROLLMENT_SUBJECT_TYPE_VALUES = Object.values(
+  CampaignEnrollmentSubjectType,
+) as CampaignEnrollmentSubjectType[]
+
+/**
+ * For SMS / Email steps + per-lead activation: send to just the
+ * primary contact, or fan out to every contact attached to the
+ * subject (Property/Buyer/Vendor).
+ */
+export const CampaignContactScope = {
+  PRIMARY: 'PRIMARY',
+  ALL: 'ALL',
+} as const
+export type CampaignContactScope =
+  (typeof CampaignContactScope)[keyof typeof CampaignContactScope]
+export const CAMPAIGN_CONTACT_SCOPE_VALUES = Object.values(
+  CampaignContactScope,
+) as CampaignContactScope[]
+
+/**
+ * What to do with the lead's pending tasks when a Status Change step
+ * moves them to a new status.
+ */
+export const PendingTaskHandling = {
+  COMPLETE_ALL: 'COMPLETE_ALL',
+  KEEP_PENDING: 'KEEP_PENDING',
+  COMPLETE_MINE: 'COMPLETE_MINE',
+} as const
+export type PendingTaskHandling =
+  (typeof PendingTaskHandling)[keyof typeof PendingTaskHandling]
+export const PENDING_TASK_HANDLING_VALUES = Object.values(
+  PendingTaskHandling,
+) as PendingTaskHandling[]
+
 export const AutomationActionType = {
   SEND_SMS: 'SEND_SMS',
   SEND_EMAIL: 'SEND_EMAIL',

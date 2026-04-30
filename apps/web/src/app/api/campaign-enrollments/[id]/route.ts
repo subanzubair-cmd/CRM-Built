@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
+import { requirePermission } from '@/lib/auth-utils'
 import { CampaignEnrollment } from '@crm/database'
 import { z } from 'zod'
 
@@ -11,7 +12,10 @@ type Params = { params: Promise<{ id: string }> }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await auth()
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Carry-forward QA #2: pause/resume/cancel of a drip enrollment
+  // is a campaign management action, not a generic auth'd op.
+  const deny = requirePermission(session, 'campaigns.manage')
+  if (deny) return deny
 
   const { id } = await params
   const body = await req.json()

@@ -19,6 +19,7 @@ export function AddCampaignModal({ open, onClose }: Props) {
   const [markets, setMarkets] = useState<Market[]>([])
   const [name, setName] = useState('')
   const [type, setType] = useState<'DRIP' | 'BROADCAST'>('DRIP')
+  const [module, setModule] = useState<'LEADS' | 'BUYERS' | 'VENDORS' | 'SOLD'>('LEADS')
   const [description, setDescription] = useState('')
   const [marketId, setMarketId] = useState('')
   const [saving, setSaving] = useState(false)
@@ -38,13 +39,22 @@ export function AddCampaignModal({ open, onClose }: Props) {
       const res = await fetch('/api/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), type, description: description.trim() || undefined, marketId: marketId || undefined }),
+        body: JSON.stringify({
+          name: name.trim(),
+          type,
+          module,
+          description: description.trim() || undefined,
+          marketId: marketId || undefined,
+        }),
       })
       if (!res.ok) throw new Error('Failed to create campaign')
       const campaign = await res.json()
       onClose()
-      setName(''); setDescription(''); setMarketId('')
-      router.push(`/campaigns/${campaign.id}`)
+      setName('')
+      setDescription('')
+      setMarketId('')
+      setModule('LEADS')
+      router.push(`/drip-campaigns/${campaign.id}`)
     } catch {
       setError('Failed to create campaign. Please try again.')
     } finally {
@@ -58,7 +68,7 @@ export function AddCampaignModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="text-[15px] font-semibold text-gray-900">New Campaign</h2>
+          <h2 className="text-[15px] font-semibold text-gray-900">Add Drip Campaign</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-4 h-4" />
           </button>
@@ -81,6 +91,40 @@ export function AddCampaignModal({ open, onClose }: Props) {
               <option value="DRIP">Drip (automated sequence)</option>
               <option value="BROADCAST">Broadcast (one-time blast)</option>
             </select>
+          </div>
+          <div>
+            <label className="block text-[12px] font-medium text-gray-600 mb-2">
+              Creating Drip for Module <span className="text-rose-500">*</span>
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {(
+                [
+                  { value: 'LEADS', label: 'Leads' },
+                  { value: 'BUYERS', label: 'Buyers' },
+                  { value: 'VENDORS', label: 'Vendors' },
+                  { value: 'SOLD', label: 'Sold' },
+                ] as const
+              ).map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border-2 text-[12px] font-medium cursor-pointer transition-colors ${
+                    module === opt.value
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-100 text-gray-600 hover:border-gray-200'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="campaign-module"
+                    value={opt.value}
+                    checked={module === opt.value}
+                    onChange={() => setModule(opt.value)}
+                    className="sr-only"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
           </div>
           <div>
             <label className="block text-[12px] font-medium text-gray-600 mb-1">Market</label>
@@ -108,7 +152,7 @@ export function AddCampaignModal({ open, onClose }: Props) {
             </button>
             <button type="submit" disabled={saving || !name.trim()}
               className="flex-1 bg-blue-600 text-white text-sm font-medium rounded-lg py-2 hover:bg-blue-700 disabled:opacity-50 transition-colors active:scale-95">
-              {saving ? 'Creating…' : 'Create Campaign'}
+              {saving ? 'Creating…' : 'Create Drip Campaign'}
             </button>
           </div>
         </form>

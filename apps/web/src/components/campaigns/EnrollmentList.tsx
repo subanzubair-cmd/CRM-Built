@@ -8,13 +8,17 @@ interface Enrollment {
   id: string
   currentStep: number
   enrolledAt: Date | string
+  /** Polymorphic subject — set by the new enroll route. */
+  subjectType?: 'PROPERTY' | 'BUYER' | 'VENDOR'
+  subjectId?: string
+  /** Loaded from `getCampaignById` for PROPERTY enrollments only. */
   property: {
     id: string
     streetAddress: string | null
     city: string | null
     propertyStatus: string
     leadType: 'DIRECT_TO_SELLER' | 'DIRECT_TO_AGENT'
-  }
+  } | null
 }
 
 interface Props {
@@ -33,12 +37,19 @@ function propertyHref(p: { id: string; propertyStatus: string; leadType: 'DIRECT
 export function EnrollmentList({ campaignId, enrollments }: Props) {
   const router = useRouter()
 
-  async function handleUnenroll(propertyId: string) {
-    if (!confirm('Remove this property from the campaign?')) return
+  async function handleUnenroll(enr: Enrollment) {
+    if (!confirm('Remove this subject from the campaign?')) return
+    // Prefer the new polymorphic shape; fall back to propertyId for
+    // legacy enrollments still coming through this endpoint.
+    const body: Record<string, unknown> = enr.subjectType
+      ? { subjectType: enr.subjectType, subjectId: enr.subjectId }
+      : enr.property
+        ? { propertyId: enr.property.id }
+        : {}
     await fetch(`/api/campaigns/${campaignId}/enroll`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ propertyId }),
+      body: JSON.stringify(body),
     })
     router.refresh()
   }
@@ -59,16 +70,27 @@ export function EnrollmentList({ campaignId, enrollments }: Props) {
           {enrollments.map((enr) => (
             <div key={enr.id} className="px-4 py-3 flex items-center gap-3">
               <div className="flex-1 min-w-0">
-                <Link href={propertyHref(enr.property)}
-                  className="text-sm font-medium text-blue-600 hover:underline truncate block">
-                  {enr.property.streetAddress ?? 'No address'}{enr.property.city ? `, ${enr.property.city}` : ''}
-                </Link>
+                {enr.property ? (
+                  <Link
+                    href={propertyHref(enr.property)}
+                    className="text-sm font-medium text-blue-600 hover:underline truncate block"
+                  >
+                    {enr.property.streetAddress ?? 'No address'}
+                    {enr.property.city ? `, ${enr.property.city}` : ''}
+                  </Link>
+                ) : (
+                  <span className="text-sm font-medium text-gray-700 truncate block">
+                    {enr.subjectType ?? 'Subject'} · {enr.subjectId ?? '—'}
+                  </span>
+                )}
                 <p className="text-[11px] text-gray-400">
                   Step {enr.currentStep + 1} · enrolled {new Date(enr.enrolledAt).toLocaleDateString()}
                 </p>
               </div>
-              <button onClick={() => handleUnenroll(enr.property.id)}
-                className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0">
+              <button
+                onClick={() => handleUnenroll(enr)}
+                className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
+              >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>

@@ -17,6 +17,7 @@ import {
 import { getActiveCommConfig } from '@/lib/comm-provider'
 import { recordHit, classifySource, snapshotHeaders } from '@/lib/webhook-log'
 import { toE164, phoneVariants } from '@crm/shared'
+import { autoStopDripOnReply } from '@/lib/drip-auto-stop'
 
 /**
  * POST /api/webhooks/telnyx — UNIFIED Telnyx webhook (SMS + Voice).
@@ -316,7 +317,10 @@ async function handleSmsEvent(eventType: string, payload: any) {
     }
 
     // Fan out: write Message + Conversation + ActivityLog per matched
-    // lead so each one surfaces the inbound SMS independently.
+    // lead so each one surfaces the inbound SMS independently. We
+    // also fire the drip auto-stop hook per property — any active
+    // enrollment with `autoStopOnReply=true` is halted as soon as
+    // the lead replies via SMS.
     for (const m of matches) {
       await persistInboundSms({
         propertyId: m.propertyId,
@@ -327,6 +331,7 @@ async function handleSmsEvent(eventType: string, payload: any) {
         toPhone: toPhone ?? null,
         telnyxId: telnyxId ?? null,
       })
+      void autoStopDripOnReply({ propertyId: m.propertyId, reason: 'INBOUND_SMS' })
     }
 
     // No campaign + no leads found → still log a Message orphaned to
@@ -604,6 +609,13 @@ async function handleCallEvent(eventType: string, payload: any) {
           ...(propertyId ? { propertyId } : {}),
           ...(leadCampaignId ? { leadCampaignId } : {}),
         } as any)
+
+        // Drip auto-stop: any active enrollment on this property
+        // with autoStopOnReply=true is halted now that the lead
+        // initiated a call.
+        if (propertyId) {
+          void autoStopDripOnReply({ propertyId, reason: 'INBOUND_CALL' })
+        }
 
         // NOTE: previously we issued a Telnyx /actions/answer command
         // here to prevent the call from timing out. That auto-answered

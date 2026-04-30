@@ -1,0 +1,9 @@
+{
+  "//": "Root tsconfig — apps and packages each have their own, but esbuild's per-file tsconfig discovery (used by tsx 4 / esbuild 0.27+) sometimes walks up past a package's own tsconfig if the package didn't carry every flag esbuild looks for. Declaring experimentalDecorators here too is a belt-and-suspenders for sequelize-typescript's @Table / @Column decorators, which esbuild rejects unless this flag is enabled in the closest tsconfig it finds.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false
+  }
+}

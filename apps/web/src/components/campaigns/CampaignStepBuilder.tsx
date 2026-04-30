@@ -4,14 +4,15 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Loader2, ListOrdered } from 'lucide-react'
 import { CampaignStepCard, type CampaignStep } from './CampaignStepCard'
-import { AddStepForm } from './AddStepForm'
+import { StepEditor } from './StepEditor'
 
 interface Props {
   campaignId: string
+  campaignModule: 'LEADS' | 'BUYERS' | 'VENDORS' | 'SOLD'
   steps: CampaignStep[]
 }
 
-export function CampaignStepBuilder({ campaignId, steps }: Props) {
+export function CampaignStepBuilder({ campaignId, campaignModule, steps }: Props) {
   const router = useRouter()
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingStep, setEditingStep] = useState<CampaignStep | null>(null)
@@ -168,8 +169,9 @@ export function CampaignStepBuilder({ campaignId, steps }: Props) {
                 {/* Inline edit form */}
                 {editingStep?.id === step.id && showAddForm && (
                   <div className="ml-14 mb-4">
-                    <AddStepForm
+                    <StepEditor
                       campaignId={campaignId}
+                      campaignModule={campaignModule}
                       editingStep={editingStep}
                       onSaved={handleSaved}
                       onCancel={handleCancelForm}
@@ -190,8 +192,9 @@ export function CampaignStepBuilder({ campaignId, steps }: Props) {
                   </div>
                 </div>
                 <div className="flex-1 mb-2">
-                  <AddStepForm
+                  <StepEditor
                     campaignId={campaignId}
+                    campaignModule={campaignModule}
                     editingStep={null}
                     onSaved={handleSaved}
                     onCancel={handleCancelForm}
