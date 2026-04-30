@@ -62,8 +62,8 @@ const EMPTY: BuyerFormValues = {
   firstName: '',
   lastName: '',
   contactType: 'BUYER',
-  phones: [{ label: 'primary', number: '' }],
-  emails: [{ label: 'primary', email: '' }],
+  phones: [{ label: 'Mobile', number: '' }],
+  emails: [{ label: 'Primary', email: '' }],
   mailingAddress: '',
   howHeardAbout: '',
   assignedUserId: '',
@@ -185,14 +185,14 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
                 <input
                   value={values.firstName}
                   onChange={(e) => patch('firstName', e.target.value)}
-                  className="input"
+                  className="input w-full"
                 />
               </Field>
               <Field label="Last Name">
                 <input
                   value={values.lastName}
                   onChange={(e) => patch('lastName', e.target.value)}
-                  className="input"
+                  className="input w-full"
                 />
               </Field>
               <Field label="Contact Type" required>
@@ -233,14 +233,14 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
                   value={values.howHeardAbout}
                   onChange={(e) => patch('howHeardAbout', e.target.value)}
                   placeholder="Bandit Sign, Referral, ..."
-                  className="input"
+                  className="input w-full"
                 />
               </Field>
               <Field label="Who Owns this Buyer Contact">
                 <select
                   value={values.assignedUserId}
                   onChange={(e) => patch('assignedUserId', e.target.value)}
-                  className="input"
+                  className="input w-full"
                 >
                   <option value="">— Select assignee —</option>
                   {users.map((u) => (
@@ -257,7 +257,7 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
                 <input
                   value={values.mailingAddress}
                   onChange={(e) => patch('mailingAddress', e.target.value)}
-                  className="input"
+                  className="input w-full"
                 />
               </Field>
             </div>
@@ -357,9 +357,18 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
         </div>
       </div>
 
+      {/*
+        NOTE: width is intentionally NOT set on .input here. Earlier
+        the global rule forced width: 100% which collapsed the
+        multi-row layout (label select + phone/email value + delete
+        button), since Tailwind's w-28 / flex-1 lost specificity to
+        the :global width: 100%. Standalone .input usages get an
+        explicit `w-full` Tailwind class instead, and the multi-row
+        ones use w-28 / flex-1 inline.
+      */}
       <style jsx>{`
         :global(.input) {
-          width: 100%;
+          min-width: 0;
           border: 1px solid rgb(229, 231, 235);
           border-radius: 8px;
           padding: 8px 10px;
@@ -394,12 +403,26 @@ function Field({
   )
 }
 
+/** Predefined label options for a phone/email row, matching common
+ *  contact-app conventions. We don't enforce these at the DB layer
+ *  (the column is JSONB free-form) so an admin power user can still
+ *  type a custom label via the trailing "Custom…" entry.
+ */
+const PHONE_LABEL_OPTIONS = ['Mobile', 'Home', 'Work', 'Office', 'Fax', 'Other'] as const
+const EMAIL_LABEL_OPTIONS = ['Primary', 'Work', 'Personal', 'Other'] as const
+
 /**
  * Generic +Add / row-trash UI for the phones[] and emails[] arrays.
+ *
  * `field` indicates the value-bearing key on each row ('number' or
- * 'email'). Mutation is non-destructive — empty rows are filtered
- * out at submit time, not here, so the user can leave a partially
- * typed row without losing it on every keystroke.
+ * 'email'). The label is selected from a fixed set per field type,
+ * and the value input uses the matching HTML5 input type so phones
+ * trigger the tel keyboard on mobile + emails get email-format
+ * validation in-browser.
+ *
+ * Mutation is non-destructive — empty rows aren't filtered here, so
+ * a partially typed row survives keystroke-level re-renders. Empty
+ * rows are dropped at submit.
  */
 function MultiContactRows<K extends 'number' | 'email'>({
   label,
@@ -416,6 +439,17 @@ function MultiContactRows<K extends 'number' | 'email'>({
   placeholder: string
   field: K
 }) {
+  const labelOptions =
+    field === 'number' ? PHONE_LABEL_OPTIONS : EMAIL_LABEL_OPTIONS
+  const defaultNewLabel =
+    field === 'number' ? 'Mobile' : 'Work' // primary already exists on row 0
+  const inputType = field === 'number' ? 'tel' : 'email'
+  const inputPattern =
+    field === 'number'
+      ? // Permissive tel pattern — digits, spaces, parens, dashes, plus.
+        '[+0-9() \\-]{7,}'
+      : undefined
+
   return (
     <div className="mt-3">
       <div className="flex items-center justify-between mb-1.5">
@@ -424,47 +458,86 @@ function MultiContactRows<K extends 'number' | 'email'>({
         </label>
         <button
           type="button"
-          onClick={() => onChange([...rows, { label: 'secondary', [field]: '' }])}
+          onClick={() => onChange([...rows, { label: defaultNewLabel, [field]: '' }])}
           className="text-[12px] text-blue-600 hover:text-blue-700 font-semibold"
         >
           {addLabel}
         </button>
       </div>
       <div className="space-y-2">
-        {rows.map((row, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              value={row.label ?? ''}
-              onChange={(e) => {
-                const next = [...rows]
-                next[i] = { ...next[i], label: e.target.value }
-                onChange(next)
-              }}
-              placeholder="Label"
-              className="input w-32"
-            />
-            <input
-              value={row[field] ?? ''}
-              onChange={(e) => {
-                const next = [...rows]
-                next[i] = { ...next[i], [field]: e.target.value }
-                onChange(next)
-              }}
-              placeholder={placeholder}
-              className="input flex-1"
-            />
-            {rows.length > 1 && (
-              <button
-                type="button"
-                onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
-                className="text-gray-400 hover:text-red-500 p-1"
-                aria-label={`Remove ${label.toLowerCase()} row`}
+        {rows.map((row, i) => {
+          const currentLabel: string = row.label ?? labelOptions[0]
+          // Case-insensitive match against the canned options so
+          // legacy rows stored as "primary" / "secondary" still
+          // pick up the right dropdown entry instead of falling
+          // through to Custom…
+          const matchedOption = labelOptions.find(
+            (o) => o.toLowerCase() === String(currentLabel).toLowerCase(),
+          )
+          const isCustomLabel = !matchedOption
+          return (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                value={isCustomLabel ? '__custom__' : (matchedOption as string)}
+                onChange={(e) => {
+                  const next = [...rows]
+                  if (e.target.value === '__custom__') {
+                    next[i] = { ...next[i], label: '' }
+                  } else {
+                    next[i] = { ...next[i], label: e.target.value }
+                  }
+                  onChange(next)
+                }}
+                className="input w-28 flex-shrink-0 bg-white"
+                aria-label={`${label} row ${i + 1} type`}
               >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        ))}
+                {labelOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+                <option value="__custom__">Custom…</option>
+              </select>
+              {isCustomLabel && (
+                <input
+                  value={currentLabel}
+                  onChange={(e) => {
+                    const next = [...rows]
+                    next[i] = { ...next[i], label: e.target.value }
+                    onChange(next)
+                  }}
+                  placeholder="Custom label"
+                  className="input w-28 flex-shrink-0"
+                  aria-label="Custom label name"
+                />
+              )}
+              <input
+                type={inputType}
+                pattern={inputPattern}
+                value={row[field] ?? ''}
+                onChange={(e) => {
+                  const next = [...rows]
+                  next[i] = { ...next[i], [field]: e.target.value }
+                  onChange(next)
+                }}
+                placeholder={placeholder}
+                className="input flex-1 min-w-0"
+                inputMode={field === 'number' ? 'tel' : 'email'}
+                autoComplete={field === 'number' ? 'tel' : 'email'}
+              />
+              {rows.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+                  className="text-gray-400 hover:text-red-500 p-1 flex-shrink-0"
+                  aria-label={`Remove ${label.toLowerCase()} row`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -695,7 +768,7 @@ function BuyerCustomQuestions({
               min={0}
               value={(answers[q.id] as number) ?? ''}
               onChange={(e) => set(q.id, e.target.value === '' ? null : Number(e.target.value))}
-              className="input"
+              className="input w-full"
               placeholder={q.label}
             />
           )}
