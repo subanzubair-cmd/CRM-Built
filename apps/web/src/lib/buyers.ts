@@ -226,6 +226,40 @@ export async function getRecentBuyerMessages(limit = 20) {
   })
 }
 
+/**
+ * Buyer SMS Campaigns tab data source. Reads from `BulkSmsBlast` —
+ * NOT from the drip-campaign `Campaign` table, which is a totally
+ * separate concept. Returns the most recent 50 blasts targeting
+ * the BUYERS module along with denormalised delivery counters so
+ * the tab can render without a join-then-group per page load.
+ */
+export async function getBuyerBlasts(limit = 50) {
+  const { BulkSmsBlast } = await import('@crm/database')
+  const rows = await BulkSmsBlast.findAll({
+    where: { module: 'BUYERS' as any },
+    order: [['createdAt', 'DESC']],
+    limit,
+  })
+  return rows.map((r) => {
+    const j = r.get({ plain: true }) as any
+    return {
+      id: j.id as string,
+      name: j.name as string,
+      body: j.body as string,
+      status: j.status as string,
+      createdAt: j.createdAt as Date,
+      recipientCount: Number(j.recipientCount ?? 0),
+      sentCount: Number(j.sentCount ?? 0),
+      deliveredCount: Number(j.deliveredCount ?? 0),
+      failedCount: Number(j.failedCount ?? 0),
+    }
+  })
+}
+
+/** @deprecated Reads from the drip-campaign Campaign table — kept
+ *  as a no-op alias so any stale caller falls through to the new
+ *  blast list without breaking. Will be removed once /buyers/page
+ *  is fully on getBuyerBlasts. */
 export async function getBuyerCampaigns() {
   const campaigns = await Campaign.findAll({
     where: {

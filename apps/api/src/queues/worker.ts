@@ -122,9 +122,29 @@ async function fireNoContactAutomations(): Promise<void> {
 new Worker(
   'csv-import',
   async (job) => {
+    // CSV import processing lands in Phase H — for now log so the
+    // queue health check stays clean.
     console.log(`[csv-import] job ${job.id} — processor not yet implemented`)
   },
   { connection },
+)
+
+// ── Bulk SMS Send Worker ───────────────────────────────────────────────────────
+//
+// One job per recipient. Per-row state transitions in the worker
+// itself (sees BulkSmsBlastRecipient.status) — no scheduled tick.
+import { processBulkSmsJob, type BulkSmsJobData } from '../lib/bulk-sms-executor.js'
+
+new Worker(
+  'bulk-sms-send',
+  async (job) => {
+    if (job.name === 'send-recipient') {
+      await processBulkSmsJob(job.data as BulkSmsJobData)
+      return
+    }
+    console.log(`[bulk-sms-send] unknown job name: ${job.name}`)
+  },
+  { connection, concurrency: 5 },
 )
 
 // ── Notification Worker ────────────────────────────────────────────────────────

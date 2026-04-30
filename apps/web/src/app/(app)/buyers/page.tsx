@@ -6,7 +6,7 @@ import {
   getBuyerDashboardStats,
   getTopBuyers,
   getRecentBuyerMessages,
-  getBuyerCampaigns,
+  getBuyerBlasts,
 } from '@/lib/buyers'
 import { BuyerTable } from '@/components/buyers/BuyerTable'
 import { BuyersHeader } from '@/components/buyers/BuyersHeader'
@@ -241,62 +241,74 @@ async function InboxTab() {
 /* ─── SMS Campaign Tab ───────────────────────────────────────────────────── */
 
 async function SmsCampaignTab() {
-  const campaigns = await getBuyerCampaigns()
+  const blasts = await getBuyerBlasts()
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-500">SMS campaigns targeting buyer contacts</p>
-        <Link
-          href="/drip-campaigns"
-          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
-        >
-          <Megaphone className="w-3.5 h-3.5" />
-          + New Drip Campaign
-        </Link>
+        <p className="text-sm text-gray-500">
+          Bulk SMS blasts targeting buyer contacts
+        </p>
+        <p className="text-[11px] text-gray-400 italic">
+          Use the contacts tab&apos;s Send Bulk SMS button to create a new blast.
+        </p>
       </div>
 
-      {campaigns.length === 0 ? (
+      {blasts.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl flex flex-col items-center justify-center h-48">
           <Megaphone className="w-8 h-8 text-gray-300 mb-2" />
-          <p className="text-sm text-gray-400">No SMS campaigns yet</p>
-          <p className="text-xs text-gray-300 mt-1">Create a campaign with SMS steps to see it here</p>
+          <p className="text-sm text-gray-400">No SMS blasts yet</p>
+          <p className="text-xs text-gray-300 mt-1">
+            Filter buyers in the Contacts tab and use Send Bulk SMS to fire your first blast.
+          </p>
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100">
-                <th className="text-left px-4 py-2.5">Campaign Name</th>
-                <th className="text-left px-4 py-2.5">Status</th>
-                <th className="text-left px-4 py-2.5">Type</th>
-                <th className="text-left px-4 py-2.5">Date Created</th>
-                <th className="text-left px-4 py-2.5">Recipients</th>
+              <tr className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100 bg-gray-50/60">
+                <th className="text-left px-4 py-2.5">Campaign</th>
+                <th className="text-left px-4 py-2.5">Date Sent</th>
+                <th className="text-left px-4 py-2.5">Message</th>
+                <th className="text-center px-3 py-2.5">Recipients</th>
+                <th className="text-center px-3 py-2.5">Sent</th>
+                <th className="text-center px-3 py-2.5">Delivered</th>
+                <th className="text-center px-3 py-2.5">Not Delivered</th>
               </tr>
             </thead>
-            <tbody>
-              {campaigns.map((c) => (
-                <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
+            <tbody className="divide-y divide-gray-50">
+              {blasts.map((b) => (
+                <tr key={b.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
-                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                      c.status === 'ACTIVE' ? 'bg-green-50 text-green-700' :
-                      c.status === 'COMPLETED' ? 'bg-blue-50 text-blue-700' :
-                      c.status === 'PAUSED' ? 'bg-amber-50 text-amber-700' :
-                      'bg-gray-100 text-gray-500'
-                    }`}>
-                      {c.status}
-                    </span>
+                    <Link
+                      href={`/buyers/sms-campaigns/${b.id}`}
+                      className="font-medium text-blue-600 hover:underline"
+                    >
+                      {b.name}
+                    </Link>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{c.type}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {new Date(c.createdAt).toLocaleDateString('en-US', {
+                  <td className="px-4 py-3 text-gray-500 text-[12px] whitespace-nowrap">
+                    {new Date(b.createdAt).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
                     })}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{c.recipients}</td>
+                  <td className="px-4 py-3 text-gray-600 max-w-[280px]">
+                    <span className="line-clamp-1">{b.body}</span>
+                  </td>
+                  <td className="px-3 py-3 text-center text-gray-700">
+                    {b.recipientCount}
+                  </td>
+                  <td className="px-3 py-3 text-center text-gray-700">
+                    {b.sentCount}
+                  </td>
+                  <td className="px-3 py-3 text-center text-emerald-600 font-medium">
+                    {b.deliveredCount}
+                  </td>
+                  <td className="px-3 py-3 text-center text-rose-600 font-medium">
+                    {b.failedCount}
+                  </td>
                 </tr>
               ))}
             </tbody>

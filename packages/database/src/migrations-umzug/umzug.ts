@@ -60,6 +60,22 @@ import {
   up as campaignEnrollExtUp,
   down as campaignEnrollExtDown,
 } from './20260428100200-extend-campaign-enrollment'
+import {
+  up as contactBuyerExtUp,
+  down as contactBuyerExtDown,
+} from './20260430100000-extend-contact-buyer'
+import {
+  up as bulkSmsBlastUp,
+  down as bulkSmsBlastDown,
+} from './20260430100100-create-bulk-sms-blast'
+import {
+  up as savedFilterFolderUp,
+  down as savedFilterFolderDown,
+} from './20260430100200-create-saved-filter-folder'
+import {
+  up as importJobUp,
+  down as importJobDown,
+} from './20260430100300-create-import-job'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -148,6 +164,34 @@ const migrations = [
       campaignEnrollExtUp({ name: '20260428100200-extend-campaign-enrollment', context }),
     down: ({ context }: { context: any }) =>
       campaignEnrollExtDown({ name: '20260428100200-extend-campaign-enrollment', context }),
+  },
+  {
+    name: '20260430100000-extend-contact-buyer',
+    up: ({ context }: { context: any }) =>
+      contactBuyerExtUp({ name: '20260430100000-extend-contact-buyer', context }),
+    down: ({ context }: { context: any }) =>
+      contactBuyerExtDown({ name: '20260430100000-extend-contact-buyer', context }),
+  },
+  {
+    name: '20260430100100-create-bulk-sms-blast',
+    up: ({ context }: { context: any }) =>
+      bulkSmsBlastUp({ name: '20260430100100-create-bulk-sms-blast', context }),
+    down: ({ context }: { context: any }) =>
+      bulkSmsBlastDown({ name: '20260430100100-create-bulk-sms-blast', context }),
+  },
+  {
+    name: '20260430100200-create-saved-filter-folder',
+    up: ({ context }: { context: any }) =>
+      savedFilterFolderUp({ name: '20260430100200-create-saved-filter-folder', context }),
+    down: ({ context }: { context: any }) =>
+      savedFilterFolderDown({ name: '20260430100200-create-saved-filter-folder', context }),
+  },
+  {
+    name: '20260430100300-create-import-job',
+    up: ({ context }: { context: any }) =>
+      importJobUp({ name: '20260430100300-create-import-job', context }),
+    down: ({ context }: { context: any }) =>
+      importJobDown({ name: '20260430100300-create-import-job', context }),
   },
 ]
 

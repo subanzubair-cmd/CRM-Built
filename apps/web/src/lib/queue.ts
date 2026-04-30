@@ -75,3 +75,39 @@ export async function enqueueCalendarSync(data: {
     console.warn('[queue] enqueueCalendarSync failed (non-fatal):', err)
   }
 }
+
+// ── bulkSmsSendQueue ───────────────────────────────────────────────────────────
+
+let _bulkSmsQueue: Queue | null = null
+
+function getBulkSmsQueue(): Queue {
+  if (!_bulkSmsQueue) {
+    _bulkSmsQueue = new Queue('bulk-sms-send', { connection: getRedis() })
+  }
+  return _bulkSmsQueue
+}
+
+/**
+ * Enqueue a single BulkSmsBlastRecipient for send. The api worker
+ * (`bulk-sms-send`) consumes the job and calls processBulkSmsJob().
+ *
+ * Throws on enqueue failure so the API route can surface the error
+ * to the user instead of silently failing — bulk SMS isn't a
+ * fire-and-forget side-channel like automation is.
+ */
+export async function enqueueBulkSmsRecipient(recipientId: string): Promise<void> {
+  await getBulkSmsQueue().add(
+    'send-recipient',
+    { recipientId },
+    {
+      // Spread the load — concurrency=5 in the worker means we'd
+      // hit our SMS provider rate limit quickly if we fire 1000
+      // jobs at once. Bullmq handles this with the worker's
+      // concurrency setting; no extra delay needed at enqueue time.
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 1000 },
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5000 },
+    },
+  )
+}

@@ -263,6 +263,25 @@ async function resolveSystemUserId(
 // ─── SMS events ────────────────────────────────────────────────────────
 
 async function handleSmsEvent(eventType: string, payload: any) {
+  // Outbound delivery-status events. Telnyx fires these for messages
+  // we've sent (including bulk blast recipients) — we use them to
+  // flip BulkSmsBlastRecipient rows from SENT → DELIVERED / FAILED
+  // and to bump the parent blast's deliveredCount / failedCount.
+  if (
+    eventType === 'message.delivered' ||
+    eventType === 'message.sent' ||
+    eventType === 'message.finalized' ||
+    eventType === 'message.delivery_failed'
+  ) {
+    await handleOutboundDeliveryStatus(eventType, payload).catch((err) =>
+      console.warn('[webhook/telnyx sms] delivery status handler failed:', err),
+    )
+    // Don't short-circuit — fall through is fine, but message.received
+    // is the only one with a body we want to record. Return here
+    // since the delivery events are status-only.
+    return NextResponse.json({ ok: true, deliveryEvent: eventType })
+  }
+
   if (eventType !== 'message.received') {
     return NextResponse.json({ ok: true, ignored: eventType })
   }
@@ -942,5 +961,80 @@ async function autoCreateInboundLead(args: {
       err?.stack,
     )
     return null
+  }
+}
+
+/**
+ * Outbound SMS delivery-status hook for bulk blasts.
+ *
+ * Telnyx fires `message.sent` / `message.delivered` / `message.finalized`
+ * for outbound messages we've sent. We use the message id (which we
+ * stored on the BulkSmsBlastRecipient row at send time) to update
+ * the recipient row + roll up the parent blast counters.
+ *
+ * Importing the models lazily because this file's static imports are
+ * already heavy and webhooks should boot quickly under cold starts.
+ */
+async function handleOutboundDeliveryStatus(
+  eventType: string,
+  payload: any,
+): Promise<void> {
+  const messageId = payload?.id as string | undefined
+  if (!messageId) return
+
+  const { BulkSmsBlast, BulkSmsBlastRecipient } = await import('@crm/database')
+
+  const recipient = await BulkSmsBlastRecipient.findOne({
+    where: { providerMessageId: messageId } as any,
+  })
+  if (!recipient) return // not a bulk blast message — ignore
+
+  // Telnyx puts per-recipient status on payload.to[*].status when the
+  // outbound is multi-recipient; for our 1-to-1 sends it's also
+  // available as payload.to[0].status. Fall back to the event_type
+  // string itself if the inner status isn't present.
+  const innerStatus =
+    (Array.isArray(payload?.to) ? payload.to[0]?.status : null) ??
+    (eventType === 'message.delivered' ? 'delivered' : null) ??
+    (eventType === 'message.delivery_failed' ? 'failed' : null)
+
+  const next: { status?: string; deliveredAt?: Date | null; failReason?: string | null } = {}
+  if (innerStatus === 'delivered' || eventType === 'message.delivered') {
+    next.status = 'DELIVERED'
+    next.deliveredAt = new Date()
+  } else if (
+    innerStatus === 'sending_failed' ||
+    innerStatus === 'delivery_failed' ||
+    innerStatus === 'failed' ||
+    eventType === 'message.delivery_failed'
+  ) {
+    next.status = 'FAILED'
+    next.failReason = (payload?.errors?.[0]?.detail as string | undefined) ?? eventType
+  } else {
+    return // intermediate status — no row update needed
+  }
+
+  // Idempotency: only flip DELIVERED / FAILED from a still-mutable
+  // state (SENT). If somebody already marked the row, keep their
+  // call.
+  const current = recipient.get('status') as string
+  if (current !== 'SENT' && current !== 'QUEUED') return
+
+  await recipient.update(next as any)
+
+  // Roll up parent counters. Increment the appropriate one — the
+  // worker may have already incremented sentCount; here we hand off
+  // to deliveredCount or failedCount.
+  const blastId = recipient.get('blastId') as string
+  if (next.status === 'DELIVERED') {
+    await BulkSmsBlast.increment('deliveredCount', {
+      by: 1,
+      where: { id: blastId },
+    } as any)
+  } else if (next.status === 'FAILED') {
+    await BulkSmsBlast.increment('failedCount', {
+      by: 1,
+      where: { id: blastId },
+    } as any)
   }
 }

@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
-import { UserCheck, UserX, Send } from 'lucide-react'
+import { UserCheck, UserX, Send, Mail } from 'lucide-react'
 import { BuyerBlastModal } from './BuyerBlastModal'
+import { BulkSmsModal } from './BulkSmsModal'
 
 interface BuyerRow {
   id: string
@@ -30,6 +31,7 @@ export function BuyerTable({ rows, total }: Props) {
   const router = useRouter()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [blastOpen, setBlastOpen] = useState(false)
+  const [bulkSmsOpen, setBulkSmsOpen] = useState(false)
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id))
   const someSelected = rows.some((r) => selectedIds.has(r.id))
@@ -71,11 +73,18 @@ export function BuyerTable({ rows, total }: Props) {
             {selectedIds.size} buyer{selectedIds.size !== 1 ? 's' : ''} selected
           </span>
           <button
-            onClick={() => setBlastOpen(true)}
+            onClick={() => setBulkSmsOpen(true)}
             className="flex items-center gap-1.5 text-xs font-medium bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
           >
             <Send className="w-3.5 h-3.5" />
-            Send Blast
+            Send Bulk SMS
+          </button>
+          <button
+            onClick={() => setBlastOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-medium bg-white text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            Send Email Blast
           </button>
           <button
             onClick={() => setSelectedIds(new Set())}
@@ -184,6 +193,16 @@ export function BuyerTable({ rows, total }: Props) {
             setBlastOpen(false)
             setSelectedIds(new Set())
           }}
+        />
+      )}
+      {bulkSmsOpen && (
+        <BulkSmsModal
+          selectedBuyerIds={Array.from(selectedIds)}
+          onClose={() => {
+            setBulkSmsOpen(false)
+            setSelectedIds(new Set())
+          }}
+          onSent={(blastId) => router.push(`/buyers/sms-campaigns/${blastId}`)}
         />
       )}
     </>

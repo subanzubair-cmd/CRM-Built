@@ -6,6 +6,8 @@ export type Permission =
   | 'inventory.view' | 'inventory.edit'
   | 'dispo.view' | 'dispo.edit'
   | 'contacts.view' | 'contacts.edit'
+  | 'buyers.view' | 'buyers.manage' | 'buyers.import' | 'buyers.export' | 'buyers.bulk_sms'
+  | 'vendors.view' | 'vendors.manage' | 'vendors.import' | 'vendors.export' | 'vendors.bulk_sms'
   | 'comms.send' | 'comms.view'
   | 'tasks.view' | 'tasks.manage'
   | 'campaigns.view' | 'campaigns.manage'

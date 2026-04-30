@@ -78,6 +78,14 @@ import { CustomFormConfig } from './CustomFormConfig'
 import { WebFormConfig } from './WebFormConfig'
 import { CompanySettings } from './CompanySettings'
 
+// ── Phase 9: Bulk SMS broadcast + filter folders + CSV import ─────────────
+import { BulkSmsBlast } from './BulkSmsBlast'
+import { BulkSmsBlastRecipient } from './BulkSmsBlastRecipient'
+import { SavedFilterFolder } from './SavedFilterFolder'
+import { SavedFilterShare } from './SavedFilterShare'
+import { ImportJob } from './ImportJob'
+import { ImportJobRow } from './ImportJobRow'
+
 sequelize.addModels([
   // Phase 2 leaves (parents first)
   LeadSource,
@@ -151,6 +159,14 @@ sequelize.addModels([
   CustomFormConfig,
   WebFormConfig,
   CompanySettings,
+
+  // Phase 9: Bulk SMS broadcast + filter folders + CSV import
+  BulkSmsBlast,
+  BulkSmsBlastRecipient,
+  SavedFilterFolder,
+  SavedFilterShare,
+  ImportJob,
+  ImportJobRow,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -224,6 +240,14 @@ export {
   CustomFormConfig,
   WebFormConfig,
   CompanySettings,
+
+  // Phase 9
+  BulkSmsBlast,
+  BulkSmsBlastRecipient,
+  SavedFilterFolder,
+  SavedFilterShare,
+  ImportJob,
+  ImportJobRow,
 }
 
 // Type-only re-exports — keep separate so client bundlers don't try to

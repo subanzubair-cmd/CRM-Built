@@ -387,3 +387,101 @@ export const TemplateType = {
 } as const
 export type TemplateType = (typeof TemplateType)[keyof typeof TemplateType]
 export const TEMPLATE_TYPE_VALUES = Object.values(TemplateType) as TemplateType[]
+
+// ── Bulk SMS broadcast (Buyers / Vendors / etc.) ───────────────────────────
+/**
+ * Which contact module a `BulkSmsBlast` targets. Distinct from
+ * `CampaignModule` even though the values overlap — drip campaigns
+ * and bulk SMS blasts live in separate tables and we want to keep
+ * the surfaces evolving independently.
+ */
+export const BulkSmsBlastModule = {
+  BUYERS: 'BUYERS',
+  VENDORS: 'VENDORS',
+  LEADS: 'LEADS',
+  SOLD: 'SOLD',
+} as const
+export type BulkSmsBlastModule =
+  (typeof BulkSmsBlastModule)[keyof typeof BulkSmsBlastModule]
+export const BULK_SMS_BLAST_MODULE_VALUES = Object.values(
+  BulkSmsBlastModule,
+) as BulkSmsBlastModule[]
+
+/** Lifecycle of a bulk SMS blast — set as recipients are queued + as the worker drains. */
+export const BulkSmsBlastStatus = {
+  QUEUED: 'QUEUED',
+  SENDING: 'SENDING',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+  CANCELLED: 'CANCELLED',
+} as const
+export type BulkSmsBlastStatus =
+  (typeof BulkSmsBlastStatus)[keyof typeof BulkSmsBlastStatus]
+export const BULK_SMS_BLAST_STATUS_VALUES = Object.values(
+  BulkSmsBlastStatus,
+) as BulkSmsBlastStatus[]
+
+/**
+ * Per-recipient state for one row in a bulk blast. SKIPPED_DND and
+ * SKIPPED_INVALID let the UI distinguish "we never tried because the
+ * contact is opted out" from "we tried and the carrier rejected."
+ */
+export const BulkSmsBlastRecipientStatus = {
+  QUEUED: 'QUEUED',
+  SENT: 'SENT',
+  DELIVERED: 'DELIVERED',
+  FAILED: 'FAILED',
+  SKIPPED_DND: 'SKIPPED_DND',
+  SKIPPED_INVALID: 'SKIPPED_INVALID',
+} as const
+export type BulkSmsBlastRecipientStatus =
+  (typeof BulkSmsBlastRecipientStatus)[keyof typeof BulkSmsBlastRecipientStatus]
+export const BULK_SMS_BLAST_RECIPIENT_STATUS_VALUES = Object.values(
+  BulkSmsBlastRecipientStatus,
+) as BulkSmsBlastRecipientStatus[]
+
+/** Polymorphic subject of a `BulkSmsBlastRecipient` row. */
+export const BulkSmsBlastRecipientSubjectType = {
+  CONTACT: 'CONTACT',
+  BUYER: 'BUYER',
+  VENDOR: 'VENDOR',
+} as const
+export type BulkSmsBlastRecipientSubjectType =
+  (typeof BulkSmsBlastRecipientSubjectType)[keyof typeof BulkSmsBlastRecipientSubjectType]
+export const BULK_SMS_BLAST_RECIPIENT_SUBJECT_TYPE_VALUES = Object.values(
+  BulkSmsBlastRecipientSubjectType,
+) as BulkSmsBlastRecipientSubjectType[]
+
+// ── Saved-filter sharing ───────────────────────────────────────────────────
+/**
+ * Per-user permission level for a shared SavedFilter. NONE means the
+ * row exists but the user has been explicitly revoked (used by the
+ * sharing UI to render "no access" rows alongside View / Edit ones).
+ */
+export const SavedFilterShareLevel = {
+  NONE: 'NONE',
+  VIEW: 'VIEW',
+  EDIT: 'EDIT',
+} as const
+export type SavedFilterShareLevel =
+  (typeof SavedFilterShareLevel)[keyof typeof SavedFilterShareLevel]
+export const SAVED_FILTER_SHARE_LEVEL_VALUES = Object.values(
+  SavedFilterShareLevel,
+) as SavedFilterShareLevel[]
+
+// ── CSV imports ────────────────────────────────────────────────────────────
+export const ImportJobStatus = {
+  QUEUED: 'QUEUED',
+  PROCESSING: 'PROCESSING',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+} as const
+export type ImportJobStatus = (typeof ImportJobStatus)[keyof typeof ImportJobStatus]
+export const IMPORT_JOB_STATUS_VALUES = Object.values(ImportJobStatus) as ImportJobStatus[]
+
+export const ImportJobModule = {
+  BUYERS: 'BUYERS',
+  VENDORS: 'VENDORS',
+} as const
+export type ImportJobModule = (typeof ImportJobModule)[keyof typeof ImportJobModule]
+export const IMPORT_JOB_MODULE_VALUES = Object.values(ImportJobModule) as ImportJobModule[]

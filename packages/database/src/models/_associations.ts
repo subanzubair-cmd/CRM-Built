@@ -50,6 +50,12 @@ import { FinancialGoal } from './FinancialGoal'
 import { FinancialAccount } from './FinancialAccount'
 import { FinancialTransaction } from './FinancialTransaction'
 import { AccountTag } from './AccountTag'
+import { BulkSmsBlast } from './BulkSmsBlast'
+import { BulkSmsBlastRecipient } from './BulkSmsBlastRecipient'
+import { SavedFilterFolder } from './SavedFilterFolder'
+import { SavedFilterShare } from './SavedFilterShare'
+import { ImportJob } from './ImportJob'
+import { ImportJobRow } from './ImportJobRow'
 
 export function wireAssociations(): void {
   // ── Phase 2: Independent leaves ───────────────────────────────────────────
@@ -314,5 +320,47 @@ export function wireAssociations(): void {
   FinancialTransaction.belongsTo(AccountTag, {
     foreignKey: 'categoryId',
     as: 'category',
+  })
+
+  // ── Phase 9: Bulk SMS broadcast + filter folders + CSV import ─────────────
+  BulkSmsBlast.hasMany(BulkSmsBlastRecipient, {
+    foreignKey: 'blastId',
+    as: 'recipients',
+  })
+  BulkSmsBlastRecipient.belongsTo(BulkSmsBlast, {
+    foreignKey: 'blastId',
+    as: 'blast',
+  })
+
+  // SavedFilter ↔ folder is a soft FK (no FK constraint at the DB
+  // level so deleting a folder leaves filters orphaned + visible as
+  // Individual). We still wire the association so includes work.
+  SavedFilterFolder.hasMany(SavedFilter, {
+    foreignKey: 'folderId',
+    as: 'filters',
+    constraints: false,
+  })
+  SavedFilter.belongsTo(SavedFilterFolder, {
+    foreignKey: 'folderId',
+    as: 'folder',
+    constraints: false,
+  })
+
+  SavedFilter.hasMany(SavedFilterShare, {
+    foreignKey: 'savedFilterId',
+    as: 'shares',
+  })
+  SavedFilterShare.belongsTo(SavedFilter, {
+    foreignKey: 'savedFilterId',
+    as: 'savedFilter',
+  })
+
+  ImportJob.hasMany(ImportJobRow, {
+    foreignKey: 'jobId',
+    as: 'rows',
+  })
+  ImportJobRow.belongsTo(ImportJob, {
+    foreignKey: 'jobId',
+    as: 'job',
   })
 }

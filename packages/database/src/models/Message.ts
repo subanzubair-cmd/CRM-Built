@@ -87,6 +87,12 @@ export class Message extends Model<
   @Column(DataType.ARRAY(DataType.TEXT))
   declare attachmentUrls: string[]
 
+  /** Set when this Message was emitted as part of a bulk SMS blast.
+   *  Lets the message timeline link back to the parent blast +
+   *  filter conversations by "this came from blast XYZ." */
+  @Column(DataType.TEXT)
+  declare bulkSmsBlastId: string | null
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -120,5 +126,6 @@ export interface MessageAttributes {
   recordingUrl: string | null
   aiSummaryText: string | null
   attachmentUrls: string[]
+  bulkSmsBlastId: string | null
   createdAt: Date
 }

@@ -83,6 +83,41 @@ export class Contact extends Model<
   @Column(DataType.TEXT)
   declare preferredChannel: string | null
 
+  /**
+   * Multi-phone storage for the Buyers Module spec's "+ Add Phone" UX.
+   * Each entry is `{ label, number }` — label is free-form
+   * ("primary" / "secondary" / "office" / "mobile") so customers can
+   * organise without us baking enum values. The legacy `phone` /
+   * `phone2` columns are kept (this migration backfills them into
+   * phones[0] / phones[1]) so existing readers keep working.
+   */
+  @AllowNull(false)
+  @Default([])
+  @Column(DataType.JSONB)
+  declare phones: Array<{ label: string; number: string }>
+
+  /** Multi-email companion to `phones`. */
+  @AllowNull(false)
+  @Default([])
+  @Column(DataType.JSONB)
+  declare emails: Array<{ label: string; email: string }>
+
+  /** Mailing address — distinct from address / city / state / zip
+   *  because the spec's Add Buyer form uses one combined field. */
+  @Column(DataType.TEXT)
+  declare mailingAddress: string | null
+
+  /** Free-text "How did you hear about us?" — stored verbatim and
+   *  mirrored to a future LeadSource lookup if/when we add one. */
+  @Column(DataType.TEXT)
+  declare howHeardAbout: string | null
+
+  /** "Who Owns this Buyer Contact" — soft FK to User (no cascade so
+   *  contacts survive the deletion of a stale assignee). The API
+   *  enforces that the assignee has the disposition role. */
+  @Column(DataType.TEXT)
+  declare assignedUserId: string | null
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -112,6 +147,11 @@ export interface ContactAttributes {
   doNotText: boolean
   doNotEmail: boolean
   preferredChannel: string | null
+  phones: Array<{ label: string; number: string }>
+  emails: Array<{ label: string; email: string }>
+  mailingAddress: string | null
+  howHeardAbout: string | null
+  assignedUserId: string | null
   createdAt: Date
   updatedAt: Date
 }

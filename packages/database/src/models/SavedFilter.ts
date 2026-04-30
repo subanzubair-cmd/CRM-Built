@@ -24,6 +24,20 @@ export class SavedFilter extends Model<Partial<SavedFilterAttributes>, Partial<S
   @AllowNull(false) @Column(DataType.JSONB) declare filters: Record<string, unknown>
   @AllowNull(false) @Default(false) @Column(DataType.BOOLEAN) declare isDefault: boolean
 
+  /** NULL = standalone "Individual Filter"; otherwise FK to
+   *  SavedFilterFolder. Soft FK (no CASCADE) so deleting a folder
+   *  doesn't lose the filters — they re-appear as Individual. */
+  @Column(DataType.TEXT)
+  declare folderId: string | null
+
+  @Column(DataType.TEXT)
+  declare description: string | null
+
+  /** Mirror of `EXISTS(SELECT 1 FROM SavedFilterShare WHERE level <> 'NONE')`
+   *  — kept on the row so the Manage Filters list can show a sharing
+   *  badge without an extra JOIN. */
+  @AllowNull(false) @Default(false) @Column(DataType.BOOLEAN) declare shared: boolean
+
   @AllowNull(false) @Default(DataType.NOW) @Column(DataType.DATE) declare createdAt: Date
   @AllowNull(false) @Default(DataType.NOW) @Column(DataType.DATE) declare updatedAt: Date
 }
@@ -35,6 +49,9 @@ export interface SavedFilterAttributes {
   pipeline: string
   filters: Record<string, unknown>
   isDefault: boolean
+  folderId: string | null
+  description: string | null
+  shared: boolean
   createdAt: Date
   updatedAt: Date
 }
