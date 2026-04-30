@@ -122,3 +122,32 @@ export async function getVendorById(id: string): Promise<VendorWithContact | nul
   // and the FK is enforced, so eager-load always produces a row.
   return vendor.get({ plain: true }) as unknown as VendorWithContact
 }
+
+
+/**
+ * Vendor SMS Campaigns tab data source. Mirrors getBuyerBlasts() but
+ * filters BulkSmsBlast rows to module=VENDORS so the buyer + vendor
+ * blast lists never bleed into each other.
+ */
+export async function getVendorBlasts(limit = 50) {
+  const { BulkSmsBlast } = await import("@crm/database")
+  const rows = await BulkSmsBlast.findAll({
+    where: { module: "VENDORS" as any },
+    order: [["createdAt", "DESC"]],
+    limit,
+  })
+  return rows.map((r) => {
+    const j = r.get({ plain: true }) as any
+    return {
+      id: j.id as string,
+      name: j.name as string,
+      body: j.body as string,
+      status: j.status as string,
+      createdAt: j.createdAt as Date,
+      recipientCount: Number(j.recipientCount ?? 0),
+      sentCount: Number(j.sentCount ?? 0),
+      deliveredCount: Number(j.deliveredCount ?? 0),
+      failedCount: Number(j.failedCount ?? 0),
+    }
+  })
+}

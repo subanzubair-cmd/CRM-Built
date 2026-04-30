@@ -27,16 +27,17 @@ interface PhoneOption {
 
 interface Props {
   onClose: () => void
-  /** Buyer ids the operator has manually selected. Pass empty array to
-   *  blast against the active filter (filter passed separately). */
+  /** Buyer/Vendor ids the operator has manually selected. */
   selectedBuyerIds: string[]
-  /** Optional filter snapshot — used when the operator chose Select All
-   *  rather than per-row checkboxes. The route accepts either. */
+  /** Optional filter snapshot when the operator used Select All. */
   filter?: Record<string, unknown> | null
+  /** Which entity module the blast targets. Drives the API path. */
+  entity?: 'buyer' | 'vendor'
   onSent?: (blastId: string) => void
 }
 
-export function BulkSmsModal({ onClose, selectedBuyerIds, filter, onSent }: Props) {
+export function BulkSmsModal({ onClose, selectedBuyerIds, filter, entity = 'buyer', onSent }: Props) {
+  const apiRoot = entity === 'vendor' ? '/api/vendors' : '/api/buyers'
   const [step, setStep] = useState<'confirm' | 'compose'>('confirm')
   const [previewCount, setPreviewCount] = useState<number | null>(null)
   const [sample, setSample] = useState<Array<{ id: string; name: string }>>([])
@@ -51,7 +52,7 @@ export function BulkSmsModal({ onClose, selectedBuyerIds, filter, onSent }: Prop
   // Pull recipient preview + phone options when the modal opens.
   useEffect(() => {
     let aborted = false
-    fetch('/api/buyers/bulk-sms/preview', {
+    fetch(`${apiRoot}/bulk-sms/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ buyerIds: selectedBuyerIds, filter: filter ?? undefined }),
@@ -89,7 +90,7 @@ export function BulkSmsModal({ onClose, selectedBuyerIds, filter, onSent }: Prop
     setSending(true)
     setError(null)
     try {
-      const res = await fetch('/api/buyers/bulk-sms', {
+      const res = await fetch(`${apiRoot}/bulk-sms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

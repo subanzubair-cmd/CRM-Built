@@ -34,8 +34,10 @@ const STATUS_BADGE: Record<string, string> = {
   FAILED: 'bg-rose-50 text-rose-700',
 }
 
-export function ImportLogClient() {
+export function ImportLogClient({ entity = 'buyer' }: { entity?: 'buyer' | 'vendor' } = {}) {
   const router = useRouter()
+  const apiRoot = entity === 'vendor' ? '/api/vendors' : '/api/buyers'
+  const noun = entity === 'vendor' ? 'Vendors' : 'Buyers'
   const [rows, setRows] = useState<ImportRow[]>([])
   const [loading, setLoading] = useState(true)
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -44,7 +46,7 @@ export function ImportLogClient() {
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    fetch('/api/buyers/import')
+    fetch(`${apiRoot}/import`)
       .then((r) => r.json())
       .then((res) => {
         setRows(Array.isArray(res?.data) ? res.data : [])
@@ -59,7 +61,7 @@ export function ImportLogClient() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const res = await fetch('/api/buyers/import', { method: 'POST', body: fd })
+      const res = await fetch(`${apiRoot}/import`, { method: 'POST', body: fd })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
         throw new Error(typeof j.error === 'string' ? j.error : 'Upload failed.')
@@ -82,14 +84,14 @@ export function ImportLogClient() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">
-          Past CSV imports — buyers added through the Import button below.
+          Past CSV imports — {noun.toLowerCase()} added through the Import button below.
         </p>
         <button
           onClick={() => setUploadOpen(true)}
           className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
         >
           <Upload className="w-3.5 h-3.5" />
-          Import Buyers
+          Import {noun}
         </button>
       </div>
 
@@ -102,7 +104,7 @@ export function ImportLogClient() {
           <Upload className="w-8 h-8 text-gray-300 mb-2" />
           <p className="text-sm text-gray-400">No imports yet.</p>
           <p className="text-xs text-gray-300 mt-1">
-            Upload a CSV with firstName / lastName / email / phone columns to bulk-add buyers.
+            Upload a CSV with firstName / lastName / email / phone columns to bulk-add {noun.toLowerCase()}.
           </p>
         </div>
       ) : (
@@ -167,7 +169,7 @@ export function ImportLogClient() {
           <div className="absolute inset-0 bg-black/40" onClick={() => setUploadOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-5">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[15px] font-semibold text-gray-900">Import Buyers</h2>
+              <h2 className="text-[15px] font-semibold text-gray-900">Import {noun}</h2>
               <button onClick={() => setUploadOpen(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-4 h-4" />
               </button>

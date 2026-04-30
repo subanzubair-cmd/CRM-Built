@@ -5,6 +5,7 @@ import { BuyerCriteriaCard } from '@/components/buyers/BuyerCriteriaCard'
 import { BuyerMatchHistoryCard } from '@/components/buyers/BuyerMatchHistoryCard'
 import { BuyerOfferHistoryCard } from '@/components/buyers/BuyerOfferHistoryCard'
 import { BuyerNotesCard } from '@/components/buyers/BuyerNotesCard'
+import { BuyerHeaderActions } from '@/components/buyers/BuyerHeaderActions'
 import Link from 'next/link'
 import { ChevronLeft } from 'lucide-react'
 
@@ -37,18 +38,57 @@ export default async function BuyerDetailPage({ params }: Params) {
       </Link>
 
       <div className="bg-white border border-gray-200 rounded-xl p-5 mb-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">{fullName}</h1>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold text-gray-900">{fullName}</h1>
+              <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${buyer.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                {buyer.isActive ? 'Active' : 'Inactive'}
+              </span>
+              {(buyer as any).vipFlag && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700">
+                  VIP
+                </span>
+              )}
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700">
+                {buyer.contact.type === 'AGENT' ? 'Agent (of buyer)' : 'Buyer'}
+              </span>
+            </div>
             <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
               {buyer.contact.phone && <span>{buyer.contact.phone}</span>}
               {buyer.contact.email && <span>{buyer.contact.email}</span>}
             </div>
             {buyer.notes && <p className="text-sm text-gray-500 mt-2 max-w-lg">{buyer.notes}</p>}
           </div>
-          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${buyer.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-            {buyer.isActive ? 'Active' : 'Inactive'}
-          </span>
+          <BuyerHeaderActions
+            snapshot={{
+              buyerId: buyer.id,
+              firstName: buyer.contact.firstName ?? '',
+              lastName: buyer.contact.lastName ?? '',
+              contactType: buyer.contact.type === 'AGENT' ? 'AGENT' : 'BUYER',
+              phones: Array.isArray((buyer.contact as any).phones)
+                ? (buyer.contact as any).phones
+                : buyer.contact.phone
+                  ? [{ label: 'primary', number: buyer.contact.phone }]
+                  : [],
+              emails: Array.isArray((buyer.contact as any).emails)
+                ? (buyer.contact as any).emails
+                : buyer.contact.email
+                  ? [{ label: 'primary', email: buyer.contact.email }]
+                  : [],
+              mailingAddress: (buyer.contact as any).mailingAddress ?? '',
+              howHeardAbout: (buyer.contact as any).howHeardAbout ?? '',
+              assignedUserId: (buyer.contact as any).assignedUserId ?? '',
+              notes: buyer.notes ?? '',
+              targetCities: (buyer as any).targetCities ?? [],
+              targetZips: (buyer as any).targetZips ?? [],
+              targetCounties: (buyer as any).targetCounties ?? [],
+              targetStates: (buyer as any).targetStates ?? [],
+              customQuestions: (buyer as any).customQuestions ?? {},
+              vipFlag: !!(buyer as any).vipFlag,
+              isActive: !!buyer.isActive,
+            }}
+          />
         </div>
         {buyer.preferredMarkets.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-3">

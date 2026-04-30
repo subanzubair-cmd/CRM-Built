@@ -6,6 +6,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { UserCheck, UserX, Send, Mail } from 'lucide-react'
 import { BuyerBlastModal } from './BuyerBlastModal'
 import { BulkSmsModal } from './BulkSmsModal'
+import { BuyerFilterBar } from './BuyerFilterBar'
+import type { QuickFilterState } from './BuyerQuickFilter'
 
 interface BuyerRow {
   id: string
@@ -32,6 +34,7 @@ export function BuyerTable({ rows, total }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [blastOpen, setBlastOpen] = useState(false)
   const [bulkSmsOpen, setBulkSmsOpen] = useState(false)
+  const [filter, setFilter] = useState<QuickFilterState>({ enabled: [], values: {} })
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id))
   const someSelected = rows.some((r) => selectedIds.has(r.id))
@@ -66,6 +69,8 @@ export function BuyerTable({ rows, total }: Props) {
 
   return (
     <>
+      <BuyerFilterBar pipeline="buyers" filter={filter} onChange={setFilter} />
+
       {/* Selection action bar */}
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 mb-3 px-4 py-2.5 bg-blue-50 border border-blue-100 rounded-xl">
@@ -91,6 +96,24 @@ export function BuyerTable({ rows, total }: Props) {
             className="text-xs text-blue-500 hover:text-blue-700"
           >
             Clear
+          </button>
+        </div>
+      )}
+
+      {/* Filter-active action bar (shown when nothing is row-selected
+          but the filter has params turned on — lets the user blast
+          everyone matching the filter without manual checkbox work). */}
+      {selectedIds.size === 0 && filter.enabled.length > 0 && (
+        <div className="flex items-center gap-3 mb-3 px-4 py-2.5 bg-emerald-50 border border-emerald-100 rounded-xl">
+          <span className="text-sm font-medium text-emerald-800">
+            Filter active — {filter.enabled.length} parameter{filter.enabled.length === 1 ? '' : 's'}
+          </span>
+          <button
+            onClick={() => setBulkSmsOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-medium bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors"
+          >
+            <Send className="w-3.5 h-3.5" />
+            Send Bulk SMS to filtered set
           </button>
         </div>
       )}
@@ -198,6 +221,7 @@ export function BuyerTable({ rows, total }: Props) {
       {bulkSmsOpen && (
         <BulkSmsModal
           selectedBuyerIds={Array.from(selectedIds)}
+          filter={selectedIds.size === 0 && filter.enabled.length > 0 ? filter as any : null}
           onClose={() => {
             setBulkSmsOpen(false)
             setSelectedIds(new Set())
