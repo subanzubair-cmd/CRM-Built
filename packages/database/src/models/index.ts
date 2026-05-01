@@ -43,6 +43,7 @@ import { Contact } from './Contact'
 import { Buyer } from './Buyer'
 import { BuyerCriteria } from './BuyerCriteria'
 import { Vendor } from './Vendor'
+import { AdditionalContact } from './AdditionalContact'
 
 // ── Phase 6: Property hub ───────────────────────────────────────────────────
 import { Property } from './Property'
@@ -86,6 +87,9 @@ import { SavedFilterShare } from './SavedFilterShare'
 import { ImportJob } from './ImportJob'
 import { ImportJobRow } from './ImportJobRow'
 
+// ── Phase 10: Pipeline management ─────────────────────────────────────────
+import { PipelineStageConfig } from './PipelineStageConfig'
+
 sequelize.addModels([
   // Phase 2 leaves (parents first)
   LeadSource,
@@ -124,6 +128,7 @@ sequelize.addModels([
   Buyer,
   BuyerCriteria,
   Vendor,
+  AdditionalContact,
 
   // Phase 6 Property hub (Property before its child join/audit tables)
   Property,
@@ -167,6 +172,9 @@ sequelize.addModels([
   SavedFilterShare,
   ImportJob,
   ImportJobRow,
+
+  // Phase 10: Pipeline management
+  PipelineStageConfig,
 ])
 
 // Wire cross-model associations AFTER addModels.
@@ -209,6 +217,7 @@ export {
   Buyer,
   BuyerCriteria,
   Vendor,
+  AdditionalContact,
   // Phase 6
   Property,
   PropertyContact,
@@ -248,6 +257,9 @@ export {
   SavedFilterShare,
   ImportJob,
   ImportJobRow,
+
+  // Phase 10
+  PipelineStageConfig,
 }
 
 // Type-only re-exports — keep separate so client bundlers don't try to

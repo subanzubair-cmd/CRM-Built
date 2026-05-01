@@ -76,6 +76,14 @@ import {
   up as importJobUp,
   down as importJobDown,
 } from './20260430100300-create-import-job'
+import {
+  up as additionalContactUp,
+  down as additionalContactDown,
+} from './20260501060000-create-additional-contact'
+import {
+  up as pipelineStageConfigUp,
+  down as pipelineStageConfigDown,
+} from './20260501070000-create-pipeline-stage-config'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -192,6 +200,20 @@ const migrations = [
       importJobUp({ name: '20260430100300-create-import-job', context }),
     down: ({ context }: { context: any }) =>
       importJobDown({ name: '20260430100300-create-import-job', context }),
+  },
+  {
+    name: '20260501060000-create-additional-contact',
+    up: ({ context }: { context: any }) =>
+      additionalContactUp({ name: '20260501060000-create-additional-contact', context }),
+    down: ({ context }: { context: any }) =>
+      additionalContactDown({ name: '20260501060000-create-additional-contact', context }),
+  },
+  {
+    name: '20260501070000-create-pipeline-stage-config',
+    up: ({ context }: { context: any }) =>
+      pipelineStageConfigUp({ name: '20260501070000-create-pipeline-stage-config', context }),
+    down: ({ context }: { context: any }) =>
+      pipelineStageConfigDown({ name: '20260501070000-create-pipeline-stage-config', context }),
   },
 ]
 

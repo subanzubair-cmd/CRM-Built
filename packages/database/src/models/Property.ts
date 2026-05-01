@@ -17,9 +17,6 @@ import {
   LEAD_TYPE_VALUES,
   LEAD_STATUS_VALUES,
   PROPERTY_STATUS_VALUES,
-  ACTIVE_LEAD_STAGE_VALUES,
-  TM_STAGE_VALUES,
-  INVENTORY_STAGE_VALUES,
   EXIT_STRATEGY_VALUES,
 } from '../enums'
 
@@ -98,8 +95,8 @@ export class Property extends Model<
     | 'WARM'
     | 'REFERRED'
 
-  @Column(DataType.ENUM(...ACTIVE_LEAD_STAGE_VALUES))
-  declare activeLeadStage: typeof ACTIVE_LEAD_STAGE_VALUES[number] | null
+  @Column(DataType.TEXT)
+  declare activeLeadStage: string | null
 
   @Column(DataType.ENUM(...EXIT_STRATEGY_VALUES))
   declare exitStrategy: typeof EXIT_STRATEGY_VALUES[number] | null
@@ -117,11 +114,11 @@ export class Property extends Model<
   @Column(decimal(12, 2, 'repairEstimate')) declare repairEstimate: number | null
 
   // ── TM / Inventory / Dispo ───────────────────────────────────────────────
-  @Column(DataType.ENUM(...TM_STAGE_VALUES))
-  declare tmStage: typeof TM_STAGE_VALUES[number] | null
+  @Column(DataType.TEXT)
+  declare tmStage: string | null
 
-  @Column(DataType.ENUM(...INVENTORY_STAGE_VALUES))
-  declare inventoryStage: typeof INVENTORY_STAGE_VALUES[number] | null
+  @Column(DataType.TEXT)
+  declare inventoryStage: string | null
 
   @AllowNull(false) @Default(false) @Column(DataType.BOOLEAN) declare inDispo: boolean
   @Column(DataType.DATE) declare soldAt: Date | null
@@ -249,7 +246,7 @@ export interface PropertyAttributes {
     | 'DEAD'
     | 'WARM'
     | 'REFERRED'
-  activeLeadStage: typeof ACTIVE_LEAD_STAGE_VALUES[number] | null
+  activeLeadStage: string | null
   exitStrategy: typeof EXIT_STRATEGY_VALUES[number] | null
   isHot: boolean
   isFavorited: boolean
@@ -259,8 +256,8 @@ export interface PropertyAttributes {
   soldPrice: number | null
   arv: number | null
   repairEstimate: number | null
-  tmStage: typeof TM_STAGE_VALUES[number] | null
-  inventoryStage: typeof INVENTORY_STAGE_VALUES[number] | null
+  tmStage: string | null
+  inventoryStage: string | null
   inDispo: boolean
   soldAt: Date | null
   rentalAt: Date | null

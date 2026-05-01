@@ -2,7 +2,7 @@ import { auth } from '@/auth'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import {
-  Users, Phone, PhoneCall, Plug, Zap, GitBranch, FileText, Tag, List, ArrowLeft, Globe2,
+  Users, Phone, PhoneCall, Plug, Zap, GitBranch, FileText, Tag, List, ArrowLeft, Globe2, Layers,
 } from 'lucide-react'
 import { getUserList, getRoleList, getCampaignListSimple, getLeadCampaignListSimple } from '@/lib/settings'
 import { StatusAutomationsPanel } from '@/components/settings/StatusAutomationsPanel'
@@ -11,9 +11,12 @@ import { UsersList } from '@/components/settings/UsersList'
 import { TagsPanel } from '@/components/settings/TagsPanel'
 import { CommProviderForm } from '@/components/settings/CommProviderForm'
 import { LeadSourcesPanel } from '@/components/settings/LeadSourcesPanel'
+import { ContactSourcesPanel } from '@/components/settings/ContactSourcesPanel'
+import { ContactTypesPanel } from '@/components/settings/ContactTypesPanel'
 import { PhoneNumbersPanel } from '@/components/settings/PhoneNumbersPanel'
 import { GeneralSettingsPanel } from '@/components/settings/GeneralSettingsPanel'
 import { CallFlowPanel } from '@/components/settings/CallFlowPanel'
+import { PipelineManagementPanel } from '@/components/settings/PipelineManagementPanel'
 import { hasPermission } from '@/lib/auth-utils'
 
 interface PageProps {
@@ -53,6 +56,7 @@ const SETTINGS_SECTIONS: SettingSection[] = [
     cards: [
       { key: 'users', title: 'Manage Users', description: 'Add/Manage Users, Permissions & Profile', icon: Users, label: 'Users' },
       { key: 'general', title: 'General Settings', description: 'Company timezone — applies to every user regardless of where they’re working from', icon: Globe2, label: 'General' },
+      { key: 'pipelines', title: 'Pipeline Management', description: 'Customise pipeline stages — add, rename, reorder, or remove stages per pipeline', icon: Layers, label: 'Pipelines' },
     ],
   },
   {
@@ -76,6 +80,9 @@ const SETTINGS_SECTIONS: SettingSection[] = [
       { key: 'templates', title: 'Manage Templates', description: 'SMS, Email, RVM, Task templates', icon: FileText, label: 'Templates' },
       { key: 'tags', title: 'Tags', description: 'Manage tags used across leads', icon: Tag, label: 'Tags' },
       { key: 'lead-sources', title: 'Lead Sources', description: 'Manage lead sources used in campaigns', icon: List, label: 'Lead Sources' },
+      { key: 'buyer-sources', title: 'Buyer Sources', description: 'Manage "How did you hear about us?" options for buyers', icon: List, label: 'Buyer Sources' },
+      { key: 'vendor-sources', title: 'Vendor Sources', description: 'Manage "How did you hear about us?" options for vendors', icon: List, label: 'Vendor Sources' },
+      { key: 'contact-types', title: 'Contact Types', description: 'Manage relationship types for additional contacts (Brother, Friend, Attorney, etc.)', icon: Users, label: 'Contact Types' },
     ],
   },
 ]
@@ -203,6 +210,14 @@ export default async function SettingsPage({ searchParams }: PageProps) {
       {tab === 'tags' && <TagsPanel />}
 
       {tab === 'lead-sources' && <LeadSourcesPanel />}
+
+      {tab === 'buyer-sources' && <ContactSourcesPanel type="buyer" />}
+
+      {tab === 'vendor-sources' && <ContactSourcesPanel type="vendor" />}
+
+      {tab === 'contact-types' && <ContactTypesPanel />}
+
+      {tab === 'pipelines' && <PipelineManagementPanel />}
     </div>
   )
 }

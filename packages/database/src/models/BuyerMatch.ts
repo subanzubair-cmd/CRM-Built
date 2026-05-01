@@ -11,7 +11,8 @@ import {
 import { newCuid } from './_id'
 import { Buyer } from './Buyer'
 import { Property } from './Property'
-import { DISPO_STAGE_VALUES } from '../enums'
+// DispoStage values kept as a type reference; column is now TEXT
+// to support custom stages added via Settings > Pipeline Management.
 
 /**
  * `BuyerMatch` — output of the buyer-matching engine. Composite-unique
@@ -61,14 +62,8 @@ export class BuyerMatch extends Model<
 
   @AllowNull(false)
   @Default('POTENTIAL_BUYER')
-  @Column(DataType.ENUM(...DISPO_STAGE_VALUES))
-  declare dispoStage:
-    | 'POTENTIAL_BUYER'
-    | 'COLD_BUYER'
-    | 'WARM_BUYER'
-    | 'HOT_BUYER'
-    | 'DISPO_OFFER_RECEIVED'
-    | 'SOLD'
+  @Column(DataType.TEXT)
+  declare dispoStage: string
 
   @Column({
     type: DataType.DECIMAL(12, 2),
@@ -91,13 +86,7 @@ export interface BuyerMatchAttributes {
   propertyId: string
   score: number
   notified: boolean
-  dispoStage:
-    | 'POTENTIAL_BUYER'
-    | 'COLD_BUYER'
-    | 'WARM_BUYER'
-    | 'HOT_BUYER'
-    | 'DISPO_OFFER_RECEIVED'
-    | 'SOLD'
+  dispoStage: string
   dispoOfferAmount: number | null
   createdAt: Date
 }
