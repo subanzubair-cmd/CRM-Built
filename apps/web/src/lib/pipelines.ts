@@ -275,3 +275,50 @@ export async function getDispoPropertyBuyerMatches(propertyId: string) {
   })
   return matches.map((m) => m.get({ plain: true }) as any)
 }
+
+// ── Adjacent property navigation (prev/next within a propertyStatus pool) ────
+
+export async function getAdjacentPropertyIds(
+  id: string,
+  propertyStatus: string,
+): Promise<{ prevId: string | null; nextId: string | null }> {
+  const current = await Property.findByPk(id, {
+    attributes: ['lastActivityAt', 'updatedAt'],
+    raw: true,
+  })
+  if (!current) return { prevId: null, nextId: null }
+
+  const ts = (current.lastActivityAt as Date | null) ?? new Date(0)
+  const updated = current.updatedAt as Date
+
+  const [prev, next] = await Promise.all([
+    Property.findOne({
+      where: {
+        propertyStatus,
+        [Op.or]: [
+          { lastActivityAt: { [Op.gt]: ts } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: { [Op.gt]: updated } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: updated, id: { [Op.lt]: id } },
+        ],
+      } as WhereOptions,
+      order: [literal(`"Property"."lastActivityAt" ASC NULLS LAST`), ['updatedAt', 'ASC']],
+      attributes: ['id'],
+      raw: true,
+    }),
+    Property.findOne({
+      where: {
+        propertyStatus,
+        [Op.or]: [
+          { lastActivityAt: { [Op.lt]: ts } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: { [Op.lt]: updated } },
+          { lastActivityAt: current.lastActivityAt as Date | null, updatedAt: updated, id: { [Op.gt]: id } },
+        ],
+      } as WhereOptions,
+      order: [literal(`"Property"."lastActivityAt" DESC NULLS LAST`), ['updatedAt', 'DESC']],
+      attributes: ['id'],
+      raw: true,
+    }),
+  ])
+
+  return { prevId: (prev as any)?.id ?? null, nextId: (next as any)?.id ?? null }
+}

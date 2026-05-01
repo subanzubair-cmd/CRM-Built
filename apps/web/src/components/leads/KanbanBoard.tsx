@@ -56,10 +56,19 @@ interface KanbanRow {
   _count: { tasks: number }
 }
 
+interface StageConfig {
+  stageCode: string
+  label: string
+  color: string | null
+  sortOrder: number
+  isActive: boolean
+}
+
 interface KanbanBoardProps {
   rows: KanbanRow[]
   pipeline: string
   commStats: Record<string, CommStats>
+  stages: StageConfig[]
 }
 
 /* ------------------------------------------------------------------ */
@@ -68,29 +77,21 @@ interface KanbanBoardProps {
 
 type StageItem = { key: string; label: string; color: string }
 
-const DTS_STAGES: StageItem[] = [
-  { key: 'NEW_LEAD', label: 'New Lead', color: 'bg-gray-200' },
-  { key: 'DISCOVERY', label: 'Discovery', color: 'bg-blue-200' },
-  { key: 'INTERESTED_ADD_TO_FOLLOW_UP', label: 'Interested / Follow Up', color: 'bg-yellow-200' },
-  { key: 'APPOINTMENT_MADE', label: 'Appt Made', color: 'bg-purple-200' },
-  { key: 'DUE_DILIGENCE', label: 'Due Diligence', color: 'bg-orange-200' },
-  { key: 'OFFER_MADE', label: 'Offer Made', color: 'bg-emerald-200' },
-  { key: 'OFFER_FOLLOW_UP', label: 'Offer Follow-Up', color: 'bg-blue-200' },
-  { key: 'UNDER_CONTRACT', label: 'Under Contract', color: 'bg-green-200' },
+const COLOR_PALETTE = [
+  'bg-gray-200', 'bg-blue-200', 'bg-yellow-200', 'bg-purple-200',
+  'bg-orange-200', 'bg-emerald-200', 'bg-sky-200', 'bg-green-200',
+  'bg-pink-200', 'bg-indigo-200', 'bg-teal-200', 'bg-lime-200',
 ]
 
-const DTA_STAGES: StageItem[] = [
-  { key: 'NEW_LEAD', label: 'New Lead', color: 'bg-gray-200' },
-  { key: 'DISCOVERY', label: 'Discovery', color: 'bg-blue-200' },
-  { key: 'INTERESTED_ADD_TO_FOLLOW_UP', label: 'Interested / Follow Up', color: 'bg-yellow-200' },
-  { key: 'DUE_DILIGENCE', label: 'Due Diligence', color: 'bg-orange-200' },
-  { key: 'OFFER_MADE', label: 'Offer Made', color: 'bg-emerald-200' },
-  { key: 'OFFER_FOLLOW_UP', label: 'Offer Follow-Up', color: 'bg-blue-200' },
-  { key: 'UNDER_CONTRACT', label: 'Under Contract', color: 'bg-green-200' },
-]
-
-function getStagesForPipeline(pipeline: string): StageItem[] {
-  return pipeline === 'dta' ? DTA_STAGES : DTS_STAGES
+function buildStageItems(stages: StageConfig[]): StageItem[] {
+  return stages
+    .filter((s) => s.isActive)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s, idx) => ({
+      key: s.stageCode,
+      label: s.label,
+      color: COLOR_PALETTE[idx % COLOR_PALETTE.length],
+    }))
 }
 
 /* ------------------------------------------------------------------ */
@@ -343,11 +344,11 @@ function KanbanColumn({
 /*  KanbanBoard (exported)                                             */
 /* ------------------------------------------------------------------ */
 
-export function KanbanBoard({ rows, pipeline, commStats }: KanbanBoardProps) {
+export function KanbanBoard({ rows, pipeline, commStats, stages: stageConfigs }: KanbanBoardProps) {
   const router = useRouter()
   const [localRows, setLocalRows] = useState(rows)
   const [activeRow, setActiveRow] = useState<KanbanRow | null>(null)
-  const stages = getStagesForPipeline(pipeline)
+  const stages = buildStageItems(stageConfigs)
   const [showOfferModal, setShowOfferModal] = useState<string | null>(null) // propertyId
   const [showUCModal, setShowUCModal] = useState<{ propertyId: string; initialData: UnderContractData } | null>(null)
 

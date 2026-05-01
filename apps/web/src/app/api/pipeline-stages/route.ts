@@ -58,36 +58,47 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const parsed = CreateSchema.safeParse(body)
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
+    const fields = parsed.error.flatten().fieldErrors
+    const first = Object.values(fields).flat()[0]
+    return NextResponse.json(
+      { error: first ?? 'Invalid stage data' },
+      { status: 422 },
+    )
   }
 
   const { pipeline, stageCode, label, color } = parsed.data
 
-  // Check for duplicate stageCode in the pipeline
-  const existing = await PipelineStageConfig.findOne({
-    where: { pipeline, stageCode },
-  })
-  if (existing) {
-    return NextResponse.json(
-      { error: `Stage "${stageCode}" already exists in this pipeline.` },
-      { status: 409 },
-    )
+  try {
+    // Check for duplicate stageCode in the pipeline
+    const existing = await PipelineStageConfig.findOne({
+      where: { pipeline, stageCode },
+    })
+    if (existing) {
+      return NextResponse.json(
+        { error: `Stage "${stageCode}" already exists in this pipeline.` },
+        { status: 409 },
+      )
+    }
+
+    // Determine the next sortOrder
+    const maxOrder = (await PipelineStageConfig.max('sortOrder', {
+      where: { pipeline },
+    })) as number | null
+
+    const stage = await PipelineStageConfig.create({
+      pipeline,
+      stageCode,
+      label,
+      color: color ?? null,
+      sortOrder: (maxOrder ?? -1) + 1,
+      isSystem: false,
+      isActive: true,
+    })
+
+    return NextResponse.json({ data: stage.get({ plain: true }) }, { status: 201 })
+  } catch (err) {
+    console.error('[POST /api/pipeline-stages]', err)
+    const message = err instanceof Error ? err.message : 'Database error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  // Determine the next sortOrder
-  const maxOrder = await PipelineStageConfig.max('sortOrder', {
-    where: { pipeline },
-  }) as number | null
-
-  const stage = await PipelineStageConfig.create({
-    pipeline,
-    stageCode,
-    label,
-    color: color ?? null,
-    sortOrder: (maxOrder ?? -1) + 1,
-    isSystem: false,
-    isActive: true,
-  })
-
-  return NextResponse.json({ data: stage.get({ plain: true }) }, { status: 201 })
 }

@@ -8,7 +8,7 @@ import { SavedFilterChips } from '@/components/leads/SavedFilterChips'
 import { NewLeadButton } from '@/components/leads/NewLeadButton'
 import { KanbanBoard } from '@/components/leads/KanbanBoard'
 import { ViewToggle } from '@/components/leads/ViewToggle'
-import { User } from '@crm/database'
+import { User, PipelineStageConfig } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; stage?: string; assignedToId?: string; isHot?: string; page?: string; view?: string; sort?: string; order?: string }>
@@ -22,7 +22,7 @@ export default async function LeadsDtaPage({ searchParams }: PageProps) {
 
   const sp = await searchParams
   const view = sp.view ?? 'board'
-  const [{ rows, total, page, pageSize }, users] = await Promise.all([
+  const [{ rows, total, page, pageSize }, users, stages] = await Promise.all([
     getLeadList({
       pipeline: 'dta',
       search: sp.search,
@@ -37,6 +37,11 @@ export default async function LeadsDtaPage({ searchParams }: PageProps) {
       where: { status: 'ACTIVE' },
       attributes: ['id', 'name'],
       order: [['name', 'ASC']],
+      raw: true,
+    }),
+    PipelineStageConfig.findAll({
+      where: { pipeline: 'dta_leads', isActive: true },
+      order: [['sortOrder', 'ASC']],
       raw: true,
     }),
   ])
@@ -58,7 +63,7 @@ export default async function LeadsDtaPage({ searchParams }: PageProps) {
         <ViewToggle currentView={view} />
       </div>
       {view === 'board' ? (
-        <KanbanBoard rows={rows as any} pipeline="dta" commStats={commStats} />
+        <KanbanBoard rows={rows as any} pipeline="dta" commStats={commStats} stages={stages as any} />
       ) : (
         <LeadTable rows={rows as any} total={total} pipeline="dta" page={page} pageSize={pageSize} users={users} />
       )}

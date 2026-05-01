@@ -7,7 +7,7 @@ import { PipelineTable } from '@/components/pipelines/PipelineTable'
 import { LeadFilters } from '@/components/leads/LeadFilters'
 import { ViewToggle } from '@/components/leads/ViewToggle'
 import { TmKanbanBoard } from '@/components/pipelines/TmKanbanBoard'
-import { User } from '@crm/database'
+import { User, PipelineStageConfig } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string; view?: string; sort?: string; order?: string }>
@@ -21,7 +21,7 @@ export default async function TmPage({ searchParams }: PageProps) {
 
   const sp = await searchParams
   const view = sp.view ?? 'board'
-  const [{ rows, total, page, pageSize }, users] = await Promise.all([
+  const [{ rows, total, page, pageSize }, users, stages] = await Promise.all([
     getTmList({
       search: sp.search,
       assignedToId: sp.assignedToId,
@@ -31,6 +31,11 @@ export default async function TmPage({ searchParams }: PageProps) {
       where: { status: 'ACTIVE' },
       attributes: ['id', 'name'],
       order: [['name', 'ASC']],
+      raw: true,
+    }),
+    PipelineStageConfig.findAll({
+      where: { pipeline: 'tm', isActive: true },
+      order: [['sortOrder', 'ASC']],
       raw: true,
     }),
   ])
@@ -49,7 +54,7 @@ export default async function TmPage({ searchParams }: PageProps) {
         <ViewToggle currentView={view} />
       </div>
       {view === 'board' ? (
-        <TmKanbanBoard rows={rows as any} commStats={commStats} />
+        <TmKanbanBoard rows={rows as any} commStats={commStats} stages={stages as any} />
       ) : (
         <PipelineTable rows={rows as any} total={total} basePath="/tm" page={page} pageSize={pageSize} />
       )}

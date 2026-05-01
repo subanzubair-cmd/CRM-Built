@@ -50,22 +50,42 @@ interface InventoryRow {
   _count: { tasks: number }
 }
 
+interface StageConfig {
+  stageCode: string
+  label: string
+  color: string | null
+  sortOrder: number
+  isActive: boolean
+}
+
 interface InventoryKanbanBoardProps {
   rows: InventoryRow[]
   commStats: Record<string, CommStats>
+  stages: StageConfig[]
 }
 
 /* ------------------------------------------------------------------ */
 /*  Stage definitions                                                  */
 /* ------------------------------------------------------------------ */
 
-const STAGES: { key: string; label: string; color: string }[] = [
-  { key: 'NEW_INVENTORY', label: 'New Inventory', color: 'bg-gray-200' },
-  { key: 'GETTING_ESTIMATES', label: 'Getting Estimates', color: 'bg-blue-200' },
-  { key: 'UNDER_REHAB', label: 'Under Rehab', color: 'bg-orange-200' },
-  { key: 'LISTED_FOR_SALE', label: 'Listed For Sale', color: 'bg-purple-200' },
-  { key: 'UNDER_CONTRACT', label: 'Under Contract', color: 'bg-green-200' },
+const COLOR_PALETTE = [
+  'bg-gray-200', 'bg-blue-200', 'bg-orange-200', 'bg-purple-200',
+  'bg-green-200', 'bg-emerald-200', 'bg-yellow-200', 'bg-sky-200',
+  'bg-pink-200', 'bg-indigo-200', 'bg-teal-200', 'bg-lime-200',
 ]
+
+type StageItem = { key: string; label: string; color: string }
+
+function buildStageItems(stages: StageConfig[]): StageItem[] {
+  return stages
+    .filter((s) => s.isActive)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s, idx) => ({
+      key: s.stageCode,
+      label: s.label,
+      color: COLOR_PALETTE[idx % COLOR_PALETTE.length],
+    }))
+}
 
 /* ------------------------------------------------------------------ */
 /*  Formatting helpers                                                 */
@@ -208,7 +228,7 @@ function InventoryColumn({
   cards,
   commStats,
 }: {
-  stage: (typeof STAGES)[number]
+  stage: StageItem
   cards: InventoryRow[]
   commStats: Record<string, CommStats>
 }) {
@@ -253,17 +273,19 @@ function InventoryColumn({
 /*  InventoryKanbanBoard (exported)                                    */
 /* ------------------------------------------------------------------ */
 
-export function InventoryKanbanBoard({ rows, commStats }: InventoryKanbanBoardProps) {
+export function InventoryKanbanBoard({ rows, commStats, stages: stageConfigs }: InventoryKanbanBoardProps) {
   const [localRows, setLocalRows] = useState(rows)
   const [activeRow, setActiveRow] = useState<InventoryRow | null>(null)
+  const stages = buildStageItems(stageConfigs)
+  const defaultStage = stages[0]?.key ?? 'NEW_INVENTORY'
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   )
 
   const getRowsForStage = useCallback(
-    (stage: string) => localRows.filter((r) => (r.inventoryStage ?? 'NEW_INVENTORY') === stage),
-    [localRows]
+    (stage: string) => localRows.filter((r) => (r.inventoryStage ?? defaultStage) === stage),
+    [localRows, defaultStage]
   )
 
   function handleDragStart(event: DragStartEvent) {
@@ -277,7 +299,7 @@ export function InventoryKanbanBoard({ rows, commStats }: InventoryKanbanBoardPr
     if (!over || active.id === over.id) return
 
     const targetStage =
-      STAGES.find((s) => s.key === over.id)?.key ??
+      stages.find((s) => s.key === over.id)?.key ??
       localRows.find((r) => r.id === over.id)?.inventoryStage ??
       null
     if (!targetStage) return
@@ -315,7 +337,7 @@ export function InventoryKanbanBoard({ rows, commStats }: InventoryKanbanBoardPr
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-3 overflow-x-auto pb-4 min-h-[60vh]">
-        {STAGES.map((stage) => {
+        {stages.map((stage) => {
           const stageRows = getRowsForStage(stage.key)
           return (
             <InventoryColumn
