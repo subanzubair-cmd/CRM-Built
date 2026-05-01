@@ -105,6 +105,7 @@ export class Property extends Model<
   @AllowNull(false) @Default(false) @Column(DataType.BOOLEAN) declare isHot: boolean
   @AllowNull(false) @Default(false) @Column(DataType.BOOLEAN) declare isFavorited: boolean
   @AllowNull(false) @Default(true) @Column(DataType.BOOLEAN) declare isOpen: boolean
+  @AllowNull(false) @Default(false) @Column(DataType.BOOLEAN) declare isQualified: boolean
 
   // ── Money columns ─────────────────────────────────────────────────────────
   @Column(decimal(12, 2, 'askingPrice')) declare askingPrice: number | null

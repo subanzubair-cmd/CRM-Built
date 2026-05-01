@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { Appointment } from '@crm/database'
+import { Appointment, Property } from '@crm/database'
 import { enqueueCalendarSync } from '@/lib/queue'
 import { z } from 'zod'
 
@@ -11,6 +11,7 @@ const UpdateAppointmentSchema = z.object({
   endAt: z.string().datetime().optional(),
   location: z.string().optional(),
   attendees: z.array(z.string()).optional(),
+  outcome: z.enum(['KEPT', 'NOT_KEPT']).optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -32,6 +33,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!appointment) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await appointment.update(updates)
 
+  // Auto-qualify the lead when appointment outcome is KEPT
+  if (parsed.data.outcome === 'KEPT' && appointment.propertyId) {
+    await Property.update(
+      { isQualified: true },
+      { where: { id: appointment.propertyId } },
+    )
+  }
+
   await enqueueCalendarSync({ action: 'update', appointmentId: appointment.id })
 
   return NextResponse.json({ success: true, data: appointment })
@@ -43,7 +52,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  // Fetch googleEventId before deleting so the worker can remove it from Google Calendar
   const existing = await Appointment.findByPk(id, {
     attributes: ['id', 'googleEventId'],
   })

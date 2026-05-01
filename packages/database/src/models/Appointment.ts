@@ -57,6 +57,9 @@ export class Appointment extends Model<
   @Column(DataType.TEXT)
   declare googleEventId: string | null
 
+  @Column(DataType.TEXT)
+  declare outcome: 'KEPT' | 'NOT_KEPT' | null
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -78,6 +81,7 @@ export interface AppointmentAttributes {
   location: string | null
   attendees: string[]
   googleEventId: string | null
+  outcome: 'KEPT' | 'NOT_KEPT' | null
   createdAt: Date
   updatedAt: Date
 }

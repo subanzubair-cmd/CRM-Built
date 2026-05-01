@@ -205,9 +205,11 @@ export default async function LeadDtsDetailPage({ params }: PageProps) {
           leadStatus={lead.leadStatus}
           isHot={lead.isHot}
           isFavorited={lead.isFavorited}
+          isQualified={(lead as any).isQualified ?? false}
           source={lead.source}
           createdAt={lead.createdAt}
           lastActivityAt={lead.lastActivityAt}
+          defaultOutboundNumber={(lead as any).defaultOutboundNumber ?? null}
           underContractData={{
             offerPrice: lead.offerPrice != null ? Number(lead.offerPrice) : null,
             offerType: (lead as any).offerType as 'VERBAL' | 'WRITTEN' | null,

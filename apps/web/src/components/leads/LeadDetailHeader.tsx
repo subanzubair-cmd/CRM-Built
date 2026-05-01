@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import {
   Flame, Star, Phone, MessageSquare, Mail, ChevronDown,
   ChevronLeft, ChevronRight, Tag, MoreHorizontal,
-  Pencil, Trash2, Zap, Heart, PhoneOff, GitMerge, Users, X, Wrench, FileText, ArrowRight,
+  Pencil, Trash2, Zap, Heart, GitMerge, Users, X, Wrench, FileText, ArrowRight,
+  Home, Copy, Check, Search, MapPin, Eye, BadgeCheck, CircleHelp,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { UnderContractModal, type UnderContractData } from './UnderContractModal'
@@ -76,7 +77,6 @@ const INVENTORY_MOVE_OPTIONS = [
   { value: 'PROMOTE_SOLD', label: 'Sold' },
 ]
 
-/* ── Exit strategy options ── */
 const EXIT_STRATEGIES = [
   { value: 'WHOLESALE_ASSIGNMENT', label: 'Wholesale - Assignment' },
   { value: 'WHOLESALE_DOUBLE_CLOSE', label: 'Wholesale - Double Close' },
@@ -106,6 +106,7 @@ interface Props {
   leadStatus: string
   isHot: boolean
   isFavorited: boolean
+  isQualified: boolean
   source: string | null
   createdAt: Date
   lastActivityAt?: Date | string | null
@@ -113,25 +114,24 @@ interface Props {
   campaignName: string | null
   exitStrategy: string | null
   contactPhone: string | null
+  defaultOutboundNumber: string | null
   callCount: number
   smsCount: number
   emailCount: number
   contacts?: Array<{ contact: { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null } }>
   leadNumber?: string | null
-  // Pipeline context — determines which stages to show in dropdown
   viewContext?: 'leads' | 'tm' | 'inventory' | 'sold' | 'rental'
   tmStage?: string | null
   inventoryStage?: string | null
-  // Navigation
   prevLeadId?: string | null
   nextLeadId?: string | null
 }
 
 export function LeadDetailHeader({
   id, pipeline, streetAddress, city, state, zip,
-  activeLeadStage, leadStatus, isHot, isFavorited, source,
+  activeLeadStage, leadStatus, isHot, isFavorited, isQualified, source,
   underContractData,
-  campaignName, exitStrategy, contactPhone,
+  campaignName, exitStrategy, contactPhone, defaultOutboundNumber,
   callCount, smsCount, emailCount,
   contacts,
   leadNumber,
@@ -145,13 +145,6 @@ export function LeadDetailHeader({
   const [showUCModal, setShowUCModal] = useState(false)
   const [showOfferModal, setShowOfferModal] = useState(false)
   const [showSoldModal, setShowSoldModal] = useState(false)
-  // The dead-lead modal collects the structured reasons + verbatim "Other"
-  // text before we PATCH leadStatus → DEAD. Two entry points need it:
-  //   1) MOVE_OUT_STATUSES dropdown picking "Dead Lead" (handled below)
-  //   2) Promote button picking "PROMOTE_DEAD" (handled below)
-  // showDeadModal carries the surface so we know whether to call PATCH
-  // /api/leads/[id] (lead pipeline) or /api/properties/[id]/promote
-  // (TM/inventory/dispo surfaces).
   const [showDeadModal, setShowDeadModal] = useState<null | 'lead' | 'promote'>(null)
   const [pendingValue, setPendingValue] = useState<string | null>(null)
   const [showActions, setShowActions] = useState(false)
@@ -161,9 +154,11 @@ export function LeadDetailHeader({
   const [showBuyerModal, setShowBuyerModal] = useState(false)
   const [showVendorModal, setShowVendorModal] = useState(false)
   const [showActivateDrip, setShowActivateDrip] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [showMap, setShowMap] = useState(false)
+  const [showStreetView, setShowStreetView] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
 
-  // Close actions dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
@@ -189,7 +184,6 @@ export function LeadDetailHeader({
   }
 
   async function handleUnifiedChange(value: string) {
-    // Handle promote actions (TM/Inventory move options)
     if (value.startsWith('PROMOTE_')) {
       const target = value.replace('PROMOTE_', '')
       const promoteMap: Record<string, string> = {
@@ -198,17 +192,8 @@ export function LeadDetailHeader({
       }
       const toStatus = promoteMap[target]
       if (!toStatus) return
-      // Intercept SOLD to collect sold details first
-      if (toStatus === 'SOLD') {
-        setShowSoldModal(true)
-        return
-      }
-      // Intercept DEAD to collect reasons via the modal first. The actual
-      // promote POST runs after the modal confirms (see modal's onConfirm).
-      if (toStatus === 'DEAD') {
-        setShowDeadModal('promote')
-        return
-      }
+      if (toStatus === 'SOLD') { setShowSoldModal(true); return }
+      if (toStatus === 'DEAD') { setShowDeadModal('promote'); return }
       setSaving(true)
       try {
         await fetch(`/api/properties/${id}/promote`, {
@@ -224,46 +209,30 @@ export function LeadDetailHeader({
       return
     }
 
-    // TM stage change
     if (viewContext === 'tm' && TM_STAGES.some((s) => s.value === value)) {
-      patch({ tmStage: value })
-      return
+      patch({ tmStage: value }); return
     }
 
-    // Inventory stage change
     if (viewContext === 'inventory' && INVENTORY_STAGES.some((s) => s.value === value)) {
-      patch({ inventoryStage: value })
-      return
+      patch({ inventoryStage: value }); return
     }
 
-    // Lead pipeline stage changes
     const isStatus = MOVE_OUT_STATUSES.some((s) => s.value === value)
     if (value === 'OFFER_MADE') {
-      setPendingValue(value)
-      setShowOfferModal(true)
-      return
+      setPendingValue(value); setShowOfferModal(true); return
     } else if (value === 'UNDER_CONTRACT') {
-      setPendingValue(value)
-      setShowUCModal(true)
+      setPendingValue(value); setShowUCModal(true)
     } else if (isStatus) {
-      // DEAD requires capturing reasons up front. Defer the PATCH until
-      // the modal confirms — see DeadLeadReasonModal block in the JSX.
-      if (value === 'DEAD') {
-        setShowDeadModal('lead')
-        return
-      }
+      if (value === 'DEAD') { setShowDeadModal('lead'); return }
       await patch({ leadStatus: value })
       if (value === 'WARM') router.push(`/leads/warm?type=${pipeline}`)
       else if (value === 'REFERRED_TO_AGENT') router.push(`/leads/referred?type=${pipeline}`)
     } else {
-      // If lead is currently DEAD/WARM/REFERRED, reactivate it when moving to a pipeline stage
       const reactivate = (leadStatus !== 'ACTIVE' && leadStatus !== 'LEAD') || ['DEAD', 'WARM', 'REFERRED', 'REFERRED_TO_AGENT'].includes(leadStatus)
         ? { leadStatus: 'ACTIVE', propertyStatus: 'LEAD', deadAt: null, warmAt: null, referredAt: null }
         : {}
       await patch({ activeLeadStage: value, ...reactivate })
-      if (Object.keys(reactivate).length > 0) {
-        router.push(`/leads/${pipeline}/${id}`)
-      }
+      if (Object.keys(reactivate).length > 0) router.push(`/leads/${pipeline}/${id}`)
     }
   }
 
@@ -274,14 +243,11 @@ export function LeadDetailHeader({
   async function addTag() {
     const tag = tagValue.trim().toLowerCase().replace(/\s+/g, '-')
     if (!tag) return
-    // Fetch current tags, add new one
     const res = await fetch(`/api/leads/${id}`)
     if (res.ok) {
       const data = await res.json()
       const currentTags: string[] = data.data?.tags ?? []
-      if (!currentTags.includes(tag)) {
-        await patch({ tags: [...currentTags, tag] })
-      }
+      if (!currentTags.includes(tag)) await patch({ tags: [...currentTags, tag] })
     }
     setTagValue('')
     setShowTagInput(false)
@@ -293,15 +259,20 @@ export function LeadDetailHeader({
     router.push(`/leads/${pipeline}`)
   }
 
+  function copyAddress() {
+    navigator.clipboard.writeText(fullAddress).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
   const currentValue = pendingValue
     ?? (viewContext === 'tm' ? (tmStage ?? 'NEW_CONTRACT')
       : viewContext === 'inventory' ? (inventoryStage ?? 'NEW_INVENTORY')
       : leadStatus === 'ACTIVE' ? (activeLeadStage ?? '') : leadStatus)
 
-  const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ')
-    || 'Address Unknown'
-
-  const pipelineLabel = pipeline === 'dts' ? 'DTS' : 'DTA'
+  const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ') || 'Address Unknown'
+  const encodedAddress = encodeURIComponent(fullAddress)
   const breadcrumbHref = `/leads/${pipeline}`
 
   const defaultUCData: UnderContractData = {
@@ -312,8 +283,11 @@ export function LeadDetailHeader({
     ...underContractData,
   }
 
+  const displayPhone = defaultOutboundNumber ?? contactPhone
+
   return (
     <>
+      {/* ── Modals ── */}
       {showUCModal && (
         <UnderContractModal
           propertyId={id}
@@ -340,10 +314,6 @@ export function LeadDetailHeader({
             setSaving(true)
             try {
               if (surface === 'promote') {
-                // TM/Inventory/Dispo → Dead. The promote endpoint flips
-                // propertyStatus to DEAD. We then PATCH /api/leads/[id]
-                // to persist the captured reasons + run the lead-status
-                // path (sets deadAt, audit-logs the rich detail).
                 await fetch(`/api/properties/${id}/promote`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -352,28 +322,17 @@ export function LeadDetailHeader({
                 await fetch(`/api/leads/${id}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    leadStatus: 'DEAD',
-                    deadReasons,
-                    deadOtherReason,
-                  }),
+                  body: JSON.stringify({ leadStatus: 'DEAD', deadReasons, deadOtherReason }),
                 })
               } else {
-                // Lead pipeline → Dead. Single PATCH does it all.
                 await fetch(`/api/leads/${id}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    leadStatus: 'DEAD',
-                    deadReasons,
-                    deadOtherReason,
-                  }),
+                  body: JSON.stringify({ leadStatus: 'DEAD', deadReasons, deadOtherReason }),
                 })
               }
               router.push(`/leads/dead?type=${pipeline}`)
-            } finally {
-              setSaving(false)
-            }
+            } finally { setSaving(false) }
           }}
         />
       )}
@@ -386,7 +345,6 @@ export function LeadDetailHeader({
             setShowSoldModal(false)
             setSaving(true)
             try {
-              // Run promote + save price in parallel, then redirect immediately
               await Promise.all([
                 fetch(`/api/properties/${id}/promote`, {
                   method: 'POST',
@@ -399,10 +357,8 @@ export function LeadDetailHeader({
                   body: JSON.stringify({ soldPrice: data.soldPrice }),
                 }),
               ])
-              // Redirect immediately — save buyer offers in background
               ;(window as any).showPageLoading?.()
               window.location.href = `/sold/${id}`
-              // Fire and forget buyer offers
               for (const buyer of data.buyers) {
                 fetch(`/api/properties/${id}/offers`, {
                   method: 'POST',
@@ -415,52 +371,161 @@ export function LeadDetailHeader({
         />
       )}
 
-      {showMergeModal && (
-        <MergeLeadModal propertyId={id} onClose={() => setShowMergeModal(false)} />
-      )}
-
-      {showBuyerModal && (
-        <MoveToBuyerModal propertyId={id} contacts={contacts ?? []} onClose={() => setShowBuyerModal(false)} />
-      )}
-
-      {showVendorModal && (
-        <MoveToVendorModal propertyId={id} contacts={contacts ?? []} onClose={() => setShowVendorModal(false)} />
-      )}
+      {showMergeModal && <MergeLeadModal propertyId={id} onClose={() => setShowMergeModal(false)} />}
+      {showBuyerModal && <MoveToBuyerModal propertyId={id} contacts={contacts ?? []} onClose={() => setShowBuyerModal(false)} />}
+      {showVendorModal && <MoveToVendorModal propertyId={id} contacts={contacts ?? []} onClose={() => setShowVendorModal(false)} />}
 
       <ActivateDripModal
         open={showActivateDrip}
         onClose={() => setShowActivateDrip(false)}
-        // Lead detail surfaces always operate on a Property — both
-        // LEADS and SOLD modules use subjectType=PROPERTY. We pick
-        // module by surface (TM/inventory/dispo currently route here
-        // for sold-side surfaces; we treat the full lead detail as
-        // LEADS for now since the activation modal's purpose on
-        // those surfaces is to enroll the seller for follow-up).
         subjectType="PROPERTY"
         subjectId={id}
         module={viewContext === 'sold' ? 'SOLD' : 'LEADS'}
         onActivated={() => router.refresh()}
       />
 
+      {/* ── Google Map Popup ── */}
+      {showMap && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={() => setShowMap(false)}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <div
+            className="relative w-[52vw] h-[48vh] bg-white rounded-xl shadow-2xl overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
+              <span className="text-sm font-medium text-gray-800 truncate pr-4">{fullAddress}</span>
+              <button onClick={() => setShowMap(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400 flex-shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <iframe
+              src={`https://maps.google.com/maps?q=${encodedAddress}&output=embed&z=15`}
+              width="100%"
+              height="100%"
+              style={{ border: 0 }}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Street View Popup ── */}
+      {showStreetView && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={() => setShowStreetView(false)}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <div
+            className="relative w-[52vw] h-[48vh] bg-white rounded-xl shadow-2xl overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
+              <span className="text-sm font-medium text-gray-800 truncate pr-4">Street View — {fullAddress}</span>
+              <button onClick={() => setShowStreetView(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400 flex-shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <iframe
+              src={`https://maps.google.com/maps?q=${encodedAddress}&layer=c&output=embed`}
+              width="100%"
+              height="100%"
+              style={{ border: 0 }}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="bg-white">
-        {/* ═══ ROW 1 — Breadcrumb + Nav + Actions ═══ */}
-        <div className="flex items-center justify-between py-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <a href={breadcrumbHref} className="text-sm text-blue-600 hover:text-blue-800 whitespace-nowrap font-medium transition-colors">
+
+        {/* ═══ ROW 1 — Address bar + Nav ═══ */}
+        <div className="flex items-center justify-between py-2 gap-2">
+
+          {/* Left: pipeline badge + breadcrumb + address + action icons */}
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+            {/* Pipeline badge */}
+            <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wide flex-shrink-0 ${pipeline === 'dts' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
+              <Home className="w-3 h-3" />
+              {pipeline.toUpperCase()}
+            </span>
+
+            <a href={breadcrumbHref} className="text-sm text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap transition-colors flex-shrink-0">
               Leads
             </a>
-            <span className="text-sm text-gray-400">&gt;</span>
-            <span className="text-xs font-semibold text-gray-500 whitespace-nowrap">{pipeline === 'dta' ? 'DTA' : 'DTS'}</span>
-            <span className="text-sm text-gray-400">&gt;</span>
+            <span className="text-sm text-gray-400 flex-shrink-0">&gt;</span>
             <span className="text-sm font-semibold text-gray-900 truncate">{fullAddress}</span>
-            <button onClick={() => patch({ isHot: !isHot })} className="ml-1 text-lg hover:scale-110 transition-transform cursor-pointer rounded p-0.5 flex-shrink-0" title="Toggle hot">
-              {isHot ? '🔥' : <Flame className="w-4 h-4 text-gray-300" />}
+
+            {/* Copy address */}
+            <button
+              onClick={copyAddress}
+              title="Copy address"
+              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={() => patch({ isFavorited: !isFavorited })} className="hover:scale-110 transition-transform cursor-pointer rounded p-0.5 flex-shrink-0" title="Toggle favorite">
-              <Star className={`w-4 h-4 ${isFavorited ? 'fill-amber-400 text-amber-400' : 'text-gray-300'}`} />
+
+            {/* Qualified toggle */}
+            <button
+              onClick={() => patch({ isQualified: !isQualified })}
+              title={isQualified ? 'Qualified — click to unqualify' : 'Not qualified — click to qualify'}
+              className={`flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border transition-colors ${
+                isQualified
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              {isQualified ? <BadgeCheck className="w-3 h-3" /> : <CircleHelp className="w-3 h-3" />}
+              {isQualified ? 'Qualified' : 'Not Qualified'}
+            </button>
+
+            {/* Google search */}
+            <a
+              href={`https://www.google.com/search?q=${encodedAddress}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Search on Google"
+              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </a>
+
+            {/* Zillow */}
+            <a
+              href={`https://www.zillow.com/homes/${encodedAddress}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View on Zillow"
+              className="flex-shrink-0 flex items-center justify-center w-5 h-5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors text-[11px] font-extrabold"
+            >
+              Z
+            </a>
+
+            {/* Google Maps popup */}
+            <button
+              onClick={() => setShowMap(true)}
+              title="View on Google Maps"
+              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <MapPin className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Street View popup */}
+            <button
+              onClick={() => setShowStreetView(true)}
+              title="View Street View"
+              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <Eye className="w-3.5 h-3.5" />
             </button>
           </div>
 
+          {/* Right: saving spinner + prev/next + actions */}
           <div className="flex items-center gap-1 flex-shrink-0">
             {saving && (
               <svg className="w-3.5 h-3.5 animate-spin text-blue-500 mr-1" fill="none" viewBox="0 0 24 24">
@@ -469,12 +534,11 @@ export function LeadDetailHeader({
               </svg>
             )}
 
-            {/* Prev/Next lead — DTS/DTA scoped */}
             <button
               onClick={() => prevLeadId && router.push(`/leads/${pipeline}/${prevLeadId}`)}
               disabled={!prevLeadId}
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              title={`Previous ${pipelineLabel} lead`}
+              title={`Previous ${pipeline.toUpperCase()} lead`}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -482,7 +546,7 @@ export function LeadDetailHeader({
               onClick={() => nextLeadId && router.push(`/leads/${pipeline}/${nextLeadId}`)}
               disabled={!nextLeadId}
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              title={`Next ${pipelineLabel} lead`}
+              title={`Next ${pipeline.toUpperCase()} lead`}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -499,11 +563,9 @@ export function LeadDetailHeader({
 
               {showActions && (
                 <div className="absolute right-0 top-full mt-1 w-80 bg-white border border-gray-200 rounded-xl shadow-xl z-50 py-2 max-h-[400px] overflow-y-auto">
-                  {/* Edit / Delete */}
                   <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
                     <button onClick={() => {
                       setShowActions(false)
-                      // Open the edit panel and scroll to it
                       window.dispatchEvent(new CustomEvent('lead-edit-open'))
                       const el = document.getElementById('property-edit-panel')
                       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -515,10 +577,8 @@ export function LeadDetailHeader({
                     </button>
                   </div>
 
-                  {/* Search actions (sold/rental style) */}
                   {(viewContext === 'sold' || viewContext === 'rental') ? (
                     <>
-                      {/* Contact actions — pick buyer or seller */}
                       <div className="px-4 py-2">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Reaching Sellers</p>
                         <div className="grid grid-cols-3 gap-2">
@@ -559,22 +619,12 @@ export function LeadDetailHeader({
                           </button>
                         </div>
                       </div>
-
-                      {/* Automate */}
                       <div className="px-4 py-2 border-t border-gray-100">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Automate</p>
-                        <button
-                          onClick={() => {
-                            setShowActions(false)
-                            setShowActivateDrip(true)
-                          }}
-                          className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors"
-                        >
+                        <button onClick={() => { setShowActions(false); setShowActivateDrip(true) }} className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                           <Zap className="w-4 h-4" /> Activate Drip
                         </button>
                       </div>
-
-                      {/* Actions */}
                       <div className="px-4 py-2 border-t border-gray-100">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Actions</p>
                         <div className="grid grid-cols-3 gap-2">
@@ -597,7 +647,6 @@ export function LeadDetailHeader({
                     </>
                   ) : (
                     <>
-                      {/* Regular lead actions */}
                       <div className="px-4 py-2">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Actions</p>
                         <div className="grid grid-cols-3 gap-2">
@@ -607,19 +656,11 @@ export function LeadDetailHeader({
                           <button onClick={() => { patch({ isFavorited: !isFavorited }); setShowActions(false) }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <Heart className="w-4 h-4" /> {isFavorited ? 'Unfavorite' : 'Favorite'}
                           </button>
-                          <button
-                            onClick={() => {
-                              setShowActions(false)
-                              setShowActivateDrip(true)
-                            }}
-                            className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors"
-                          >
+                          <button onClick={() => { setShowActions(false); setShowActivateDrip(true) }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <Zap className="w-4 h-4" /> Activate Drip
                           </button>
                         </div>
                       </div>
-
-                      {/* Migrate section */}
                       <div className="px-4 py-2 border-t border-gray-100">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Migrate</p>
                         <div className="grid grid-cols-2 gap-2">
@@ -652,137 +693,99 @@ export function LeadDetailHeader({
           </div>
         </div>
 
-        {/* ═══ ROW 2 — Info badges ═══ */}
-        <div className="flex items-center gap-2 py-1.5 flex-wrap text-sm">
-          <span className="bg-gray-100 text-gray-600 rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide">
-            {viewContext === 'sold' ? 'SOLD' : viewContext === 'rental' ? 'RENTAL' : viewContext === 'tm' ? 'STATUS' : viewContext === 'inventory' ? 'STATUS' : 'LEAD'}
-          </span>
-
-          {(viewContext === 'sold' || viewContext === 'rental') ? (
-            /* Sold/Rental — static badge, no dropdown */
-            <span className="px-3 py-1 rounded-lg text-sm font-medium bg-blue-600 text-white">
-              {viewContext === 'sold' ? 'Sold' : 'Rental'}
+        {/* ═══ ROW 2 — Stage + Exit + Source info | Comm stats ═══ */}
+        <div className="flex items-center justify-between py-1.5 gap-2">
+          <div className="flex items-center gap-2 flex-wrap text-sm min-w-0">
+            <span className="bg-gray-100 text-gray-600 rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide flex-shrink-0">
+              {viewContext === 'sold' ? 'SOLD' : viewContext === 'rental' ? 'RENTAL' : viewContext === 'tm' ? 'STATUS' : viewContext === 'inventory' ? 'STATUS' : 'LEAD'}
             </span>
-          ) : (
-          <div className="relative">
-            <select
-              value={currentValue || (viewContext === 'tm' ? 'NEW_CONTRACT' : viewContext === 'inventory' ? 'NEW_INVENTORY' : 'NEW_LEAD')}
-              onChange={(e) => handleUnifiedChange(e.target.value)}
-              disabled={saving}
-              className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-lg pl-3 pr-7 py-1 text-sm font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
-            >
-              <option value="" disabled className="bg-white text-gray-700">Set Stage</option>
 
-              {viewContext === 'tm' ? (
-                <>
-                  <optgroup label="TM Stages" className="bg-white text-gray-700">
-                    {TM_STAGES.map((s) => (
-                      <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Move To" className="bg-white text-gray-700">
-                    {TM_MOVE_OPTIONS.map((s) => (
-                      <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                    ))}
-                  </optgroup>
-                </>
-              ) : viewContext === 'inventory' ? (
-                <>
-                  <optgroup label="Inventory Stages" className="bg-white text-gray-700">
-                    {INVENTORY_STAGES.map((s) => (
-                      <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Move To" className="bg-white text-gray-700">
-                    {INVENTORY_MOVE_OPTIONS.map((s) => (
-                      <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                    ))}
-                  </optgroup>
-                </>
-              ) : (
-                <>
-                  <optgroup label="Pipeline Stages" className="bg-white text-gray-700">
-                    {(pipeline === 'dta' ? DTA_PIPELINE_STAGES : DTS_PIPELINE_STAGES).map((s) => (
-                      <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Move Lead" className="bg-white text-gray-700">
-                    {MOVE_OUT_STATUSES.map((s) => (
-                      <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                    ))}
-                  </optgroup>
-                </>
-              )}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none" />
-          </div>
-          )}
-
-          <span className="text-xs text-gray-400 uppercase font-semibold tracking-wide ml-1">Exit</span>
-          {(viewContext === 'sold' || viewContext === 'rental') ? (
-            <span className="bg-blue-600 text-white rounded-lg px-3 py-1 text-sm font-medium">
-              {EXIT_STRATEGIES.find(s => s.value === exitStrategy)?.label ?? exitStrategy ?? 'N/A'}
-            </span>
-          ) : (
-            <div className="relative">
-              <select
-                value={exitStrategy ?? ''}
-                onChange={(e) => handleExitChange(e.target.value)}
-                disabled={saving}
-                className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-lg pl-3 pr-7 py-1 text-sm font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
-              >
-                <option value="" className="bg-white text-gray-700">Select Exit</option>
-                {EXIT_STRATEGIES.map((s) => (
-                  <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none" />
-            </div>
-          )}
-
-          <span className="text-gray-300 mx-1">|</span>
-          {source && <span className="text-gray-600 text-sm">{source}</span>}
-          {campaignName && (
-            <>
-              <span className="text-gray-400 text-xs">&gt;</span>
-              <span className="text-gray-600 text-sm truncate max-w-[200px]" title={campaignName}>{campaignName}</span>
-            </>
-          )}
-          {contactPhone && (
-            <>
-              <span className="text-gray-400 text-xs">&gt;</span>
-              <span className="text-blue-600 text-sm font-medium">{contactPhone}</span>
-            </>
-          )}
-        </div>
-
-        {/* ═══ ROW 3 — Tags + Stats ═══ */}
-        <div className="flex items-center justify-between py-1.5 border-t border-gray-100">
-          <div className="flex items-center gap-2">
-            {showTagInput ? (
-              <div className="flex items-center gap-1">
-                <input
-                  value={tagValue}
-                  onChange={(e) => setTagValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') addTag(); if (e.key === 'Escape') setShowTagInput(false) }}
-                  placeholder="Tag name..."
-                  autoFocus
-                  className="border border-blue-300 rounded-lg px-2 py-1 text-xs w-32 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-                <button onClick={addTag} className="text-blue-600 hover:text-blue-800 text-xs font-medium transition-colors">Add</button>
-                <button onClick={() => setShowTagInput(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
+            {(viewContext === 'sold' || viewContext === 'rental') ? (
+              <span className="px-3 py-1 rounded-lg text-sm font-medium bg-blue-600 text-white">
+                {viewContext === 'sold' ? 'Sold' : 'Rental'}
+              </span>
             ) : (
-              <button onClick={() => setShowTagInput(true)} className="flex items-center gap-1 text-blue-600 text-sm hover:text-blue-800 transition-colors">
-                <Tag className="w-3.5 h-3.5" />
-                <span>+Add Tag</span>
-              </button>
+              <div className="relative flex-shrink-0">
+                <select
+                  value={currentValue || (viewContext === 'tm' ? 'NEW_CONTRACT' : viewContext === 'inventory' ? 'NEW_INVENTORY' : 'NEW_LEAD')}
+                  onChange={(e) => handleUnifiedChange(e.target.value)}
+                  disabled={saving}
+                  className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-lg pl-3 pr-7 py-1 text-sm font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
+                >
+                  <option value="" disabled className="bg-white text-gray-700">Set Stage</option>
+                  {viewContext === 'tm' ? (
+                    <>
+                      <optgroup label="TM Stages" className="bg-white text-gray-700">
+                        {TM_STAGES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                      </optgroup>
+                      <optgroup label="Move To" className="bg-white text-gray-700">
+                        {TM_MOVE_OPTIONS.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                      </optgroup>
+                    </>
+                  ) : viewContext === 'inventory' ? (
+                    <>
+                      <optgroup label="Inventory Stages" className="bg-white text-gray-700">
+                        {INVENTORY_STAGES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                      </optgroup>
+                      <optgroup label="Move To" className="bg-white text-gray-700">
+                        {INVENTORY_MOVE_OPTIONS.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                      </optgroup>
+                    </>
+                  ) : (
+                    <>
+                      <optgroup label="Pipeline Stages" className="bg-white text-gray-700">
+                        {(pipeline === 'dta' ? DTA_PIPELINE_STAGES : DTS_PIPELINE_STAGES).map((s) => (
+                          <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Move Lead" className="bg-white text-gray-700">
+                        {MOVE_OUT_STATUSES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                      </optgroup>
+                    </>
+                  )}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none" />
+              </div>
+            )}
+
+            <span className="text-xs text-gray-400 uppercase font-semibold tracking-wide flex-shrink-0">Exit</span>
+            {(viewContext === 'sold' || viewContext === 'rental') ? (
+              <span className="bg-blue-600 text-white rounded-lg px-3 py-1 text-sm font-medium flex-shrink-0">
+                {EXIT_STRATEGIES.find(s => s.value === exitStrategy)?.label ?? exitStrategy ?? 'N/A'}
+              </span>
+            ) : (
+              <div className="relative flex-shrink-0">
+                <select
+                  value={exitStrategy ?? ''}
+                  onChange={(e) => handleExitChange(e.target.value)}
+                  disabled={saving}
+                  className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-lg pl-3 pr-7 py-1 text-sm font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
+                >
+                  <option value="" className="bg-white text-gray-700">Select Exit</option>
+                  {EXIT_STRATEGIES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none" />
+              </div>
+            )}
+
+            <span className="text-gray-300 flex-shrink-0">|</span>
+            {source && <span className="text-gray-600 text-sm truncate max-w-[120px]" title={source}>{source}</span>}
+            {campaignName && (
+              <>
+                <span className="text-gray-400 text-xs flex-shrink-0">&gt;</span>
+                <span className="text-gray-600 text-sm truncate max-w-[150px]" title={campaignName}>{campaignName}</span>
+              </>
+            )}
+            {displayPhone && (
+              <>
+                <span className="text-gray-400 text-xs flex-shrink-0">&gt;</span>
+                <span className="text-blue-600 text-sm font-medium flex-shrink-0">{displayPhone}</span>
+              </>
             )}
           </div>
 
-          <div className="flex items-center gap-3 text-xs text-gray-500">
+          {/* Comm stats — right side of Row 2 */}
+          <div className="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
             <span className="flex items-center gap-1" title="Calls">
               <Phone className="w-3.5 h-3.5 text-gray-400" /> x{callCount}
             </span>
@@ -793,6 +796,31 @@ export function LeadDetailHeader({
               <Mail className="w-3.5 h-3.5 text-gray-400" /> x{emailCount}
             </span>
           </div>
+        </div>
+
+        {/* ═══ ROW 3 — Tags ═══ */}
+        <div className="flex items-center gap-2 py-1.5 border-t border-gray-100">
+          {showTagInput ? (
+            <div className="flex items-center gap-1">
+              <input
+                value={tagValue}
+                onChange={(e) => setTagValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addTag(); if (e.key === 'Escape') setShowTagInput(false) }}
+                placeholder="Tag name..."
+                autoFocus
+                className="border border-blue-300 rounded-lg px-2 py-1 text-xs w-32 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <button onClick={addTag} className="text-blue-600 hover:text-blue-800 text-xs font-medium transition-colors">Add</button>
+              <button onClick={() => setShowTagInput(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setShowTagInput(true)} className="flex items-center gap-1 text-blue-600 text-sm hover:text-blue-800 transition-colors">
+              <Tag className="w-3.5 h-3.5" />
+              <span>+Add Tag</span>
+            </button>
+          )}
         </div>
       </div>
     </>

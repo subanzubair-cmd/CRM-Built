@@ -79,6 +79,7 @@ const UpdateLeadSchema = z.object({
   // through to ActivityLog.detail and to the lead detail page section.
   deadReasons: z.array(z.string()).optional(),
   deadOtherReason: z.string().nullable().optional(),
+  isQualified: z.boolean().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }

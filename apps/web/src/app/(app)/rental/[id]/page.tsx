@@ -183,9 +183,11 @@ export default async function RentalDetailPage({ params }: PageProps) {
           leadStatus={property.propertyStatus}
           isHot={property.isHot}
           isFavorited={property.isFavorited}
+          isQualified={(property as any).isQualified ?? false}
           source={property.source}
           createdAt={property.createdAt}
           lastActivityAt={property.lastActivityAt}
+          defaultOutboundNumber={(property as any).defaultOutboundNumber ?? null}
           underContractData={{
             offerPrice: property.offerPrice != null ? Number(property.offerPrice) : null,
             offerType: (property as any).offerType as 'VERBAL' | 'WRITTEN' | null,
