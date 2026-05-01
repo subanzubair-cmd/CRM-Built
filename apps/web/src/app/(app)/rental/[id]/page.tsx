@@ -182,7 +182,6 @@ export default async function RentalDetailPage({ params }: PageProps) {
           activeLeadStage={property.activeLeadStage}
           leadStatus={property.propertyStatus}
           isHot={property.isHot}
-          isFavorited={property.isFavorited}
           isQualified={(property as any).isQualified ?? false}
           source={property.source}
           createdAt={property.createdAt}

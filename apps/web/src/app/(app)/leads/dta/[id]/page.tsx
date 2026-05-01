@@ -204,7 +204,6 @@ export default async function LeadDtaDetailPage({ params }: PageProps) {
           activeLeadStage={lead.activeLeadStage}
           leadStatus={lead.leadStatus}
           isHot={lead.isHot}
-          isFavorited={lead.isFavorited}
           isQualified={(lead as any).isQualified ?? false}
           source={lead.source}
           createdAt={lead.createdAt}

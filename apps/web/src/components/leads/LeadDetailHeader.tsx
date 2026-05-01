@@ -3,9 +3,9 @@
 import { useState, useTransition, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Flame, Star, Phone, MessageSquare, Mail, ChevronDown,
+  Flame, Phone, MessageSquare, Mail, ChevronDown,
   ChevronLeft, ChevronRight, Tag, MoreHorizontal,
-  Pencil, Trash2, Zap, Heart, GitMerge, Users, X, Wrench, FileText, ArrowRight,
+  Pencil, Trash2, Zap, GitMerge, Users, X, Wrench, FileText, ArrowRight,
   Home, Copy, Check, Search, MapPin, Eye, BadgeCheck, CircleHelp,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -105,7 +105,6 @@ interface Props {
   activeLeadStage: string | null
   leadStatus: string
   isHot: boolean
-  isFavorited: boolean
   isQualified: boolean
   source: string | null
   createdAt: Date
@@ -129,7 +128,7 @@ interface Props {
 
 export function LeadDetailHeader({
   id, pipeline, streetAddress, city, state, zip,
-  activeLeadStage, leadStatus, isHot, isFavorited, isQualified, source,
+  activeLeadStage, leadStatus, isHot, isQualified, source,
   underContractData,
   campaignName, exitStrategy, contactPhone, defaultOutboundNumber,
   callCount, smsCount, emailCount,
@@ -479,6 +478,17 @@ export function LeadDetailHeader({
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
 
+            {/* Hot toggle */}
+            <button
+              onClick={() => patch({ isHot: !isHot })}
+              title={isHot ? 'Mark not hot' : 'Mark hot'}
+              className="flex-shrink-0 p-1 rounded hover:bg-orange-50 transition-colors"
+            >
+              {isHot
+                ? <Flame className="w-3.5 h-3.5 text-orange-500" />
+                : <Flame className="w-3.5 h-3.5 text-gray-300 hover:text-orange-400" />}
+            </button>
+
             {/* Qualified toggle */}
             <button
               onClick={() => patch({ isQualified: !isQualified })}
@@ -636,7 +646,7 @@ export function LeadDetailHeader({
                       </div>
                       <div className="px-4 py-2 border-t border-gray-100">
                         <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-2">Actions</p>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                           <button onClick={async () => {
                             setShowActions(false)
                             if (!confirm('Move this property back to leads as a new lead?')) return
@@ -644,9 +654,6 @@ export function LeadDetailHeader({
                             router.push(`/leads/${pipeline}/${id}`)
                           }} className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <ChevronLeft className="w-4 h-4" /> Move to Leads
-                          </button>
-                          <button onClick={() => { patch({ isFavorited: !isFavorited }); setShowActions(false) }} className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
-                            <Heart className="w-4 h-4" /> {isFavorited ? 'Unfavorite' : 'Favorite'}
                           </button>
                           <button onClick={() => { setShowActions(false); toast.info('eSign coming soon') }} className="flex items-center gap-1.5 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <FileText className="w-4 h-4" /> Send eSign
@@ -661,9 +668,6 @@ export function LeadDetailHeader({
                         <div className="grid grid-cols-3 gap-2">
                           <button onClick={() => { patch({ isHot: !isHot }); setShowActions(false) }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <Flame className="w-4 h-4" /> {isHot ? 'Unmark Hot' : 'Mark Hot'}
-                          </button>
-                          <button onClick={() => { patch({ isFavorited: !isFavorited }); setShowActions(false) }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
-                            <Heart className="w-4 h-4" /> {isFavorited ? 'Unfavorite' : 'Favorite'}
                           </button>
                           <button onClick={() => { setShowActions(false); setShowActivateDrip(true) }} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-gray-50 text-gray-600 text-[11px] transition-colors">
                             <Zap className="w-4 h-4" /> Activate Drip
