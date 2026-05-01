@@ -20,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   const rawBody = await req.json()
   const parsed = Schema.safeParse(rawBody)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
+  if (!parsed.success) return NextResponse.json({ error: 'Invalid request.' }, { status: 422 })
 
   const commConfig = await getActiveCommConfig()
   const fromNumber = commConfig?.defaultNumber
