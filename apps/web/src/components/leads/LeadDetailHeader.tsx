@@ -557,7 +557,7 @@ export function LeadDetailHeader({
               onClick={() => prevLeadId && router.push(`/leads/${pipeline}/${prevLeadId}`)}
               disabled={!prevLeadId}
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              title={`Previous ${pipeline.toUpperCase()} lead`}
+              title="Previous"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -565,7 +565,7 @@ export function LeadDetailHeader({
               onClick={() => nextLeadId && router.push(`/leads/${pipeline}/${nextLeadId}`)}
               disabled={!nextLeadId}
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              title={`Next ${pipeline.toUpperCase()} lead`}
+              title="Next"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
