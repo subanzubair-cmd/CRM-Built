@@ -273,7 +273,16 @@ export function LeadDetailHeader({
 
   const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ') || 'Address Unknown'
   const encodedAddress = encodeURIComponent(fullAddress)
-  const breadcrumbHref = `/leads/${pipeline}`
+
+  const breadcrumbMap: Record<string, { label: string; href: string }> = {
+    leads: { label: pipeline === 'dts' ? 'DTS Pipeline' : 'DTA Pipeline', href: `/leads/${pipeline}` },
+    tm: { label: 'Transaction Management', href: '/tm' },
+    inventory: { label: 'Inventory', href: '/inventory' },
+    dispo: { label: 'Dispo', href: '/dispo' },
+    sold: { label: 'Sold', href: '/sold' },
+    rental: { label: 'Rental', href: '/rental' },
+  }
+  const { label: breadcrumbLabel, href: breadcrumbHref } = breadcrumbMap[viewContext] ?? breadcrumbMap.leads
 
   const defaultUCData: UnderContractData = {
     offerPrice: null, offerType: null, offerDate: null,
@@ -456,7 +465,7 @@ export function LeadDetailHeader({
             </span>
 
             <a href={breadcrumbHref} className="text-sm text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap transition-colors flex-shrink-0">
-              Leads
+              {breadcrumbLabel}
             </a>
             <span className="text-sm text-gray-400 flex-shrink-0">&gt;</span>
             <span className="text-sm font-semibold text-gray-900 truncate">{fullAddress}</span>
