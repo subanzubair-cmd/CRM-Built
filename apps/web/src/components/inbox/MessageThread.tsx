@@ -42,6 +42,10 @@ interface Message {
   callHasRecording?: boolean
   callDurationSec?: number | null
   callStatus?: string | null
+  /** SMS delivery status: SENT | DELIVERED | FAILED | UNDELIVERED */
+  status?: string | null
+  /** Provider error detail when status is FAILED/UNDELIVERED. */
+  failReason?: string | null
   createdAt: Date
   sentBy: { name: string } | null
 }
@@ -250,6 +254,8 @@ export function MessageThread({ messages: initialMessages }: Props) {
                   callIdForRecording={msg.twilioSid ?? null}
                   hasRecording={msg.channel === 'CALL' && !!msg.callHasRecording}
                   timestamp={tz.formatRelative(new Date(msg.createdAt))}
+                  messageStatus={msg.status ?? null}
+                  deliveryFailReason={msg.failReason ?? null}
                 />
               )
             })}

@@ -134,6 +134,8 @@ function CommRow({ comm }: { comm: CommsRow }) {
       hasRecording={isCall && comm.callHasRecording}
       timestamp={formatDistanceToNow(new Date(comm.createdAt), { addSuffix: true })}
       leadHref={leadDetailUrl(comm.property)}
+      messageStatus={comm.status}
+      deliveryFailReason={comm.failReason}
     />
   )
 }
