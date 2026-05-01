@@ -14,10 +14,11 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Pencil, UserX, UserCheck, Trash2, Merge } from 'lucide-react'
+import { Pencil, UserX, UserCheck, Trash2, Merge, ArrowRightLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { BuyerFormModal } from './BuyerFormModal'
 import { MergeBuyersModal } from './MergeBuyersModal'
+import { ConvertContactModal } from '@/components/ui/ConvertContactModal'
 
 type Snapshot = {
   buyerId: string
@@ -44,6 +45,7 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
   const params = useSearchParams()
   const [editOpen, setEditOpen] = useState(false)
   const [mergeOpen, setMergeOpen] = useState(false)
+  const [convertOpen, setConvertOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
   // Auto-open the edit modal when arriving via the row-action
@@ -127,6 +129,14 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
       </button>
       <button
         type="button"
+        onClick={() => setConvertOpen(true)}
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg transition-colors"
+      >
+        <ArrowRightLeft className="w-3.5 h-3.5" />
+        Convert
+      </button>
+      <button
+        type="button"
         onClick={deleteBuyer}
         disabled={busy}
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
@@ -180,6 +190,14 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
           customQuestions: snapshot.customQuestions,
           vipFlag: snapshot.vipFlag,
         }}
+      />
+
+      <ConvertContactModal
+        open={convertOpen}
+        onClose={() => setConvertOpen(false)}
+        from="buyer"
+        sourceId={snapshot.buyerId}
+        displayName={[snapshot.firstName, snapshot.lastName].filter(Boolean).join(' ')}
       />
     </div>
   )

@@ -12,10 +12,11 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Pencil, Trash2, UserCheck, UserX, Merge } from 'lucide-react'
+import { Pencil, Trash2, UserCheck, UserX, Merge, ArrowRightLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { VendorFormModal } from './VendorFormModal'
 import { MergeVendorsModal } from './MergeVendorsModal'
+import { ConvertContactModal } from '@/components/ui/ConvertContactModal'
 
 interface VendorSnapshot {
   vendorId: string
@@ -35,6 +36,7 @@ export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) 
   const params = useSearchParams()
   const [editOpen, setEditOpen] = useState(false)
   const [mergeOpen, setMergeOpen] = useState(false)
+  const [convertOpen, setConvertOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -115,6 +117,14 @@ export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) 
       </button>
       <button
         type="button"
+        onClick={() => setConvertOpen(true)}
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg transition-colors"
+      >
+        <ArrowRightLeft className="w-3.5 h-3.5" />
+        Convert
+      </button>
+      <button
+        type="button"
         onClick={deleteVendor}
         disabled={busy}
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
@@ -143,6 +153,14 @@ export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) 
           notes: snapshot.notes,
           isActive: snapshot.isActive,
         }}
+      />
+
+      <ConvertContactModal
+        open={convertOpen}
+        onClose={() => setConvertOpen(false)}
+        from="vendor"
+        sourceId={snapshot.vendorId}
+        displayName={snapshot.displayName}
       />
     </div>
   )
