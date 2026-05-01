@@ -75,11 +75,11 @@ export function ConvertContactModal({
     from === 'buyer'
       ? [
           { value: 'vendor', label: 'Vendor', desc: 'Convert to a vendor/contractor record' },
-          { value: 'lead', label: 'Lead', desc: 'Create a new lead in DTS or DTA pipeline' },
+          { value: 'lead', label: 'Lead', desc: 'Create a new lead in Direct to Seller or Direct to Agent pipeline' },
         ]
       : [
           { value: 'buyer', label: 'Buyer', desc: 'Convert to a buyer record' },
-          { value: 'lead', label: 'Lead', desc: 'Create a new lead in DTS or DTA pipeline' },
+          { value: 'lead', label: 'Lead', desc: 'Create a new lead in Direct to Seller or Direct to Agent pipeline' },
         ]
 
   async function submit() {
@@ -206,7 +206,7 @@ export function ConvertContactModal({
                         className="text-blue-600 focus:ring-blue-500"
                       />
                       <span className="text-gray-700">
-                        {p === 'DTS' ? 'DTS (Deal To Sell)' : 'DTA (Deal To Acquire)'}
+                        {p === 'DTS' ? 'DTS (Direct to Seller)' : 'DTA (Direct to Agent)'}
                       </span>
                     </label>
                   ))}

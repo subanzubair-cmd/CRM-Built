@@ -27,6 +27,7 @@ import { Contact } from './Contact'
 import { Buyer } from './Buyer'
 import { BuyerCriteria } from './BuyerCriteria'
 import { Vendor } from './Vendor'
+import { AdditionalContact } from './AdditionalContact'
 import { Property } from './Property'
 import { PropertyContact } from './PropertyContact'
 import { StageHistory } from './StageHistory'
@@ -180,6 +181,21 @@ export function wireAssociations(): void {
   // Buyer 1:N BuyerCriteria.
   Buyer.hasMany(BuyerCriteria, { foreignKey: 'buyerId', as: 'criteria' })
   BuyerCriteria.belongsTo(Buyer, { foreignKey: 'buyerId', as: 'buyer' })
+
+  // Additional contacts (polymorphic — no FK constraint, queried by
+  // subjectType + subjectId).
+  Buyer.hasMany(AdditionalContact, {
+    foreignKey: 'subjectId',
+    as: 'additionalContacts',
+    constraints: false,
+    scope: { subjectType: 'BUYER' },
+  })
+  Vendor.hasMany(AdditionalContact, {
+    foreignKey: 'subjectId',
+    as: 'additionalContacts',
+    constraints: false,
+    scope: { subjectType: 'VENDOR' },
+  })
 
   // ── Phase 6: Property hub ─────────────────────────────────────────────────
   Property.belongsTo(Market, { foreignKey: 'marketId', as: 'market' })

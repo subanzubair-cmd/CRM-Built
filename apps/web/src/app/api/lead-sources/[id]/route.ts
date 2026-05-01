@@ -33,13 +33,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  if (source.isSystem && parsed.data.name && parsed.data.name !== source.name) {
-    return NextResponse.json(
-      { error: 'Cannot rename system lead sources' },
-      { status: 400 },
-    )
-  }
-
   // Check for name collision when renaming
   if (parsed.data.name && parsed.data.name !== source.name) {
     const duplicate = await LeadSource.findOne({
@@ -84,15 +77,13 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   }
 
   const referenceCount = await LeadCampaign.count({ where: { leadSourceId: id } })
-  const hasReferences = referenceCount > 0
 
-  if (!source.isSystem && !hasReferences) {
-    await source.destroy()
-    return NextResponse.json({ success: true, deleted: true })
+  if (referenceCount > 0) {
+    // Soft deactivate — has campaign references
+    await source.update({ isActive: false })
+    return NextResponse.json({ success: true, deleted: false })
   }
 
-  // Soft deactivate — system source or has references
-  await source.update({ isActive: false })
-
-  return NextResponse.json({ success: true, deleted: false })
+  await source.destroy()
+  return NextResponse.json({ success: true, deleted: true })
 }

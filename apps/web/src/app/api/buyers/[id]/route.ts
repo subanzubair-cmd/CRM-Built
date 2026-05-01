@@ -149,13 +149,44 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   return NextResponse.json({ success: true, data: fresh?.get({ plain: true }) })
 }
 
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'contacts.edit')
   if (deny) return deny
 
   const { id } = await params
-  await Buyer.update({ isActive: false }, { where: { id } })
+  const permanent = req.nextUrl.searchParams.get('permanent') === '1'
+
+  if (!permanent) {
+    // Soft delete — mark inactive, preserve data.
+    await Buyer.update({ isActive: false }, { where: { id } })
+    return NextResponse.json({ success: true })
+  }
+
+  // Hard delete — permanently remove the buyer and orphaned contact.
+  const { BuyerCriteria, BuyerMatch, BuyerOffer, BulkSmsBlastRecipient, Vendor, sequelize } = await import('@crm/database')
+
+  const buyer = await Buyer.findByPk(id)
+  if (!buyer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const contactId = buyer.contactId as string
+
+  await sequelize.transaction(async (t: any) => {
+    // Remove child rows that reference this buyer.
+    await BuyerCriteria.destroy({ where: { buyerId: id }, transaction: t } as any)
+    await BuyerMatch.destroy({ where: { buyerId: id }, transaction: t } as any)
+    await BuyerOffer.destroy({ where: { buyerId: id }, transaction: t } as any)
+    await BulkSmsBlastRecipient.destroy({ where: { subjectId: id }, transaction: t } as any)
+
+    // Delete the Buyer row itself.
+    await Buyer.destroy({ where: { id }, transaction: t } as any)
+
+    // Delete the Contact only if it isn't linked to another entity.
+    const otherBuyer = await Buyer.findOne({ where: { contactId } as any, transaction: t })
+    const otherVendor = await Vendor.findOne({ where: { contactId } as any, transaction: t })
+    if (!otherBuyer && !otherVendor) {
+      await Contact.destroy({ where: { id: contactId }, transaction: t } as any)
+    }
+  })
 
   return NextResponse.json({ success: true })
 }

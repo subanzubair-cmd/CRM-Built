@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'contacts', label: 'Contacts' },
+  { key: 'inactive', label: 'Inactive' },
   { key: 'inbox', label: 'Inbox' },
   { key: 'sms-campaign', label: 'SMS Campaign' },
   { key: 'import-log', label: 'Import Log' },

@@ -22,6 +22,7 @@ const UpdateVendorSchema = z.object({
   lastName: z.string().max(100).nullable().optional(),
   phone: z.string().max(40).nullable().optional(),
   email: z.string().email().nullable().optional(),
+  howHeardAbout: z.string().max(200).nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -91,6 +92,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (data.lastName !== undefined) contactPatch.lastName = data.lastName
   if (data.phone !== undefined) contactPatch.phone = data.phone
   if (data.email !== undefined) contactPatch.email = data.email
+  if (data.howHeardAbout !== undefined) contactPatch.howHeardAbout = data.howHeardAbout
   if (Object.keys(contactPatch).length > 0) {
     await Contact.update(contactPatch as any, { where: { id: vendor.contactId } } as any)
   }
@@ -98,15 +100,42 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   return NextResponse.json({ success: true, data: vendor })
 }
 
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
   const session = await auth()
   const deny = requirePermission(session, 'contacts.edit')
   if (deny) return deny
 
   const { id } = await params
+  const permanent = req.nextUrl.searchParams.get('permanent') === '1'
+
+  if (!permanent) {
+    // Soft delete — mark inactive, preserve data.
+    const vendor = await Vendor.findByPk(id)
+    if (!vendor) return NextResponse.json({ success: true })
+    await vendor.update({ isActive: false })
+    return NextResponse.json({ success: true })
+  }
+
+  // Hard delete — permanently remove the vendor and orphaned contact.
+  const { Buyer, BulkSmsBlastRecipient, sequelize } = await import('@crm/database')
+
   const vendor = await Vendor.findByPk(id)
-  if (!vendor) return NextResponse.json({ success: true })
-  await vendor.update({ isActive: false })
+  if (!vendor) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const contactId = vendor.contactId as string
+
+  await sequelize.transaction(async (t: any) => {
+    await BulkSmsBlastRecipient.destroy({ where: { subjectId: id }, transaction: t } as any)
+
+    // Delete the Vendor row itself.
+    await Vendor.destroy({ where: { id }, transaction: t } as any)
+
+    // Delete the Contact only if it isn't linked to another entity.
+    const otherBuyer = await Buyer.findOne({ where: { contactId } as any, transaction: t })
+    const otherVendor = await Vendor.findOne({ where: { contactId } as any, transaction: t })
+    if (!otherBuyer && !otherVendor) {
+      await Contact.destroy({ where: { id: contactId }, transaction: t } as any)
+    }
+  })
 
   return NextResponse.json({ success: true })
 }

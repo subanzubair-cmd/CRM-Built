@@ -4,6 +4,8 @@ import { getVendorById } from '@/lib/vendors'
 import { VendorHeaderActions } from '@/components/vendors/VendorHeaderActions'
 import Link from 'next/link'
 import { ChevronLeft, Phone, Mail, MapPin, User as UserIcon } from 'lucide-react'
+import { PhoneActions, EmailActions } from '@/components/ui/ContactActionButtons'
+import { AdditionalContactsCard } from '@/components/ui/AdditionalContactsCard'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -135,7 +137,7 @@ export default async function VendorDetailPage({ params }: Params) {
           <ProfileField label="Last Name" value={vendor.contact.lastName} />
           <ProfileField label="Category" value={vendor.category} />
           <ProfileField
-            label="How heard about us"
+            label="How did you hear about us?"
             value={(vendor.contact as any).howHeardAbout}
           />
           <div className="col-span-2">
@@ -151,16 +153,17 @@ export default async function VendorDetailPage({ params }: Params) {
             {phones.length === 0 ? (
               <p className="text-sm text-gray-300">—</p>
             ) : (
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {phones.map((p, i) => (
                   <li key={i} className="flex items-center gap-2 text-sm">
                     <Phone className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-20">
+                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
                       {p.label || 'Phone'}
                     </span>
                     <span className="text-gray-900 font-mono text-[13px]">
                       {p.number}
                     </span>
+                    <PhoneActions number={p.number} />
                   </li>
                 ))}
               </ul>
@@ -173,14 +176,15 @@ export default async function VendorDetailPage({ params }: Params) {
             {emails.length === 0 ? (
               <p className="text-sm text-gray-300">—</p>
             ) : (
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {emails.map((e, i) => (
                   <li key={i} className="flex items-center gap-2 text-sm">
                     <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-20">
+                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
                       {e.label || 'Email'}
                     </span>
                     <span className="text-gray-900 text-[13px]">{e.email}</span>
+                    <EmailActions email={e.email} />
                   </li>
                 ))}
               </ul>
@@ -188,6 +192,9 @@ export default async function VendorDetailPage({ params }: Params) {
           </div>
         </dl>
       </div>
+
+      {/* Additional Contacts */}
+      <AdditionalContactsCard subjectType="VENDOR" subjectId={vendor.id} />
     </div>
   )
 }

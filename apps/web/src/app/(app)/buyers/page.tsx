@@ -12,6 +12,7 @@ import { BuyerTable } from '@/components/buyers/BuyerTable'
 import { BuyersHeader } from '@/components/buyers/BuyersHeader'
 import { BuyersPageLayout } from '@/components/buyers/BuyersPageLayout'
 import { ImportLogClient } from '@/components/buyers/ImportLogClient'
+import { InactiveBuyersTable } from '@/components/buyers/InactiveBuyersTable'
 import { Users, Mail, Phone, Handshake, UserCheck, Trophy, MessageSquare, Megaphone } from 'lucide-react'
 
 interface PageProps {
@@ -31,6 +32,7 @@ export default async function BuyersPage({ searchParams }: PageProps) {
     <BuyersPageLayout tab={tab}>
       {tab === 'dashboard' && <DashboardTab />}
       {tab === 'contacts' && <ContactsTab searchParams={sp} session={session} />}
+      {tab === 'inactive' && <InactiveTab searchParams={sp} />}
       {tab === 'inbox' && <InboxTab />}
       {tab === 'sms-campaign' && <SmsCampaignTab />}
       {tab === 'import-log' && <ImportLogClient />}
@@ -176,6 +178,23 @@ async function ContactsTab({
       <BuyerTable rows={rows as any} total={total} />
     </div>
   )
+}
+
+/* ─── Inactive Tab ───────────────────────────────────────────────────────── */
+
+async function InactiveTab({
+  searchParams,
+}: {
+  searchParams: { search?: string; page?: string }
+}) {
+  const { rows, total } = await getBuyerList({
+    activeOnly: false,
+    search: searchParams.search,
+    page: searchParams.page ? parseInt(searchParams.page) : 1,
+  })
+  // Only show inactive buyers.
+  const inactive = rows.filter((r: any) => !r.isActive)
+  return <InactiveBuyersTable rows={inactive as any} total={inactive.length} />
 }
 
 /* ─── Inbox Tab ──────────────────────────────────────────────────────────── */

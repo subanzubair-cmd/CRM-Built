@@ -80,6 +80,9 @@ const EMPTY: BuyerFormValues = {
   vipFlag: false,
 }
 
+/** Field-level error keys. */
+type FieldErrorKey = 'firstName' | 'contact' | 'howHeardAbout' | 'assignedUserId'
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -93,15 +96,19 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
   const [values, setValues] = useState<BuyerFormValues>(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldErrorKey, string>>>({})
   const [users, setUsers] = useState<Array<{ id: string; name: string }>>([])
   const [dup, setDup] = useState<{ message: string; existingBuyerId: string } | null>(null)
   /** Contact id of the buyer being edited — used to exclude self from duplicate checks. */
   const [editContactId, setEditContactId] = useState<string | null>(null)
 
+  const [buyerSources, setBuyerSources] = useState<string[]>([])
+
   useEffect(() => {
     if (!open) return
     setValues({ ...EMPTY, ...(initial ?? {}) })
     setError(null)
+    setFieldErrors({})
     setDup(null)
     // In edit mode, fetch the buyer to get the contact id for
     // self-exclusion in duplicate checks.
@@ -122,6 +129,11 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
         setUsers(list.map((u: any) => ({ id: u.id, name: u.name })))
       })
       .catch(() => {})
+    // Load buyer sources for the "How did you hear about us?" dropdown
+    fetch('/api/contact-sources?type=buyer')
+      .then((r) => r.json())
+      .then((res) => setBuyerSources(Array.isArray(res?.data) ? res.data : []))
+      .catch(() => {})
   }, [open, initial])
 
   if (!open) return null
@@ -130,19 +142,38 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
 
   function patch<K extends keyof BuyerFormValues>(key: K, value: BuyerFormValues[K]) {
     setValues((prev) => ({ ...prev, [key]: value }))
+    // Clear field-level error when user edits the field.
+    if (key === 'firstName' && fieldErrors.firstName) {
+      setFieldErrors((prev) => ({ ...prev, firstName: undefined }))
+    }
+    if (key === 'howHeardAbout' && fieldErrors.howHeardAbout) {
+      setFieldErrors((prev) => ({ ...prev, howHeardAbout: undefined }))
+    }
+    if (key === 'assignedUserId' && fieldErrors.assignedUserId) {
+      setFieldErrors((prev) => ({ ...prev, assignedUserId: undefined }))
+    }
+    if ((key === 'phones' || key === 'emails') && fieldErrors.contact) {
+      setFieldErrors((prev) => ({ ...prev, contact: undefined }))
+    }
   }
 
   async function submit() {
-    if (!values.firstName.trim()) {
-      setError('First Name is required.')
-      return
-    }
+    // Validate all required fields at once.
+    const errs: Partial<Record<FieldErrorKey, string>> = {}
+    if (!values.firstName.trim()) errs.firstName = 'First Name is required.'
     const hasPhone = values.phones.some((p) => p.number.trim())
     const hasEmail = values.emails.some((e) => e.email.trim())
-    if (!hasPhone && !hasEmail) {
-      setError('Provide at least one phone number or email.')
+    if (!hasPhone && !hasEmail) errs.contact = 'At least one phone number or email is required.'
+    if (!values.howHeardAbout) errs.howHeardAbout = 'This field is required.'
+    if (!values.assignedUserId) errs.assignedUserId = 'This field is required.'
+
+    if (Object.keys(errs).length > 0) {
+      setFieldErrors(errs)
+      setError(null)
       return
     }
+
+    setFieldErrors({})
     setSaving(true)
     setError(null)
     try {
@@ -211,13 +242,13 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
               Personal Info
             </h3>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="First Name" required>
+              <Field label="First Name" required error={fieldErrors.firstName}>
                 <ContactFieldAutocomplete
                   value={values.firstName}
                   onChange={(v) => patch('firstName', v)}
                   field="firstName"
                   type="BUYER"
-                  inputClassName="input w-full"
+                  inputClassName={`input w-full ${fieldErrors.firstName ? '!border-red-400 !ring-red-400' : ''}`}
                   autoComplete="given-name"
                 />
               </Field>
@@ -264,19 +295,23 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
                 </label>
               </Field>
 
-              <Field label="How did you hear about us?">
-                <input
+              <Field label="How did you hear about us?" required error={fieldErrors.howHeardAbout}>
+                <select
                   value={values.howHeardAbout}
                   onChange={(e) => patch('howHeardAbout', e.target.value)}
-                  placeholder="Bandit Sign, Referral, ..."
-                  className="input w-full"
-                />
+                  className={`input w-full ${fieldErrors.howHeardAbout ? '!border-red-400 !ring-red-400' : ''}`}
+                >
+                  <option value="">— Select source —</option>
+                  {buyerSources.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
               </Field>
-              <Field label="Who Owns this Buyer Contact">
+              <Field label="Who Owns this Buyer Contact" required error={fieldErrors.assignedUserId}>
                 <select
                   value={values.assignedUserId}
                   onChange={(e) => patch('assignedUserId', e.target.value)}
-                  className="input w-full"
+                  className={`input w-full ${fieldErrors.assignedUserId ? '!border-red-400 !ring-red-400' : ''}`}
                 >
                   <option value="">— Select assignee —</option>
                   {users.map((u) => (
@@ -299,7 +334,7 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
             </div>
 
             <MultiContactRows
-              label="Phones"
+              label="Phone *"
               addLabel="+ Add Phone"
               rows={values.phones}
               onChange={(next) => patch('phones', next)}
@@ -307,9 +342,10 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
               field="number"
               contactType={values.contactType}
               excludeContactId={editContactId ?? undefined}
+              hasError={!!fieldErrors.contact}
             />
             <MultiContactRows
-              label="Emails"
+              label="Email *"
               addLabel="+ Add Email"
               rows={values.emails as any[]}
               onChange={(next) => patch('emails', next as any)}
@@ -317,7 +353,15 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
               field="email"
               contactType={values.contactType}
               excludeContactId={editContactId ?? undefined}
+              hasError={!!fieldErrors.contact}
             />
+            {fieldErrors.contact ? (
+              <p className="text-[11px] text-red-500 mt-1">{fieldErrors.contact}</p>
+            ) : (
+              <p className="text-[10px] text-gray-400 mt-1 italic">
+                At least one phone number or email is required.
+              </p>
+            )}
           </section>
 
           {/* TARGET GEOGRAPHY */}
@@ -428,6 +472,12 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
         :global(.input:focus) {
           box-shadow: 0 0 0 2px rgb(59, 130, 246);
         }
+        :global(.input.\!border-red-400) {
+          border-color: rgb(248, 113, 113) !important;
+        }
+        :global(.input.\!border-red-400:focus) {
+          box-shadow: 0 0 0 2px rgb(248, 113, 113) !important;
+        }
       `}</style>
     </div>
   )
@@ -436,10 +486,12 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
 function Field({
   label,
   required,
+  error,
   children,
 }: {
   label: string
   required?: boolean
+  error?: string
   children: React.ReactNode
 }) {
   return (
@@ -449,6 +501,7 @@ function Field({
         {required && <span className="text-rose-500"> *</span>}
       </label>
       {children}
+      {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
     </div>
   )
 }
@@ -483,6 +536,7 @@ function MultiContactRows<K extends 'number' | 'email'>({
   field,
   contactType,
   excludeContactId,
+  hasError,
 }: {
   label: string
   addLabel: string
@@ -492,6 +546,7 @@ function MultiContactRows<K extends 'number' | 'email'>({
   field: K
   contactType?: 'BUYER' | 'AGENT' | 'VENDOR'
   excludeContactId?: string
+  hasError?: boolean
 }) {
   const labelOptions =
     field === 'number' ? PHONE_LABEL_OPTIONS : EMAIL_LABEL_OPTIONS
@@ -501,7 +556,7 @@ function MultiContactRows<K extends 'number' | 'email'>({
   return (
     <div className="mt-3">
       <div className="flex items-center justify-between mb-1.5">
-        <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+        <label className={`block text-[11px] font-semibold uppercase tracking-wide ${hasError ? 'text-red-500' : 'text-gray-500'}`}>
           {label}
         </label>
         <button
@@ -526,6 +581,7 @@ function MultiContactRows<K extends 'number' | 'email'>({
             labelOptions={labelOptions as readonly string[]}
             contactType={contactType}
             excludeContactId={excludeContactId}
+            hasError={hasError}
           />
         ))}
       </div>
@@ -547,6 +603,7 @@ function ContactRow({
   labelOptions,
   contactType,
   excludeContactId,
+  hasError,
 }: {
   row: any
   index: number
@@ -558,6 +615,7 @@ function ContactRow({
   labelOptions: readonly string[]
   contactType?: 'BUYER' | 'AGENT' | 'VENDOR'
   excludeContactId?: string
+  hasError?: boolean
 }) {
   const currentLabel: string = row.label ?? labelOptions[0]
   const matchedOption = labelOptions.find(
@@ -575,6 +633,8 @@ function ContactRow({
     excludeContactId,
   })
 
+  const errorBorder = hasError ? '!border-red-400 !ring-red-400' : ''
+
   return (
     <div>
       <div className="flex items-center gap-2">
@@ -589,7 +649,7 @@ function ContactRow({
             }
             onChange(next)
           }}
-          className="input w-28 flex-shrink-0 bg-white"
+          className={`input w-28 flex-shrink-0 bg-white ${errorBorder}`}
           aria-label={`${label} row ${index + 1} type`}
         >
           {labelOptions.map((opt) => (
@@ -608,7 +668,7 @@ function ContactRow({
               onChange(next)
             }}
             placeholder="Custom label"
-            className="input w-28 flex-shrink-0"
+            className={`input w-28 flex-shrink-0 ${errorBorder}`}
             aria-label="Custom label name"
           />
         )}
@@ -623,7 +683,7 @@ function ContactRow({
             field={field === 'number' ? 'phone' : 'email'}
             type={searchType}
             placeholder={placeholder}
-            inputClassName="input w-full"
+            inputClassName={`input w-full ${errorBorder}`}
             inputType={inputType as 'tel' | 'email'}
             inputMode={field === 'number' ? 'tel' : 'email'}
             autoComplete={field === 'number' ? 'tel' : 'email'}

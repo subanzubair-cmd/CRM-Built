@@ -10,7 +10,7 @@ export interface VendorListFilter {
 }
 
 export async function getVendorList(filter: VendorListFilter) {
-  const { search, category, activeOnly, page = 1, pageSize = 50 } = filter
+  const { search, category, activeOnly = true, page = 1, pageSize = 50 } = filter
 
   // Sequelize doesn't do nested-relation OR-where as cleanly as Prisma's
   // `contact: { OR: [...] }`. Use an `include.where` block — Sequelize

@@ -1,134 +1,121 @@
 'use client'
 
 /**
- * LeadSourcesPanel — CRUD for lead source entries.
+ * ContactTypesPanel — CRUD for additional-contact relationship types.
  *
- * UI matches ContactSourcesPanel (Buyer/Vendor Sources) — simple
- * two-column table with inline rename and delete on every row.
+ * API (backed by CompanySettings JSONB array):
+ *   GET    /api/contact-types             — string[]
+ *   POST   /api/contact-types  { name }   — add
+ *   DELETE /api/contact-types?name=...    — remove
  *
- * API:
- *   GET    /api/lead-sources           — list
- *   POST   /api/lead-sources           — create
- *   PATCH  /api/lead-sources/[id]      — rename
- *   DELETE /api/lead-sources/[id]      — hard delete (or deactivate if in use)
+ * Identical UX to ContactSourcesPanel and LeadSourcesPanel.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Plus, Pencil, Check, X, Trash2, Loader2 } from 'lucide-react'
 
-interface LeadSource {
-  id: string
-  name: string
-  isActive: boolean
-  isSystem: boolean
-}
-
-export function LeadSourcesPanel() {
-  const [sources, setSources] = useState<LeadSource[]>([])
+export function ContactTypesPanel() {
+  const [types, setTypes] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [saving, setSaving] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deletingName, setDeletingName] = useState<string | null>(null)
 
-  const fetchSources = useCallback(async () => {
+  const fetchTypes = useCallback(async () => {
     try {
-      const res = await fetch('/api/lead-sources')
-      if (!res.ok) throw new Error('Failed to load lead sources')
+      const res = await fetch('/api/contact-types')
+      if (!res.ok) throw new Error('Failed to load contact types')
       const json = await res.json()
-      setSources(json.data ?? [])
+      setTypes(json.data ?? [])
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load lead sources')
+      toast.error(err instanceof Error ? err.message : 'Failed to load contact types')
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchSources()
-  }, [fetchSources])
+    fetchTypes()
+  }, [fetchTypes])
 
   async function handleCreate() {
     const trimmed = newName.trim()
     if (!trimmed) return
     setSaving(true)
     try {
-      const res = await fetch('/api/lead-sources', {
+      const res = await fetch('/api/contact-types', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(json?.error ?? 'Failed to create lead source')
-      }
-      setSources((prev) => [...prev, json.data].sort((a, b) => a.name.localeCompare(b.name)))
-      toast.success(`Added "${json.data.name}"`)
+      if (!res.ok) throw new Error(json?.error ?? 'Failed to add contact type')
+      setTypes(json.data ?? [])
+      toast.success(`Added "${trimmed}"`)
       setNewName('')
       setAddOpen(false)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create lead source')
+      toast.error(err instanceof Error ? err.message : 'Failed to add contact type')
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleRename(id: string) {
+  async function handleDelete(name: string) {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return
+    setDeletingName(name)
+    try {
+      const res = await fetch(
+        `/api/contact-types?name=${encodeURIComponent(name)}`,
+        { method: 'DELETE' },
+      )
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.error ?? 'Failed to delete')
+      setTypes(json.data ?? [])
+      toast.success('Deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+    } finally {
+      setDeletingName(null)
+    }
+  }
+
+  /** Rename = delete old + add new. */
+  async function handleRename(idx: number) {
     const trimmed = editName.trim()
-    const original = sources.find((s) => s.id === id)
-    if (!original) return
-    if (!trimmed || trimmed === original.name) {
-      setEditingId(null)
+    const original = types[idx]
+    if (!trimmed || trimmed === original) {
+      setEditingIdx(null)
       return
     }
     setSaving(true)
     try {
-      const res = await fetch(`/api/lead-sources/${id}`, {
-        method: 'PATCH',
+      const delRes = await fetch(
+        `/api/contact-types?name=${encodeURIComponent(original)}`,
+        { method: 'DELETE' },
+      )
+      if (!delRes.ok) throw new Error('Rename failed (delete step)')
+
+      const addRes = await fetch('/api/contact-types', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed }),
       })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(typeof json?.error === 'string' ? json.error : 'Failed to rename')
-      }
-      setSources((prev) =>
-        prev.map((s) => (s.id === id ? json.data : s)).sort((a, b) => a.name.localeCompare(b.name)),
-      )
+      const json = await addRes.json().catch(() => ({}))
+      if (!addRes.ok) throw new Error(json?.error ?? 'Rename failed (add step)')
+
+      setTypes(json.data ?? [])
       toast.success('Renamed')
-      setEditingId(null)
+      setEditingIdx(null)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to rename')
+      toast.error(err instanceof Error ? err.message : 'Rename failed')
+      fetchTypes()
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function handleDelete(source: LeadSource) {
-    if (!confirm(`Delete "${source.name}"? This cannot be undone.`)) return
-    setDeletingId(source.id)
-    try {
-      const res = await fetch(`/api/lead-sources/${source.id}`, { method: 'DELETE' })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(typeof json?.error === 'string' ? json.error : 'Failed to delete')
-      }
-      if (json.deleted) {
-        setSources((prev) => prev.filter((s) => s.id !== source.id))
-        toast.success('Deleted')
-      } else {
-        setSources((prev) =>
-          prev.map((s) => (s.id === source.id ? { ...s, isActive: false } : s)),
-        )
-        toast.success('Deactivated (source is used by a campaign)')
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete')
-    } finally {
-      setDeletingId(null)
     }
   }
 
@@ -137,9 +124,9 @@ export function LeadSourcesPanel() {
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div>
-          <h3 className="text-sm font-semibold text-gray-800">Lead Sources</h3>
+          <h3 className="text-sm font-semibold text-gray-800">Contact Types</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Manage the list of channels leads can come from.
+            Manage the relationship types shown in the &ldquo;Add Contact&rdquo; dropdown on buyer and vendor detail pages.
           </p>
         </div>
         <button
@@ -147,7 +134,7 @@ export function LeadSourcesPanel() {
           className="flex items-center gap-1 text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
-          Add Source
+          Add Type
         </button>
       </div>
 
@@ -172,17 +159,17 @@ export function LeadSourcesPanel() {
                   Loading...
                 </td>
               </tr>
-            ) : sources.length === 0 ? (
+            ) : types.length === 0 ? (
               <tr>
                 <td colSpan={2} className="px-4 py-8 text-center text-gray-400">
-                  No lead sources yet. Click &quot;Add Source&quot; to create one.
+                  No contact types yet. Click &quot;Add Type&quot; to create one.
                 </td>
               </tr>
             ) : (
-              sources.map((source) => {
-                const isEditing = editingId === source.id
+              types.map((type, idx) => {
+                const isEditing = editingIdx === idx
                 return (
-                  <tr key={source.id} className="hover:bg-gray-50/50 transition-colors">
+                  <tr key={type} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-4 py-2.5">
                       {isEditing ? (
                         <div className="flex items-center gap-1.5">
@@ -191,21 +178,21 @@ export function LeadSourcesPanel() {
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleRename(source.id)
-                              if (e.key === 'Escape') setEditingId(null)
+                              if (e.key === 'Enter') handleRename(idx)
+                              if (e.key === 'Escape') setEditingIdx(null)
                             }}
                             autoFocus
                             className="text-sm border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                           <button
-                            onClick={() => handleRename(source.id)}
+                            onClick={() => handleRename(idx)}
                             disabled={saving}
                             className="p-1 text-blue-600 hover:text-blue-800 rounded hover:bg-blue-50 disabled:opacity-50"
                           >
                             <Check className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => setEditingId(null)}
+                            onClick={() => setEditingIdx(null)}
                             className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
                           >
                             <X className="w-3.5 h-3.5" />
@@ -215,23 +202,23 @@ export function LeadSourcesPanel() {
                         <div
                           className="group flex items-center gap-1.5 cursor-pointer"
                           onClick={() => {
-                            setEditingId(source.id)
-                            setEditName(source.name)
+                            setEditingIdx(idx)
+                            setEditName(type)
                           }}
                         >
-                          <span className="font-medium text-gray-800">{source.name}</span>
+                          <span className="font-medium text-gray-800">{type}</span>
                           <Pencil className="w-3 h-3 text-gray-300 group-hover:text-gray-500 transition-colors" />
                         </div>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <button
-                        onClick={() => handleDelete(source)}
-                        disabled={deletingId === source.id}
+                        onClick={() => handleDelete(type)}
+                        disabled={deletingName === type}
                         className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
                         title="Delete"
                       >
-                        {deletingId === source.id ? (
+                        {deletingName === type ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <Trash2 className="w-3.5 h-3.5" />
@@ -246,17 +233,14 @@ export function LeadSourcesPanel() {
         </table>
       </div>
 
-      {/* Add Source modal */}
+      {/* Add modal */}
       {addOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-[15px] font-semibold text-gray-900">Add Lead Source</h2>
+              <h2 className="text-[15px] font-semibold text-gray-900">Add Contact Type</h2>
               <button
-                onClick={() => {
-                  setAddOpen(false)
-                  setNewName('')
-                }}
+                onClick={() => { setAddOpen(false); setNewName('') }}
                 className="text-gray-400 hover:text-gray-600 transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -265,14 +249,14 @@ export function LeadSourcesPanel() {
             <div className="p-5 space-y-4">
               <div>
                 <label className="block text-[12px] font-medium text-gray-600 mb-1">
-                  Source Name *
+                  Type Name *
                 </label>
                 <input
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                  placeholder="e.g. Facebook Ads, Referral, Door Knock"
+                  placeholder="e.g. Cousin, Agent, Inspector"
                   autoFocus
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -280,10 +264,7 @@ export function LeadSourcesPanel() {
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-3 bg-gray-50 border-t border-gray-100 rounded-b-xl">
               <button
-                onClick={() => {
-                  setAddOpen(false)
-                  setNewName('')
-                }}
+                onClick={() => { setAddOpen(false); setNewName('') }}
                 className="text-sm text-gray-600 hover:text-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 Cancel

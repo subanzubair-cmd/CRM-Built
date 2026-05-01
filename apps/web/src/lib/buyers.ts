@@ -24,7 +24,7 @@ export interface BuyerListFilter {
 }
 
 export async function getBuyerList(filter: BuyerListFilter) {
-  const { search, activeOnly, page = 1, pageSize = 50, marketScope } = filter
+  const { search, activeOnly = true, page = 1, pageSize = 50, marketScope } = filter
 
   const where: Record<string, unknown> = {
     ...(activeOnly && { isActive: true }),

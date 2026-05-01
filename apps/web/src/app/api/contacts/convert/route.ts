@@ -205,9 +205,9 @@ export async function POST(req: NextRequest) {
       await StageHistory.create(
         {
           propertyId: property.id,
-          field: 'activeLeadStage',
-          oldValue: null,
-          newValue: 'NEW_LEAD',
+          pipeline: 'leads',
+          fromStage: null,
+          toStage: 'NEW_LEAD',
           changedById: userId,
         } as any,
         { transaction: t },
@@ -239,7 +239,8 @@ export async function POST(req: NextRequest) {
       // Soft-delete source entity.
       await sourceEntity.update({ isActive: false }, { transaction: t })
 
-      return { type: 'lead' as const, id: property.id }
+      const pipelineSlug = pipeline === 'DTA' ? 'dta' : 'dts'
+      return { type: 'lead' as const, id: property.id, pipelineSlug }
     }
 
     throw new Error('Invalid target type.')
@@ -249,7 +250,7 @@ export async function POST(req: NextRequest) {
   let redirectUrl = '/'
   if (result.type === 'buyer') redirectUrl = `/buyers/${result.id}`
   else if (result.type === 'vendor') redirectUrl = `/vendors/${result.id}`
-  else if (result.type === 'lead') redirectUrl = `/leads/${result.id}`
+  else if (result.type === 'lead') redirectUrl = `/leads/${(result as any).pipelineSlug}/${result.id}`
 
   return NextResponse.json({
     success: true,

@@ -16,6 +16,7 @@ import { getVendorList, getVendorBlasts } from '@/lib/vendors'
 import { VendorTable } from '@/components/vendors/VendorTable'
 import { VendorsHeader } from '@/components/vendors/VendorsHeader'
 import { ImportLogClient } from '@/components/buyers/ImportLogClient'
+import { InactiveVendorsTable } from '@/components/vendors/InactiveVendorsTable'
 
 interface PageProps {
   searchParams: Promise<{ tab?: string; search?: string; category?: string; page?: string }>
@@ -25,6 +26,7 @@ export const metadata = { title: 'Vendors' }
 
 const TABS = [
   { key: 'contacts', label: 'Contacts' },
+  { key: 'inactive', label: 'Inactive' },
   { key: 'sms-campaign', label: 'SMS Campaign' },
   { key: 'import-log', label: 'Import Log' },
 ] as const
@@ -57,6 +59,7 @@ export default async function VendorsPage({ searchParams }: PageProps) {
       </div>
 
       {tab === 'contacts' && <ContactsTab sp={sp} />}
+      {tab === 'inactive' && <InactiveTab sp={sp} />}
       {tab === 'sms-campaign' && <SmsCampaignTab />}
       {tab === 'import-log' && <ImportLogClient entity="vendor" />}
     </div>
@@ -70,6 +73,16 @@ async function ContactsTab({ sp }: { sp: { search?: string; category?: string; p
     page: sp.page ? parseInt(sp.page) : 1,
   })
   return <VendorTable rows={rows as any} total={total} />
+}
+
+async function InactiveTab({ sp }: { sp: { search?: string; page?: string } }) {
+  const { rows } = await getVendorList({
+    activeOnly: false,
+    search: sp.search,
+    page: sp.page ? parseInt(sp.page) : 1,
+  })
+  const inactive = rows.filter((r: any) => !r.isActive)
+  return <InactiveVendorsTable rows={inactive as any} total={inactive.length} />
 }
 
 async function SmsCampaignTab() {

@@ -14,6 +14,7 @@ const CreateVendorSchema = z.object({
   phone: z.string().max(20).optional(),
   category: z.string().min(1).max(100),
   markets: z.array(z.string()).default([]),
+  howHeardAbout: z.string().max(200).nullable().optional(),
   notes: z.string().max(2000).optional(),
 })
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   const parsed = CreateVendorSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const { firstName, lastName, email, phone, category, markets, notes } = parsed.data
+  const { firstName, lastName, email, phone, category, markets, howHeardAbout, notes } = parsed.data
 
   // REQUIRED: at least one of phone OR email. Vendors aren't worth
   // recording without a contact channel.
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
         phone: phone ?? null,
         phones: phone ? [{ label: 'Mobile', number: phone }] : [],
         emails: email ? [{ label: 'Primary', email }] : [],
+        howHeardAbout: howHeardAbout ?? null,
       },
       { transaction: t },
     )
