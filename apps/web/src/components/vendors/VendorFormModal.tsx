@@ -75,6 +75,7 @@ interface Props {
     markets: string[]
     notes: string
     isActive: boolean
+    howHeardAbout: string
   }
 }
 
@@ -129,7 +130,7 @@ export function VendorFormModal({ open, onClose, vendorId, initial }: Props) {
         phone: initial.phones[0]?.number ?? '',
         email: initial.emails[0]?.email ?? '',
         category: initial.category,
-        howHeardAbout: '',
+        howHeardAbout: initial.howHeardAbout ?? '',
         notes: initial.notes,
         isActive: initial.isActive,
       })

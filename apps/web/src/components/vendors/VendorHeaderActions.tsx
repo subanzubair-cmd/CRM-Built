@@ -29,6 +29,7 @@ interface VendorSnapshot {
   markets: string[]
   notes: string
   isActive: boolean
+  howHeardAbout: string
 }
 
 export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) {
@@ -146,6 +147,7 @@ export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) 
           markets: snapshot.markets,
           notes: snapshot.notes,
           isActive: snapshot.isActive,
+          howHeardAbout: snapshot.howHeardAbout,
         }}
       />
 

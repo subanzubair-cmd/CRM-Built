@@ -109,6 +109,7 @@ export default async function VendorDetailPage({ params }: Params) {
               markets: vendor.markets ?? [],
               notes: vendor.notes ?? '',
               isActive: !!vendor.isActive,
+              howHeardAbout: (vendor.contact as any).howHeardAbout ?? '',
             }}
           />
         </div>
