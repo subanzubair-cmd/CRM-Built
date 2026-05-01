@@ -1,8 +1,9 @@
 import { auth } from '@/auth'
 import { redirect, notFound } from 'next/navigation'
 import { getVendorById } from '@/lib/vendors'
+import { VendorHeaderActions } from '@/components/vendors/VendorHeaderActions'
 import Link from 'next/link'
-import { ChevronLeft, Phone, Mail, MapPin } from 'lucide-react'
+import { ChevronLeft, Phone, Mail, MapPin, User as UserIcon } from 'lucide-react'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -25,59 +26,178 @@ export default async function VendorDetailPage({ params }: Params) {
 
   const fullName = [vendor.contact.firstName, vendor.contact.lastName].filter(Boolean).join(' ')
 
+  // Resolve multi-value phones / emails the same way the buyer
+  // detail page does — fall back to legacy single-value columns so
+  // pre-migration rows still render with at least one entry.
+  const rawPhones = Array.isArray((vendor.contact as any).phones)
+    ? ((vendor.contact as any).phones as Array<{ label: string; number: string }>)
+    : []
+  const rawEmails = Array.isArray((vendor.contact as any).emails)
+    ? ((vendor.contact as any).emails as Array<{ label: string; email: string }>)
+    : []
+  const phones =
+    rawPhones.length > 0
+      ? rawPhones
+      : vendor.contact.phone
+        ? [{ label: 'Primary', number: vendor.contact.phone }]
+        : []
+  const emails =
+    rawEmails.length > 0
+      ? rawEmails
+      : vendor.contact.email
+        ? [{ label: 'Primary', email: vendor.contact.email }]
+        : []
+
   return (
     <div>
-      <Link href="/vendors" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-3">
+      <Link
+        href="/vendors"
+        className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-3"
+      >
         <ChevronLeft className="w-4 h-4" />
         Vendors
       </Link>
 
       <div className="bg-white border border-gray-200 rounded-xl p-5 mb-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-gray-900">{fullName}</h1>
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">{vendor.category}</span>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                  vendor.isActive
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-gray-100 text-gray-500'
+                }`}
+              >
+                {vendor.isActive ? 'Active' : 'Inactive'}
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700">
+                {vendor.category}
+              </span>
             </div>
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              {vendor.contact.phone && <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{vendor.contact.phone}</span>}
-              {vendor.contact.email && <span className="flex items-center gap-1"><Mail className="w-3.5 h-3.5" />{vendor.contact.email}</span>}
-              {(vendor.contact as any).city && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{[(vendor.contact as any).city, (vendor.contact as any).state, (vendor.contact as any).zip].filter(Boolean).join(', ')}</span>}
+            <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
+              {vendor.contact.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="w-3.5 h-3.5" />
+                  {vendor.contact.phone}
+                </span>
+              )}
+              {vendor.contact.email && (
+                <span className="flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5" />
+                  {vendor.contact.email}
+                </span>
+              )}
             </div>
-            {vendor.notes && <p className="text-sm text-gray-500 mt-2 max-w-lg">{vendor.notes}</p>}
+            {vendor.notes && (
+              <p className="text-sm text-gray-500 mt-2 max-w-lg">{vendor.notes}</p>
+            )}
           </div>
-          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${vendor.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-            {vendor.isActive ? 'Active' : 'Inactive'}
-          </span>
+          <VendorHeaderActions
+            vendorId={vendor.id}
+            displayName={fullName}
+            isActive={!!vendor.isActive}
+          />
         </div>
         {vendor.markets.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-3">
             {vendor.markets.map((m) => (
-              <span key={m} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded-full">{m}</span>
+              <span
+                key={m}
+                className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded-full"
+              >
+                {m}
+              </span>
             ))}
           </div>
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <h3 className="text-sm font-semibold text-gray-800 mb-3">Contact Details</h3>
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          {([
-            ['Phone', vendor.contact.phone],
-            ['Phone 2', (vendor.contact as any).phone2],
-            ['Email', vendor.contact.email],
-            ['Address', (vendor.contact as any).address],
-            ['City', (vendor.contact as any).city],
-            ['State', (vendor.contact as any).state],
-            ['Zip', (vendor.contact as any).zip],
-          ] as [string, string | null | undefined][]).filter(([, v]) => v).map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-gray-500">{label}</dt>
-              <dd className="text-gray-900 font-medium">{value}</dd>
-            </div>
-          ))}
+      {/* Personal Info — pulls every saved Contact field into one
+          block so the operator can see what they entered. */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+          <UserIcon className="w-4 h-4 text-gray-400" />
+          Personal Info
+        </h3>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <ProfileField label="First Name" value={vendor.contact.firstName} />
+          <ProfileField label="Last Name" value={vendor.contact.lastName} />
+          <ProfileField label="Category" value={vendor.category} />
+          <ProfileField
+            label="How heard about us"
+            value={(vendor.contact as any).howHeardAbout}
+          />
+          <div className="col-span-2">
+            <ProfileField
+              label="Mailing Address"
+              value={(vendor.contact as any).mailingAddress}
+            />
+          </div>
+          <div className="col-span-2">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+              Phones
+            </p>
+            {phones.length === 0 ? (
+              <p className="text-sm text-gray-300">—</p>
+            ) : (
+              <ul className="space-y-1">
+                {phones.map((p, i) => (
+                  <li key={i} className="flex items-center gap-2 text-sm">
+                    <Phone className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-20">
+                      {p.label || 'Phone'}
+                    </span>
+                    <span className="text-gray-900 font-mono text-[13px]">
+                      {p.number}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="col-span-2">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+              Emails
+            </p>
+            {emails.length === 0 ? (
+              <p className="text-sm text-gray-300">—</p>
+            ) : (
+              <ul className="space-y-1">
+                {emails.map((e, i) => (
+                  <li key={i} className="flex items-center gap-2 text-sm">
+                    <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-20">
+                      {e.label || 'Email'}
+                    </span>
+                    <span className="text-gray-900 text-[13px]">{e.email}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </dl>
       </div>
+    </div>
+  )
+}
+
+function ProfileField({
+  label,
+  value,
+}: {
+  label: string
+  value: string | null | undefined
+}) {
+  return (
+    <div>
+      <dt className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+        {label}
+      </dt>
+      <dd className="text-gray-900 mt-0.5">
+        {value || <span className="text-gray-300">—</span>}
+      </dd>
     </div>
   )
 }

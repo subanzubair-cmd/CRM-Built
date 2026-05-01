@@ -30,6 +30,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { ContactFieldAutocomplete } from './ContactFieldAutocomplete'
 
 interface PhoneRow {
   label: string
@@ -117,6 +118,12 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
       setError('First Name is required.')
       return
     }
+    const hasPhone = values.phones.some((p) => p.number.trim())
+    const hasEmail = values.emails.some((e) => e.email.trim())
+    if (!hasPhone && !hasEmail) {
+      setError('Provide at least one phone number or email.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -182,17 +189,23 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
             </h3>
             <div className="grid grid-cols-2 gap-3">
               <Field label="First Name" required>
-                <input
+                <ContactFieldAutocomplete
                   value={values.firstName}
-                  onChange={(e) => patch('firstName', e.target.value)}
-                  className="input w-full"
+                  onChange={(v) => patch('firstName', v)}
+                  field="firstName"
+                  type="BUYER"
+                  inputClassName="input w-full"
+                  autoComplete="given-name"
                 />
               </Field>
               <Field label="Last Name">
-                <input
+                <ContactFieldAutocomplete
                   value={values.lastName}
-                  onChange={(e) => patch('lastName', e.target.value)}
-                  className="input w-full"
+                  onChange={(v) => patch('lastName', v)}
+                  field="lastName"
+                  type="BUYER"
+                  inputClassName="input w-full"
+                  autoComplete="family-name"
                 />
               </Field>
               <Field label="Contact Type" required>
@@ -511,20 +524,23 @@ function MultiContactRows<K extends 'number' | 'email'>({
                   aria-label="Custom label name"
                 />
               )}
-              <input
-                type={inputType}
-                pattern={inputPattern}
-                value={row[field] ?? ''}
-                onChange={(e) => {
-                  const next = [...rows]
-                  next[i] = { ...next[i], [field]: e.target.value }
-                  onChange(next)
-                }}
-                placeholder={placeholder}
-                className="input flex-1 min-w-0"
-                inputMode={field === 'number' ? 'tel' : 'email'}
-                autoComplete={field === 'number' ? 'tel' : 'email'}
-              />
+              <div className="flex-1 min-w-0">
+                <ContactFieldAutocomplete
+                  value={row[field] ?? ''}
+                  onChange={(v) => {
+                    const next = [...rows]
+                    next[i] = { ...next[i], [field]: v }
+                    onChange(next)
+                  }}
+                  field={field === 'number' ? 'phone' : 'email'}
+                  type="BUYER"
+                  placeholder={placeholder}
+                  inputClassName="input w-full"
+                  inputType={inputType as 'tel' | 'email'}
+                  inputMode={field === 'number' ? 'tel' : 'email'}
+                  autoComplete={field === 'number' ? 'tel' : 'email'}
+                />
+              </div>
               {rows.length > 1 && (
                 <button
                   type="button"

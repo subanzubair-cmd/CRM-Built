@@ -117,6 +117,10 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
       setError('Category is required.')
       return
     }
+    if (!values.phone.trim() && !values.email.trim()) {
+      setError('Provide at least one phone number or email.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {

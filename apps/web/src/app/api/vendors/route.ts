@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { Contact, Vendor, sequelize, Op } from '@crm/database'
+import { Contact, Vendor, sequelize, Op, literal } from '@crm/database'
 import { z } from 'zod'
+
+function escapeLiteral(v: string): string {
+  return `'${String(v).replace(/'/g, "''")}'`
+}
 
 const CreateVendorSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -23,16 +27,30 @@ export async function POST(req: NextRequest) {
 
   const { firstName, lastName, email, phone, category, markets, notes } = parsed.data
 
-  // Duplicate check on phone OR email among VENDOR-typed contacts.
-  if (phone || email) {
+  // REQUIRED: at least one of phone OR email. Vendors aren't worth
+  // recording without a contact channel.
+  if (!phone && !email) {
+    return NextResponse.json(
+      { error: 'Provide at least one phone number or email.' },
+      { status: 422 },
+    )
+  }
+
+  // Duplicate scan over BOTH legacy columns AND the JSONB phones/
+  // emails arrays so a vendor authored via either form path is
+  // matched.
+  const phoneDigits = phone ? phone.replace(/\D/g, '') : ''
+  const dupClauses = [
+    ...(phone ? [literal(`"phone" = ${escapeLiteral(phone)}`)] : []),
+    ...(phoneDigits.length >= 7
+      ? [literal(`"phones"::text ILIKE ${escapeLiteral(`%${phoneDigits}%`)}`)]
+      : []),
+    ...(email ? [literal(`LOWER("email") = LOWER(${escapeLiteral(email)})`)] : []),
+    ...(email ? [literal(`"emails"::text ILIKE ${escapeLiteral(`%${email}%`)}`)] : []),
+  ]
+  if (dupClauses.length > 0) {
     const duplicateContact = await Contact.findOne({
-      where: {
-        type: 'VENDOR',
-        [Op.or]: [
-          ...(phone ? [{ phone }] : []),
-          ...(email ? [{ email }] : []),
-        ],
-      },
+      where: { type: 'VENDOR', [Op.or]: dupClauses as any },
     })
     if (duplicateContact) {
       const vendorProfile = await Vendor.findOne({
@@ -41,9 +59,7 @@ export async function POST(req: NextRequest) {
       })
       return NextResponse.json(
         {
-          error: `A vendor with this ${
-            duplicateContact.phone === phone ? 'phone number' : 'email'
-          } already exists: ${duplicateContact.firstName} ${duplicateContact.lastName ?? ''}`.trim(),
+          error: `A vendor with this phone number / email already exists: ${[duplicateContact.firstName, duplicateContact.lastName].filter(Boolean).join(' ')}`,
           existingVendorId: vendorProfile?.id,
         },
         { status: 409 },
@@ -62,6 +78,8 @@ export async function POST(req: NextRequest) {
         lastName: lastName ?? null,
         email: email ?? null,
         phone: phone ?? null,
+        phones: phone ? [{ label: 'Mobile', number: phone }] : [],
+        emails: email ? [{ label: 'Primary', email }] : [],
       },
       { transaction: t },
     )

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { Buyer, Contact, Op, literal } from '@crm/database'
+import { Buyer, Contact, Op, literal, sequelize } from '@crm/database'
 import { getMarketScope } from '@/lib/auth-utils'
 import { z } from 'zod'
 
@@ -94,6 +94,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ data: buyers.map((b) => b.get({ plain: true })) })
 }
 
+/**
+ * SQL string-literal escaping for the `literal()` clauses below.
+ * We doubled-up single quotes and wrap in quotes so the dedupe
+ * subqueries don't break on input like "O'Brien" or "x' OR 1=1—".
+ */
+function escapeLiteral(v: string): string {
+  return `'${String(v).replace(/'/g, "''")}'`
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -104,30 +113,69 @@ export async function POST(req: NextRequest) {
 
   const data = parsed.data
 
-  // Compute the canonical primary phone/email — pulled from phones[0] /
-  // emails[0] when present, else fall back to the legacy phone/email
-  // fields. This keeps existing readers (e.g. the legacy buyers blast
-  // route) working while the multi-value UI rolls out.
-  const primaryPhone = data.phones[0]?.number ?? data.phone ?? null
-  const primaryEmail = data.emails[0]?.email ?? data.email ?? null
+  // Collect ALL phones / emails across the new arrays + legacy
+  // single-value columns. The canonical "primary" is index 0; the
+  // dedupe + Contact write paths below want the full set so a buyer
+  // is rejected as a duplicate even if the matching phone lives at
+  // phones[1] of an existing row.
+  const allPhones = [
+    ...data.phones.map((p) => p.number).filter(Boolean),
+    ...(data.phone ? [data.phone] : []),
+  ]
+  const allEmails = [
+    ...data.emails.map((e) => e.email).filter(Boolean),
+    ...(data.email ? [data.email] : []),
+  ]
+  const primaryPhone = allPhones[0] ?? null
+  const primaryEmail = allEmails[0] ?? null
 
-  if (primaryPhone || primaryEmail) {
+  // REQUIRED: at least one of phone OR email must be supplied. The
+  // schema can't express "(at least one of A or B)" cleanly, so we
+  // gate it here. Also acts as a defence in depth — clients that
+  // bypass the form validation still get a 422.
+  if (allPhones.length === 0 && allEmails.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          'Provide at least one phone number or email — buyers must be reachable to be useful.',
+      },
+      { status: 422 },
+    )
+  }
+
+  // Dedupe across BOTH the legacy phone/email columns AND the new
+  // phones[]/emails[] JSONB arrays. We cast the JSONB to text and
+  // ILIKE for substring match — exact-match would miss when the
+  // operator typed "(469) 555-0100" but the existing row stored
+  // "+14695550100".
+  const phoneDigitClauses = allPhones.flatMap((p) => {
+    const digits = p.replace(/\D/g, '')
+    return digits.length >= 7
+      ? [literal(`"phone" = ${escapeLiteral(p)}`),
+         literal(`"phones"::text ILIKE ${escapeLiteral(`%${digits}%`)}`)]
+      : [literal(`"phone" = ${escapeLiteral(p)}`)]
+  })
+  const emailClauses = allEmails.flatMap((e) => [
+    literal(`LOWER("email") = LOWER(${escapeLiteral(e)})`),
+    literal(`"emails"::text ILIKE ${escapeLiteral(`%${e}%`)}`),
+  ])
+  if (phoneDigitClauses.length + emailClauses.length > 0) {
     const duplicateContact = await Contact.findOne({
       where: {
         type: data.contactType,
-        [Op.or]: [
-          ...(primaryPhone ? [{ phone: primaryPhone }] : []),
-          ...(primaryEmail ? [{ email: primaryEmail }] : []),
-        ],
+        [Op.or]: [...phoneDigitClauses, ...emailClauses] as any,
       },
       include: [{ model: Buyer, as: 'buyerProfile', attributes: ['id'] }],
     })
     if (duplicateContact) {
       const dup = duplicateContact.get({ plain: true }) as any
-      return NextResponse.json({
-        error: `A ${data.contactType === 'AGENT' ? 'agent' : 'buyer'} with this ${dup.phone === primaryPhone ? 'phone number' : 'email'} already exists: ${dup.firstName} ${dup.lastName ?? ''}`.trim(),
-        existingBuyerId: dup.buyerProfile?.id,
-      }, { status: 409 })
+      return NextResponse.json(
+        {
+          error: `A ${data.contactType === 'AGENT' ? 'agent' : 'buyer'} with one of these phone numbers / emails already exists: ${[dup.firstName, dup.lastName].filter(Boolean).join(' ')}`,
+          existingBuyerId: dup.buyerProfile?.id,
+        },
+        { status: 409 },
+      )
     }
   }
 

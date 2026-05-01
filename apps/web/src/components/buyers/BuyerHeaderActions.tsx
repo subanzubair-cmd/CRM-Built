@@ -14,9 +14,10 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Pencil, UserX, UserCheck, Trash2 } from 'lucide-react'
+import { Pencil, UserX, UserCheck, Trash2, Merge } from 'lucide-react'
 import { toast } from 'sonner'
 import { BuyerFormModal } from './BuyerFormModal'
+import { MergeBuyersModal } from './MergeBuyersModal'
 
 type Snapshot = {
   buyerId: string
@@ -42,6 +43,7 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
   const router = useRouter()
   const params = useSearchParams()
   const [editOpen, setEditOpen] = useState(false)
+  const [mergeOpen, setMergeOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
   // Auto-open the edit modal when arriving via the row-action
@@ -117,6 +119,14 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
       </button>
       <button
         type="button"
+        onClick={() => setMergeOpen(true)}
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg transition-colors"
+      >
+        <Merge className="w-3.5 h-3.5" />
+        Merge
+      </button>
+      <button
+        type="button"
         onClick={deleteBuyer}
         disabled={busy}
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg disabled:opacity-50"
@@ -124,6 +134,30 @@ export function BuyerHeaderActions({ snapshot }: { snapshot: Snapshot }) {
         <Trash2 className="w-3.5 h-3.5" />
         Delete
       </button>
+
+      <MergeBuyersModal
+        open={mergeOpen}
+        onClose={() => setMergeOpen(false)}
+        current={{
+          id: snapshot.buyerId,
+          firstName: snapshot.firstName,
+          lastName: snapshot.lastName,
+          contactType: snapshot.contactType,
+          phones: snapshot.phones,
+          emails: snapshot.emails,
+          mailingAddress: snapshot.mailingAddress,
+          howHeardAbout: snapshot.howHeardAbout,
+          assignedUserId: snapshot.assignedUserId,
+          assignedUserName: null,
+          notes: snapshot.notes,
+          vipFlag: snapshot.vipFlag,
+          targetCities: snapshot.targetCities,
+          targetZips: snapshot.targetZips,
+          targetCounties: snapshot.targetCounties,
+          targetStates: snapshot.targetStates,
+          customQuestions: snapshot.customQuestions,
+        }}
+      />
 
       <BuyerFormModal
         open={editOpen}
