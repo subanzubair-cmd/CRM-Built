@@ -8,9 +8,9 @@ import { BuyerOfferHistoryCard } from '@/components/buyers/BuyerOfferHistoryCard
 import { BuyerNotesCard } from '@/components/buyers/BuyerNotesCard'
 import { BuyerHeaderActions } from '@/components/buyers/BuyerHeaderActions'
 import Link from 'next/link'
-import { ChevronLeft, Phone, Mail, MapPin, User as UserIcon, MegaphoneIcon } from 'lucide-react'
-import { PhoneActions, EmailActions } from '@/components/ui/ContactActionButtons'
+import { ChevronLeft, MapPin, User as UserIcon, MegaphoneIcon } from 'lucide-react'
 import { AdditionalContactsCard } from '@/components/ui/AdditionalContactsCard'
+import { BuyerContactSection } from '@/components/buyers/BuyerContactSection'
 
 // Buyer Preference question definitions (mirror of the form's
 // DEFAULT_QUESTIONS) so the detail page can render labeled answers
@@ -206,46 +206,30 @@ export default async function BuyerDetailPage({ params }: Params) {
                 />
               </div>
               <div className="col-span-2">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
-                  Phones
-                </p>
-                {phones.length === 0 ? (
-                  <p className="text-sm text-gray-300">—</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {phones.map((p, i) => (
-                      <li key={i} className="flex items-center gap-2 text-sm">
-                        <Phone className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                        <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
-                          {p.label || 'Phone'}
-                        </span>
-                        <span className="text-gray-900 font-mono text-[13px]">{p.number}</span>
-                        <PhoneActions number={p.number} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div className="col-span-2">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
-                  Emails
-                </p>
-                {emails.length === 0 ? (
-                  <p className="text-sm text-gray-300">—</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {emails.map((e, i) => (
-                      <li key={i} className="flex items-center gap-2 text-sm">
-                        <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                        <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
-                          {e.label || 'Email'}
-                        </span>
-                        <span className="text-gray-900 text-[13px]">{e.email}</span>
-                        <EmailActions email={e.email} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                    Phones
+                  </p>
+                  {(buyer.contact as any).doNotCall && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-50 text-red-600">No Call</span>
+                  )}
+                  {(buyer.contact as any).doNotText && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-50 text-red-600">No SMS</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                    Emails
+                  </p>
+                  {(buyer.contact as any).doNotEmail && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-50 text-red-600">No Email</span>
+                  )}
+                </div>
+                <BuyerContactSection
+                  buyerId={buyer.id}
+                  phones={phones}
+                  emails={emails}
+                />
               </div>
             </dl>
           </div>

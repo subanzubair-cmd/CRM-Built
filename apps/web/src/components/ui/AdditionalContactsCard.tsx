@@ -32,6 +32,11 @@ interface AdditionalContactRow {
   notes: string | null
 }
 
+type DupeWarning =
+  | { kind: 'local'; existingContact: AdditionalContactRow }
+  | { kind: 'system'; name: string; role: string; buyerId: string | null; vendorId: string | null }
+  | null
+
 interface Props {
   subjectType: 'BUYER' | 'VENDOR'
   subjectId: string
@@ -64,6 +69,8 @@ export function AdditionalContactsCard({ subjectType, subjectId }: Props) {
   const [form, setForm] = useState<FormValues>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [dupeWarning, setDupeWarning] = useState<DupeWarning>(null)
+  const [dupeAcknowledged, setDupeAcknowledged] = useState(false)
 
   const fetchContacts = useCallback(async () => {
     try {
@@ -96,10 +103,54 @@ export function AdditionalContactsCard({ subjectType, subjectId }: Props) {
     fetchTypes()
   }, [fetchContacts, fetchTypes])
 
+  useEffect(() => {
+    if (editingId !== null || dupeAcknowledged) return
+
+    // 1. Local check — runs immediately (no debounce needed, data is already in state)
+    const nameTrimmed = form.firstName.trim().toLowerCase()
+    const lastTrimmed = form.lastName.trim().toLowerCase()
+    if (nameTrimmed.length >= 2) {
+      const localMatch = contacts.find(c =>
+        c.firstName.toLowerCase() === nameTrimmed &&
+        (c.lastName ?? '').toLowerCase() === lastTrimmed
+      )
+      if (localMatch) {
+        setDupeWarning({ kind: 'local', existingContact: localMatch })
+        return
+      }
+    }
+
+    // 2. System check — debounced
+    const query = nameTrimmed.length >= 2 ? form.firstName.trim() : form.phone.trim()
+    const field = nameTrimmed.length >= 2 ? 'firstName' : 'phone'
+    if (query.length < 2) { setDupeWarning(null); return }
+
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/contacts/search?field=${field}&q=${encodeURIComponent(query)}`, { signal: controller.signal })
+        if (!res.ok) return
+        const data = await res.json()
+        const matches: any[] = data.data ?? data ?? []
+        if (matches.length > 0) {
+          const m = matches[0]
+          const role = m.buyerId ? 'Buyer' : m.vendorId ? 'Vendor' : 'Contact'
+          setDupeWarning({ kind: 'system', name: `${m.firstName} ${m.lastName ?? ''}`.trim(), role, buyerId: m.buyerId, vendorId: m.vendorId })
+        } else {
+          setDupeWarning(null)
+        }
+      } catch { /* ignore abort */ }
+    }, 300)
+
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [form.firstName, form.lastName, form.phone, editingId, dupeAcknowledged, contacts])
+
   function openAdd() {
     setEditingId(null)
     setForm(EMPTY_FORM)
     setFieldErrors({})
+    setDupeWarning(null)
+    setDupeAcknowledged(false)
     setModalOpen(true)
   }
 
@@ -122,6 +173,8 @@ export function AdditionalContactsCard({ subjectType, subjectId }: Props) {
     setEditingId(null)
     setForm(EMPTY_FORM)
     setFieldErrors({})
+    setDupeWarning(null)
+    setDupeAcknowledged(false)
   }
 
   async function handleSave() {
@@ -355,6 +408,65 @@ export function AdditionalContactsCard({ subjectType, subjectId }: Props) {
                   />
                 </div>
               </div>
+
+              {/* Duplicate Warning */}
+              {dupeWarning && !dupeAcknowledged && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                  {dupeWarning.kind === 'local' ? (
+                    <>
+                      <p className="font-medium text-amber-800">
+                        ⚠️ Already listed as an additional contact ({dupeWarning.existingContact.relationship})
+                      </p>
+                      <div className="flex gap-2 mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            closeModal()
+                            openEdit(dupeWarning.existingContact)
+                          }}
+                          className="text-xs font-medium text-amber-700 underline"
+                        >
+                          Edit existing
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDupeAcknowledged(true)}
+                          className="text-xs font-medium text-gray-500 underline"
+                        >
+                          Add anyway
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-medium text-amber-800">
+                        ⚠️ <strong>{dupeWarning.name}</strong> already exists in the system as a {dupeWarning.role}
+                      </p>
+                      <div className="flex gap-2 mt-1.5">
+                        {(dupeWarning.buyerId || dupeWarning.vendorId) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const url = dupeWarning.buyerId ? `/buyers/${dupeWarning.buyerId}` : `/vendors/${dupeWarning.vendorId}`
+                              window.open(url, '_blank')
+                            }}
+                            className="text-xs font-medium text-amber-700 underline"
+                          >
+                            View profile
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setDupeAcknowledged(true)}
+                          className="text-xs font-medium text-gray-500 underline"
+                        >
+                          Add anyway
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Phone */}
               <div>

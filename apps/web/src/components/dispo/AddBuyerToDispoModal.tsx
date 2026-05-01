@@ -91,7 +91,7 @@ export function AddBuyerToDispoModal({ propertyId, stage, onClose }: Props) {
         router.refresh()
       } else {
         const data = await res.json().catch(() => ({}))
-        toast.error(data.error ?? 'Failed to add buyer')
+        toast.error(typeof data.error === 'string' ? data.error : 'Failed to add buyer')
       }
     } catch {
       toast.error('Failed to add buyer')
@@ -135,7 +135,7 @@ export function AddBuyerToDispoModal({ propertyId, stage, onClose }: Props) {
           })
           return
         }
-        toast.error(data.error ?? 'Failed to create buyer')
+        toast.error(typeof data.error === 'string' ? data.error : 'Failed to create buyer')
         return
       }
 

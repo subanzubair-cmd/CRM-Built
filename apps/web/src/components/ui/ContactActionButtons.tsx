@@ -8,40 +8,57 @@
 
 import { PhoneCall, MessageSquare, Mail } from 'lucide-react'
 
-export function PhoneActions({ number }: { number: string }) {
+export function PhoneActions({
+  number,
+  onCall,
+  onSms,
+}: {
+  number: string
+  onCall?: () => void
+  onSms?: () => void
+}) {
   return (
     <div className="flex items-center gap-1 ml-auto">
-      <a
-        href={`tel:${number}`}
+      <button
+        onClick={() => onCall ? onCall() : console.warn('No onCall handler for', number)}
         className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
-        title="Call"
+        title="Log Call"
+        type="button"
       >
         <PhoneCall className="w-3 h-3" />
         Call
-      </a>
-      <a
-        href={`sms:${number}`}
+      </button>
+      <button
+        onClick={() => onSms ? onSms() : console.warn('No onSms handler for', number)}
         className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
-        title="SMS"
+        title="Send SMS"
+        type="button"
       >
         <MessageSquare className="w-3 h-3" />
         SMS
-      </a>
+      </button>
     </div>
   )
 }
 
-export function EmailActions({ email }: { email: string }) {
+export function EmailActions({
+  email,
+  onEmail,
+}: {
+  email: string
+  onEmail?: () => void
+}) {
   return (
     <div className="flex items-center gap-1 ml-auto">
-      <a
-        href={`mailto:${email}`}
+      <button
+        onClick={() => onEmail ? onEmail() : console.warn('No onEmail handler for', email)}
         className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-md transition-colors"
-        title="Email"
+        title="Log Email"
+        type="button"
       >
         <Mail className="w-3 h-3" />
         Email
-      </a>
+      </button>
     </div>
   )
 }

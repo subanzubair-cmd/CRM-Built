@@ -29,6 +29,7 @@ interface VendorSnapshot {
   markets: string[]
   notes: string
   isActive: boolean
+  howHeardAbout: string
 }
 
 export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) {
@@ -137,6 +138,17 @@ export function VendorHeaderActions({ snapshot }: { snapshot: VendorSnapshot }) 
         open={editOpen}
         onClose={() => setEditOpen(false)}
         vendorId={snapshot.vendorId}
+        initial={{
+          firstName: snapshot.firstName,
+          lastName: snapshot.lastName,
+          phones: snapshot.phones,
+          emails: snapshot.emails,
+          category: snapshot.category,
+          markets: snapshot.markets,
+          notes: snapshot.notes,
+          isActive: snapshot.isActive,
+          howHeardAbout: snapshot.howHeardAbout,
+        }}
       />
 
       <MergeVendorsModal

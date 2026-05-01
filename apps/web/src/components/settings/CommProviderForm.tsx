@@ -156,7 +156,7 @@ export function CommProviderForm() {
       if (res.ok && json.ok) {
         toast.success(`Connection OK${json.accountFriendlyName ? ` — ${json.accountFriendlyName}` : ''}`)
       } else {
-        toast.error(json.error ?? 'Connection test failed')
+        toast.error(typeof json.error === 'string' ? json.error : 'Connection test failed')
       }
     } catch {
       toast.error('Connection test failed')
