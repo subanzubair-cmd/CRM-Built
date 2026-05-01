@@ -26,13 +26,7 @@ import { InitiateCallModal } from '@/components/leads/InitiateCallModal'
 import { SendSmsModal } from '@/components/leads/SendSmsModal'
 import { AddBuyerToDispoModal } from './AddBuyerToDispoModal'
 
-export type DispoStageValue =
-  | 'POTENTIAL_BUYER'
-  | 'COLD_BUYER'
-  | 'WARM_BUYER'
-  | 'HOT_BUYER'
-  | 'DISPO_OFFER_RECEIVED'
-  | 'SOLD'
+export type DispoStageValue = string
 
 export interface BuyerMatchRow {
   id: string
@@ -56,14 +50,47 @@ interface Props {
   initialMatches: BuyerMatchRow[]
 }
 
-const STAGES: { key: DispoStageValue; label: string; color: string; dot: string }[] = [
-  { key: 'POTENTIAL_BUYER', label: 'Potential', color: 'bg-gray-50 border-gray-200', dot: 'bg-gray-400' },
-  { key: 'COLD_BUYER',      label: 'Cold',      color: 'bg-blue-50 border-blue-200', dot: 'bg-blue-400' },
-  { key: 'WARM_BUYER',      label: 'Warm',      color: 'bg-amber-50 border-amber-200', dot: 'bg-amber-400' },
-  { key: 'HOT_BUYER',       label: 'Hot 🔥',    color: 'bg-red-50 border-red-200', dot: 'bg-red-500' },
-  { key: 'DISPO_OFFER_RECEIVED', label: 'Offer',     color: 'bg-green-50 border-green-200', dot: 'bg-green-500' },
-  { key: 'SOLD',            label: 'Sold',      color: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-600' },
+type DispoStageItem = { key: string; label: string; color: string; dot: string }
+
+const SYSTEM_STAGE_COLORS: Record<string, { color: string; dot: string }> = {
+  POTENTIAL_BUYER:      { color: 'bg-gray-50 border-gray-200',    dot: 'bg-gray-400' },
+  COLD_BUYER:           { color: 'bg-blue-50 border-blue-200',    dot: 'bg-blue-400' },
+  WARM_BUYER:           { color: 'bg-amber-50 border-amber-200',  dot: 'bg-amber-400' },
+  HOT_BUYER:            { color: 'bg-red-50 border-red-200',      dot: 'bg-red-500' },
+  DISPO_OFFER_RECEIVED: { color: 'bg-green-50 border-green-200',  dot: 'bg-green-500' },
+  SOLD:                 { color: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-600' },
+}
+
+const EXTRA_COLORS = [
+  { color: 'bg-purple-50 border-purple-200', dot: 'bg-purple-400' },
+  { color: 'bg-sky-50 border-sky-200',       dot: 'bg-sky-400' },
+  { color: 'bg-pink-50 border-pink-200',     dot: 'bg-pink-400' },
+  { color: 'bg-indigo-50 border-indigo-200', dot: 'bg-indigo-400' },
+  { color: 'bg-teal-50 border-teal-200',     dot: 'bg-teal-400' },
 ]
+
+const FALLBACK_STAGES: DispoStageItem[] = [
+  { key: 'POTENTIAL_BUYER',      label: 'Potential', ...SYSTEM_STAGE_COLORS.POTENTIAL_BUYER },
+  { key: 'COLD_BUYER',           label: 'Cold',      ...SYSTEM_STAGE_COLORS.COLD_BUYER },
+  { key: 'WARM_BUYER',           label: 'Warm',      ...SYSTEM_STAGE_COLORS.WARM_BUYER },
+  { key: 'HOT_BUYER',            label: 'Hot 🔥',    ...SYSTEM_STAGE_COLORS.HOT_BUYER },
+  { key: 'DISPO_OFFER_RECEIVED', label: 'Offer',     ...SYSTEM_STAGE_COLORS.DISPO_OFFER_RECEIVED },
+  { key: 'SOLD',                 label: 'Sold',      ...SYSTEM_STAGE_COLORS.SOLD },
+]
+
+function buildDispoStages(raw: Array<{ stageCode: string; label: string; isActive: boolean; sortOrder: number }>): DispoStageItem[] {
+  let extraIdx = 0
+  return raw
+    .filter((s) => s.isActive)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s) => {
+      const known = SYSTEM_STAGE_COLORS[s.stageCode]
+      if (known) return { key: s.stageCode, label: s.label, ...known }
+      const c = EXTRA_COLORS[extraIdx % EXTRA_COLORS.length]
+      extraIdx++
+      return { key: s.stageCode, label: s.label, ...c }
+    })
+}
 
 function scoreBadge(score: number) {
   const bg =
@@ -154,7 +181,7 @@ function BuyerDetailModal({
               </a>
             </div>
             <p className="text-xs text-gray-500">
-              {STAGES.find(s => s.key === match.dispoStage)?.label}
+              {FALLBACK_STAGES.find(s => s.key === match.dispoStage)?.label}
               {match.dispoOfferAmount != null && match.dispoOfferAmount > 0 && (
                 <span className="ml-1 text-green-600 font-semibold"> | Offer: ${match.dispoOfferAmount.toLocaleString()}</span>
               )}
@@ -475,7 +502,7 @@ function OfferAmountPrompt({ buyerName, propertyId, buyerId, matchId, targetStag
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dispoStage: targetStage, dispoOfferAmount: price }),
       })
-      toast.success(`${buyerName} moved to ${STAGES.find(s => s.key === targetStage)?.label} with $${price.toLocaleString()} offer`)
+      toast.success(`${buyerName} moved to ${FALLBACK_STAGES.find(s => s.key === targetStage)?.label} with $${price.toLocaleString()} offer`)
       onDone()
     } catch { toast.error('Failed'); onCancel() }
     finally { setSaving(false) }
@@ -511,6 +538,18 @@ export function BuyerKanban({ propertyId, initialMatches }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedMatch, setSelectedMatch] = useState<BuyerMatchRow | null>(null)
   const [offerPrompt, setOfferPrompt] = useState<{ matchId: string; buyerName: string; buyerId: string; targetStage: string } | null>(null)
+  const [stages, setStages] = useState<DispoStageItem[]>(FALLBACK_STAGES)
+
+  useEffect(() => {
+    fetch('/api/pipeline-stages?pipeline=dispo')
+      .then((r) => r.json())
+      .then((data) => {
+        const raw = (data.data ?? []) as Array<{ stageCode: string; label: string; isActive: boolean; sortOrder: number }>
+        const built = buildDispoStages(raw)
+        if (built.length > 0) setStages(built)
+      })
+      .catch(() => {})
+  }, [])
 
   // Sync local state when property changes (initialMatches prop changes)
   useEffect(() => {
@@ -535,7 +574,7 @@ export function BuyerKanban({ propertyId, initialMatches }: Props) {
     const draggedId = active.id as string
     const overId = over.id as string
 
-    const targetStage = STAGES.find((s) => s.key === overId)?.key
+    const targetStage = stages.find((s) => s.key === overId)?.key
       ?? matches.find((m) => m.id === overId)?.dispoStage
 
     if (!targetStage) return
@@ -562,7 +601,7 @@ export function BuyerKanban({ propertyId, initialMatches }: Props) {
         body: JSON.stringify({ dispoStage: targetStage }),
       })
       if (!res.ok) throw new Error()
-      toast.success(`Moved to ${STAGES.find(s => s.key === targetStage)?.label}`)
+      toast.success(`Moved to ${stages.find(s => s.key === targetStage)?.label ?? targetStage}`)
     } catch {
       toast.error('Failed to move buyer')
       setMatches(initialMatches)
@@ -575,7 +614,7 @@ export function BuyerKanban({ propertyId, initialMatches }: Props) {
     <>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd}>
         <div className="flex gap-3 h-full overflow-x-auto pb-2">
-          {STAGES.map((stage) => {
+          {stages.map((stage) => {
             const cards = matches.filter((m) => m.dispoStage === stage.key)
             return (
               <KanbanColumn
@@ -633,7 +672,7 @@ function KanbanColumn({
   onAddBuyer,
   onCardClick,
 }: {
-  stage: (typeof STAGES)[number]
+  stage: DispoStageItem
   cards: BuyerMatchRow[]
   propertyId: string
   onAddBuyer: () => void

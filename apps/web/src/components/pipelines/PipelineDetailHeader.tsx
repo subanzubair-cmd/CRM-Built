@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Flame, Star } from 'lucide-react'
 import { formatElapsed, activityColorClass } from '@/lib/format-elapsed'
 
-const TM_STAGES = [
+type StageOption = { value: string; label: string }
+
+const FALLBACK_TM_STAGES: StageOption[] = [
   { value: 'NEW_CONTRACT', label: 'New Contract' },
   { value: 'MARKETING_TO_BUYERS', label: 'Marketing to Buyers' },
   { value: 'SHOWING_TO_BUYERS', label: 'Showing to Buyers' },
@@ -14,13 +16,31 @@ const TM_STAGES = [
   { value: 'CLEAR_TO_CLOSE', label: 'Clear to Close' },
 ]
 
-const INVENTORY_STAGES = [
+const FALLBACK_INVENTORY_STAGES: StageOption[] = [
   { value: 'NEW_INVENTORY', label: 'New Inventory' },
   { value: 'GETTING_ESTIMATES', label: 'Getting Estimates' },
   { value: 'UNDER_REHAB', label: 'Under Rehab' },
   { value: 'LISTED_FOR_SALE', label: 'Listed for Sale' },
   { value: 'UNDER_CONTRACT', label: 'Under Contract' },
 ]
+
+function usePipelineStages(pipelineKey: string, fallback: StageOption[]): StageOption[] {
+  const [stages, setStages] = useState<StageOption[]>(fallback)
+  useEffect(() => {
+    fetch(`/api/pipeline-stages?pipeline=${pipelineKey}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const raw = (data.data ?? []) as Array<{ stageCode: string; label: string; isActive: boolean; sortOrder: number }>
+        const sorted = raw
+          .filter((s) => s.isActive)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((s) => ({ value: s.stageCode, label: s.label }))
+        if (sorted.length > 0) setStages(sorted)
+      })
+      .catch(() => {})
+  }, [pipelineKey])
+  return stages
+}
 
 interface Props {
   id: string
@@ -48,6 +68,8 @@ export function PipelineDetailHeader({
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [saving, setSaving] = useState(false)
+  const tmStages = usePipelineStages('tm', FALLBACK_TM_STAGES)
+  const inventoryStages = usePipelineStages('inventory', FALLBACK_INVENTORY_STAGES)
 
   async function patch(data: Record<string, unknown>) {
     setSaving(true)
@@ -113,7 +135,7 @@ export function PipelineDetailHeader({
               className={`border border-gray-200 rounded-lg px-3 py-1.5 text-sm h-8 focus:outline-none focus:ring-2 focus:ring-blue-500 ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
               <option value="" disabled>Set TM stage</option>
-              {TM_STAGES.map((s) => (
+              {tmStages.map((s) => (
                 <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>
@@ -127,7 +149,7 @@ export function PipelineDetailHeader({
               className={`border border-gray-200 rounded-lg px-3 py-1.5 text-sm h-8 focus:outline-none focus:ring-2 focus:ring-blue-500 ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
               <option value="" disabled>Set Inventory stage</option>
-              {INVENTORY_STAGES.map((s) => (
+              {inventoryStages.map((s) => (
                 <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>

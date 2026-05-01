@@ -55,7 +55,7 @@ export function DispoWorkspace({ properties, selectedPropertyId, buyerMatches }:
   return (
     <div className="flex h-[calc(100vh-120px)] gap-0 -mx-5 -mb-5">
       {/* ── Left Panel: Property List ── */}
-      <div className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
+      <div className="w-56 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
         <div className="px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-gray-900">Dispo Properties</h2>
           <p className="text-xs text-gray-500">{properties.length} propert{properties.length !== 1 ? 'ies' : 'y'}</p>

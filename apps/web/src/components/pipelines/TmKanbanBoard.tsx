@@ -54,23 +54,42 @@ interface TmKanbanRow {
   _count: { tasks: number }
 }
 
+interface StageConfig {
+  stageCode: string
+  label: string
+  color: string | null
+  sortOrder: number
+  isActive: boolean
+}
+
 interface TmKanbanBoardProps {
   rows: TmKanbanRow[]
   commStats: Record<string, CommStats>
+  stages: StageConfig[]
 }
 
 /* ------------------------------------------------------------------ */
 /*  Stage definitions                                                  */
 /* ------------------------------------------------------------------ */
 
-const TM_STAGES: { key: string; label: string; color: string }[] = [
-  { key: 'NEW_CONTRACT', label: 'New Contract', color: 'bg-blue-200' },
-  { key: 'MARKETING_TO_BUYERS', label: 'Marketing to Buyers', color: 'bg-purple-200' },
-  { key: 'SHOWING_TO_BUYERS', label: 'Showing to Buyers', color: 'bg-yellow-200' },
-  { key: 'EVALUATING_OFFERS', label: 'Evaluating Offers', color: 'bg-orange-200' },
-  { key: 'ACCEPTED_OFFER', label: 'Accepted Offer', color: 'bg-emerald-200' },
-  { key: 'CLEAR_TO_CLOSE', label: 'Clear to Close', color: 'bg-green-200' },
+const COLOR_PALETTE = [
+  'bg-blue-200', 'bg-purple-200', 'bg-yellow-200', 'bg-orange-200',
+  'bg-emerald-200', 'bg-green-200', 'bg-sky-200', 'bg-pink-200',
+  'bg-indigo-200', 'bg-teal-200', 'bg-lime-200', 'bg-gray-200',
 ]
+
+type StageItem = { key: string; label: string; color: string }
+
+function buildStageItems(stages: StageConfig[]): StageItem[] {
+  return stages
+    .filter((s) => s.isActive)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s, idx) => ({
+      key: s.stageCode,
+      label: s.label,
+      color: COLOR_PALETTE[idx % COLOR_PALETTE.length],
+    }))
+}
 
 /* ------------------------------------------------------------------ */
 /*  Exit strategy label map                                            */
@@ -244,7 +263,7 @@ function TmKanbanColumn({
   cards,
   commStats,
 }: {
-  stage: (typeof TM_STAGES)[number]
+  stage: StageItem
   cards: TmKanbanRow[]
   commStats: Record<string, CommStats>
 }) {
@@ -293,17 +312,19 @@ function TmKanbanColumn({
 /*  TmKanbanBoard (exported)                                           */
 /* ------------------------------------------------------------------ */
 
-export function TmKanbanBoard({ rows, commStats }: TmKanbanBoardProps) {
+export function TmKanbanBoard({ rows, commStats, stages: stageConfigs }: TmKanbanBoardProps) {
   const [localRows, setLocalRows] = useState(rows)
   const [activeRow, setActiveRow] = useState<TmKanbanRow | null>(null)
+  const stages = buildStageItems(stageConfigs)
+  const defaultStage = stages[0]?.key ?? 'NEW_CONTRACT'
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   )
 
   const getRowsForStage = useCallback(
-    (stage: string) => localRows.filter((r) => (r.tmStage ?? 'NEW_CONTRACT') === stage),
-    [localRows]
+    (stage: string) => localRows.filter((r) => (r.tmStage ?? defaultStage) === stage),
+    [localRows, defaultStage]
   )
 
   function handleDragStart(event: DragStartEvent) {
@@ -317,7 +338,7 @@ export function TmKanbanBoard({ rows, commStats }: TmKanbanBoardProps) {
     if (!over || active.id === over.id) return
 
     const targetStage =
-      TM_STAGES.find((s) => s.key === over.id)?.key ??
+      stages.find((s) => s.key === over.id)?.key ??
       localRows.find((r) => r.id === over.id)?.tmStage ??
       null
     if (!targetStage) return
@@ -341,7 +362,7 @@ export function TmKanbanBoard({ rows, commStats }: TmKanbanBoardProps) {
         const msg = typeof body?.error === 'string' ? body.error : `Move failed (${res.status})`
         throw new Error(msg)
       }
-      toast.success(`Moved to ${TM_STAGES.find(s => s.key === targetStage)?.label}`)
+      toast.success(`Moved to ${stages.find(s => s.key === targetStage)?.label ?? targetStage}`)
     } catch (err) {
       setLocalRows(rows)
       toast.error(err instanceof Error ? err.message : 'Failed to move. Reverted.')
@@ -356,7 +377,7 @@ export function TmKanbanBoard({ rows, commStats }: TmKanbanBoardProps) {
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-3 overflow-x-auto pb-4 min-h-[60vh]">
-        {TM_STAGES.map((stage) => {
+        {stages.map((stage) => {
           const stageRows = getRowsForStage(stage.key)
           return (
             <TmKanbanColumn

@@ -7,7 +7,7 @@ import { PipelineTable } from '@/components/pipelines/PipelineTable'
 import { InventoryKanbanBoard } from '@/components/pipelines/InventoryKanbanBoard'
 import { LeadFilters } from '@/components/leads/LeadFilters'
 import { ViewToggle } from '@/components/leads/ViewToggle'
-import { User } from '@crm/database'
+import { User, PipelineStageConfig } from '@crm/database'
 
 interface PageProps {
   searchParams: Promise<{ search?: string; assignedToId?: string; page?: string; view?: string; sort?: string; order?: string }>
@@ -23,7 +23,7 @@ export default async function InventoryPage({ searchParams }: PageProps) {
   const view = sp.view ?? 'board'
   const isBoardView = view === 'board'
 
-  const [{ rows, total, page, pageSize }, users] = await Promise.all([
+  const [{ rows, total, page, pageSize }, users, stages] = await Promise.all([
     getInventoryList({
       search: sp.search,
       assignedToId: sp.assignedToId,
@@ -34,6 +34,11 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       where: { status: 'ACTIVE' },
       attributes: ['id', 'name'],
       order: [['name', 'ASC']],
+      raw: true,
+    }),
+    PipelineStageConfig.findAll({
+      where: { pipeline: 'inventory', isActive: true },
+      order: [['sortOrder', 'ASC']],
       raw: true,
     }),
   ])
@@ -52,7 +57,7 @@ export default async function InventoryPage({ searchParams }: PageProps) {
         <ViewToggle currentView={view} />
       </div>
       {isBoardView ? (
-        <InventoryKanbanBoard rows={rows as any} commStats={commStats} />
+        <InventoryKanbanBoard rows={rows as any} commStats={commStats} stages={stages as any} />
       ) : (
         <PipelineTable rows={rows as any} total={total} basePath="/inventory" page={page} pageSize={pageSize} />
       )}

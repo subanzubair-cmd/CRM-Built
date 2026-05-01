@@ -1,6 +1,6 @@
 import { auth } from '@/auth'
 import { redirect, notFound } from 'next/navigation'
-import { getPropertyById } from '@/lib/pipelines'
+import { getPropertyById, getAdjacentPropertyIds } from '@/lib/pipelines'
 import { getConversationMessages } from '@/lib/inbox'
 import { getLeadCommStats } from '@/lib/leads'
 import { LeadDetailHeader } from '@/components/leads/LeadDetailHeader'
@@ -44,7 +44,10 @@ export default async function InventoryDetailPage({ params }: PageProps) {
   ])
   if (!property) notFound()
 
-  const commStatsMap = await getLeadCommStats([property.id])
+  const [commStatsMap, adjacentIds] = await Promise.all([
+    getLeadCommStats([property.id]),
+    getAdjacentPropertyIds(property.id, 'IN_INVENTORY'),
+  ])
   const cs = commStatsMap[property.id] ?? { callCount: 0, smsCount: 0, emailCount: 0, lastCallAt: null, totalTasks: 0, completedTasks: 0 }
 
   const firstAppt = property.tasks?.find((t: any) => t.type === 'APPOINTMENT')
@@ -203,14 +206,16 @@ export default async function InventoryDetailPage({ params }: PageProps) {
           smsCount={cs.smsCount}
           emailCount={cs.emailCount}
           contacts={property.contacts as any}
+          prevLeadId={adjacentIds.prevId}
+          nextLeadId={adjacentIds.nextId}
         />
         <QuickActionBar
           propertyId={property.id}
           contacts={contactOptions}
           propertyAddress={propertyAddress}
           pipeline="inventory"
-          prevLeadId={null}
-          nextLeadId={null}
+          prevLeadId={adjacentIds.prevId}
+          nextLeadId={adjacentIds.nextId}
         />
       </div>
       <LeadDetailLayout

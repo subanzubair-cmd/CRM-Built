@@ -65,9 +65,21 @@ interface Props {
   onClose: () => void
   /** When set, opens in edit mode and fetches the vendor on open. */
   vendorId?: string
+  /** When provided alongside vendorId, skip the fetch and pre-populate the form. */
+  initial?: {
+    firstName: string
+    lastName: string
+    phones: Array<{ label: string; number: string }>
+    emails: Array<{ label: string; email: string }>
+    category: string
+    markets: string[]
+    notes: string
+    isActive: boolean
+    howHeardAbout: string
+  }
 }
 
-export function VendorFormModal({ open, onClose, vendorId }: Props) {
+export function VendorFormModal({ open, onClose, vendorId, initial }: Props) {
   const router = useRouter()
   const [values, setValues] = useState<Values>(EMPTY)
   const [loading, setLoading] = useState(false)
@@ -110,6 +122,20 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
       setEditContactId(null)
       return
     }
+    // Skip the network fetch when caller has provided initial values.
+    if (initial) {
+      setValues({
+        firstName: initial.firstName,
+        lastName: initial.lastName,
+        phone: initial.phones[0]?.number ?? '',
+        email: initial.emails[0]?.email ?? '',
+        category: initial.category,
+        howHeardAbout: initial.howHeardAbout ?? '',
+        notes: initial.notes,
+        isActive: initial.isActive,
+      })
+      return
+    }
     setLoading(true)
     fetch(`/api/vendors/${vendorId}`)
       .then((r) => r.json())
@@ -133,7 +159,7 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
       })
       .catch(() => setError('Failed to load vendor.'))
       .finally(() => setLoading(false))
-  }, [open, vendorId, isEdit])
+  }, [open, vendorId, isEdit, initial])
 
   if (!open) return null
 

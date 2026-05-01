@@ -119,7 +119,7 @@ interface Props {
   emailCount: number
   contacts?: Array<{ contact: { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null } }>
   leadNumber?: string | null
-  viewContext?: 'leads' | 'tm' | 'inventory' | 'sold' | 'rental'
+  viewContext?: 'leads' | 'tm' | 'inventory' | 'dispo' | 'sold' | 'rental'
   tmStage?: string | null
   inventoryStage?: string | null
   prevLeadId?: string | null
@@ -139,8 +139,43 @@ export function LeadDetailHeader({
   prevLeadId, nextLeadId,
 }: Props) {
   const router = useRouter()
+  const navBasePath =
+    viewContext === 'tm' ? '/tm' :
+    viewContext === 'inventory' ? '/inventory' :
+    viewContext === 'dispo' ? '/dispo' :
+    viewContext === 'sold' ? '/sold' :
+    viewContext === 'rental' ? '/rental' :
+    `/leads/${pipeline}`
   const [, startTransition] = useTransition()
   const [saving, setSaving] = useState(false)
+  const [pipelineStages, setPipelineStages] = useState<Array<{ value: string; label: string }>>(
+    pipeline === 'dta' ? DTA_PIPELINE_STAGES : DTS_PIPELINE_STAGES,
+  )
+  const [tmStages, setTmStages] = useState(TM_STAGES)
+  const [inventoryStages, setInventoryStages] = useState(INVENTORY_STAGES)
+
+  useEffect(() => {
+    const fetchStages = async (pipelineKey: string) => {
+      try {
+        const r = await fetch(`/api/pipeline-stages?pipeline=${pipelineKey}`)
+        const data = await r.json()
+        const raw = (data.data ?? []) as Array<{ stageCode: string; label: string; isActive: boolean; sortOrder: number }>
+        return raw
+          .filter((s) => s.isActive)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((s) => ({ value: s.stageCode, label: s.label }))
+      } catch { return null }
+    }
+
+    if (viewContext === 'leads') {
+      const key = pipeline === 'dts' ? 'dts_leads' : 'dta_leads'
+      fetchStages(key).then((s) => { if (s && s.length > 0) setPipelineStages(s) })
+    } else if (viewContext === 'tm') {
+      fetchStages('tm').then((s) => { if (s && s.length > 0) setTmStages(s) })
+    } else if (viewContext === 'inventory') {
+      fetchStages('inventory').then((s) => { if (s && s.length > 0) setInventoryStages(s) })
+    }
+  }, [pipeline, viewContext])
   const [showUCModal, setShowUCModal] = useState(false)
   const [showOfferModal, setShowOfferModal] = useState(false)
   const [showSoldModal, setShowSoldModal] = useState(false)
@@ -208,11 +243,11 @@ export function LeadDetailHeader({
       return
     }
 
-    if (viewContext === 'tm' && TM_STAGES.some((s) => s.value === value)) {
+    if (viewContext === 'tm' && tmStages.some((s) => s.value === value)) {
       patch({ tmStage: value }); return
     }
 
-    if (viewContext === 'inventory' && INVENTORY_STAGES.some((s) => s.value === value)) {
+    if (viewContext === 'inventory' && inventoryStages.some((s) => s.value === value)) {
       patch({ inventoryStage: value }); return
     }
 
@@ -554,7 +589,7 @@ export function LeadDetailHeader({
             )}
 
             <button
-              onClick={() => prevLeadId && router.push(`/leads/${pipeline}/${prevLeadId}`)}
+              onClick={() => prevLeadId && router.push(`${navBasePath}/${prevLeadId}`)}
               disabled={!prevLeadId}
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Previous"
@@ -562,7 +597,7 @@ export function LeadDetailHeader({
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
-              onClick={() => nextLeadId && router.push(`/leads/${pipeline}/${nextLeadId}`)}
+              onClick={() => nextLeadId && router.push(`${navBasePath}/${nextLeadId}`)}
               disabled={!nextLeadId}
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Next"
@@ -729,7 +764,7 @@ export function LeadDetailHeader({
                   {viewContext === 'tm' ? (
                     <>
                       <optgroup label="TM Stages" className="bg-white text-gray-700">
-                        {TM_STAGES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                        {tmStages.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
                       </optgroup>
                       <optgroup label="Move To" className="bg-white text-gray-700">
                         {TM_MOVE_OPTIONS.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
@@ -738,7 +773,7 @@ export function LeadDetailHeader({
                   ) : viewContext === 'inventory' ? (
                     <>
                       <optgroup label="Inventory Stages" className="bg-white text-gray-700">
-                        {INVENTORY_STAGES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
+                        {inventoryStages.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
                       </optgroup>
                       <optgroup label="Move To" className="bg-white text-gray-700">
                         {INVENTORY_MOVE_OPTIONS.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
@@ -747,7 +782,7 @@ export function LeadDetailHeader({
                   ) : (
                     <>
                       <optgroup label="Pipeline Stages" className="bg-white text-gray-700">
-                        {(pipeline === 'dta' ? DTA_PIPELINE_STAGES : DTS_PIPELINE_STAGES).map((s) => (
+                        {pipelineStages.map((s) => (
                           <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>
                         ))}
                       </optgroup>
