@@ -95,9 +95,18 @@ export default async function VendorDetailPage({ params }: Params) {
             )}
           </div>
           <VendorHeaderActions
-            vendorId={vendor.id}
-            displayName={fullName}
-            isActive={!!vendor.isActive}
+            snapshot={{
+              vendorId: vendor.id,
+              displayName: fullName,
+              firstName: vendor.contact.firstName ?? '',
+              lastName: vendor.contact.lastName ?? '',
+              phones: phones,
+              emails: emails,
+              category: vendor.category ?? '',
+              markets: vendor.markets ?? [],
+              notes: vendor.notes ?? '',
+              isActive: !!vendor.isActive,
+            }}
           />
         </div>
         {vendor.markets.length > 0 && (

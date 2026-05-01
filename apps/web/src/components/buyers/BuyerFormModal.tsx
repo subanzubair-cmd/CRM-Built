@@ -31,6 +31,9 @@ import { useRouter } from 'next/navigation'
 import { Loader2, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ContactFieldAutocomplete } from './ContactFieldAutocomplete'
+import { DuplicateWarningModal } from '@/components/ui/DuplicateWarningModal'
+import { DuplicateInlineWarning } from '@/components/ui/DuplicateInlineWarning'
+import { useDuplicateCheck } from '@/hooks/useDuplicateCheck'
 
 interface PhoneRow {
   label: string
@@ -91,11 +94,27 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [users, setUsers] = useState<Array<{ id: string; name: string }>>([])
+  const [dup, setDup] = useState<{ message: string; existingBuyerId: string } | null>(null)
+  /** Contact id of the buyer being edited — used to exclude self from duplicate checks. */
+  const [editContactId, setEditContactId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
     setValues({ ...EMPTY, ...(initial ?? {}) })
     setError(null)
+    setDup(null)
+    // In edit mode, fetch the buyer to get the contact id for
+    // self-exclusion in duplicate checks.
+    if (buyerId) {
+      fetch(`/api/buyers/${buyerId}`)
+        .then((r) => r.json())
+        .then((res) => {
+          if (res?.data?.contactId) setEditContactId(res.data.contactId)
+        })
+        .catch(() => {})
+    } else {
+      setEditContactId(null)
+    }
     fetch('/api/users?withDispositionRole=true')
       .then((r) => r.json())
       .then((res) => {
@@ -151,6 +170,10 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
       })
       const data = await res.json()
       if (!res.ok) {
+        if (res.status === 409 && data.existingBuyerId) {
+          setDup({ message: data.error, existingBuyerId: data.existingBuyerId })
+          return
+        }
         setError(typeof data.error === 'string' ? data.error : 'Failed to save.')
         return
       }
@@ -282,6 +305,8 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
               onChange={(next) => patch('phones', next)}
               placeholder="(555) 555-5555"
               field="number"
+              contactType={values.contactType}
+              excludeContactId={editContactId ?? undefined}
             />
             <MultiContactRows
               label="Emails"
@@ -290,6 +315,8 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
               onChange={(next) => patch('emails', next as any)}
               placeholder="contact@example.com"
               field="email"
+              contactType={values.contactType}
+              excludeContactId={editContactId ?? undefined}
             />
           </section>
 
@@ -370,6 +397,16 @@ export function BuyerFormModal({ open, onClose, buyerId, initial }: Props) {
         </div>
       </div>
 
+      {dup && (
+        <DuplicateWarningModal
+          type="buyer"
+          message={dup.message}
+          existingId={dup.existingBuyerId}
+          viewUrl={`/buyers/${dup.existingBuyerId}`}
+          onClose={() => setDup(null)}
+        />
+      )}
+
       {/*
         NOTE: width is intentionally NOT set on .input here. Earlier
         the global rule forced width: 100% which collapsed the
@@ -444,6 +481,8 @@ function MultiContactRows<K extends 'number' | 'email'>({
   onChange,
   placeholder,
   field,
+  contactType,
+  excludeContactId,
 }: {
   label: string
   addLabel: string
@@ -451,17 +490,13 @@ function MultiContactRows<K extends 'number' | 'email'>({
   onChange: (next: any[]) => void
   placeholder: string
   field: K
+  contactType?: 'BUYER' | 'AGENT' | 'VENDOR'
+  excludeContactId?: string
 }) {
   const labelOptions =
     field === 'number' ? PHONE_LABEL_OPTIONS : EMAIL_LABEL_OPTIONS
   const defaultNewLabel =
     field === 'number' ? 'Mobile' : 'Work' // primary already exists on row 0
-  const inputType = field === 'number' ? 'tel' : 'email'
-  const inputPattern =
-    field === 'number'
-      ? // Permissive tel pattern — digits, spaces, parens, dashes, plus.
-        '[+0-9() \\-]{7,}'
-      : undefined
 
   return (
     <div className="mt-3">
@@ -478,83 +513,140 @@ function MultiContactRows<K extends 'number' | 'email'>({
         </button>
       </div>
       <div className="space-y-2">
-        {rows.map((row, i) => {
-          const currentLabel: string = row.label ?? labelOptions[0]
-          // Case-insensitive match against the canned options so
-          // legacy rows stored as "primary" / "secondary" still
-          // pick up the right dropdown entry instead of falling
-          // through to Custom…
-          const matchedOption = labelOptions.find(
-            (o) => o.toLowerCase() === String(currentLabel).toLowerCase(),
-          )
-          const isCustomLabel = !matchedOption
-          return (
-            <div key={i} className="flex items-center gap-2">
-              <select
-                value={isCustomLabel ? '__custom__' : (matchedOption as string)}
-                onChange={(e) => {
-                  const next = [...rows]
-                  if (e.target.value === '__custom__') {
-                    next[i] = { ...next[i], label: '' }
-                  } else {
-                    next[i] = { ...next[i], label: e.target.value }
-                  }
-                  onChange(next)
-                }}
-                className="input w-28 flex-shrink-0 bg-white"
-                aria-label={`${label} row ${i + 1} type`}
-              >
-                {labelOptions.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-                <option value="__custom__">Custom…</option>
-              </select>
-              {isCustomLabel && (
-                <input
-                  value={currentLabel}
-                  onChange={(e) => {
-                    const next = [...rows]
-                    next[i] = { ...next[i], label: e.target.value }
-                    onChange(next)
-                  }}
-                  placeholder="Custom label"
-                  className="input w-28 flex-shrink-0"
-                  aria-label="Custom label name"
-                />
-              )}
-              <div className="flex-1 min-w-0">
-                <ContactFieldAutocomplete
-                  value={row[field] ?? ''}
-                  onChange={(v) => {
-                    const next = [...rows]
-                    next[i] = { ...next[i], [field]: v }
-                    onChange(next)
-                  }}
-                  field={field === 'number' ? 'phone' : 'email'}
-                  type="BUYER"
-                  placeholder={placeholder}
-                  inputClassName="input w-full"
-                  inputType={inputType as 'tel' | 'email'}
-                  inputMode={field === 'number' ? 'tel' : 'email'}
-                  autoComplete={field === 'number' ? 'tel' : 'email'}
-                />
-              </div>
-              {rows.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
-                  className="text-gray-400 hover:text-red-500 p-1 flex-shrink-0"
-                  aria-label={`Remove ${label.toLowerCase()} row`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          )
-        })}
+        {rows.map((row, i) => (
+          <ContactRow
+            key={i}
+            row={row}
+            index={i}
+            rows={rows}
+            onChange={onChange}
+            field={field}
+            label={label}
+            placeholder={placeholder}
+            labelOptions={labelOptions as readonly string[]}
+            contactType={contactType}
+            excludeContactId={excludeContactId}
+          />
+        ))}
       </div>
+    </div>
+  )
+}
+
+/** Individual phone/email row — extracted so useDuplicateCheck is
+ *  called at a stable hook site (one per row) instead of inside a
+ *  .map() loop which would violate React's rules of hooks. */
+function ContactRow({
+  row,
+  index,
+  rows,
+  onChange,
+  field,
+  label,
+  placeholder,
+  labelOptions,
+  contactType,
+  excludeContactId,
+}: {
+  row: any
+  index: number
+  rows: any[]
+  onChange: (next: any[]) => void
+  field: 'number' | 'email'
+  label: string
+  placeholder: string
+  labelOptions: readonly string[]
+  contactType?: 'BUYER' | 'AGENT' | 'VENDOR'
+  excludeContactId?: string
+}) {
+  const currentLabel: string = row.label ?? labelOptions[0]
+  const matchedOption = labelOptions.find(
+    (o) => o.toLowerCase() === String(currentLabel).toLowerCase(),
+  )
+  const isCustomLabel = !matchedOption
+  const inputType = field === 'number' ? 'tel' : 'email'
+  const searchType: 'BUYER' | 'VENDOR' = contactType === 'VENDOR' ? 'VENDOR' : 'BUYER'
+  const dupField = field === 'number' ? 'phone' : 'email'
+
+  const { match: dupMatch } = useDuplicateCheck({
+    value: row[field] ?? '',
+    field: dupField as 'phone' | 'email',
+    type: searchType,
+    excludeContactId,
+  })
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <select
+          value={isCustomLabel ? '__custom__' : (matchedOption as string)}
+          onChange={(e) => {
+            const next = [...rows]
+            if (e.target.value === '__custom__') {
+              next[index] = { ...next[index], label: '' }
+            } else {
+              next[index] = { ...next[index], label: e.target.value }
+            }
+            onChange(next)
+          }}
+          className="input w-28 flex-shrink-0 bg-white"
+          aria-label={`${label} row ${index + 1} type`}
+        >
+          {labelOptions.map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+          <option value="__custom__">Custom…</option>
+        </select>
+        {isCustomLabel && (
+          <input
+            value={currentLabel}
+            onChange={(e) => {
+              const next = [...rows]
+              next[index] = { ...next[index], label: e.target.value }
+              onChange(next)
+            }}
+            placeholder="Custom label"
+            className="input w-28 flex-shrink-0"
+            aria-label="Custom label name"
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <ContactFieldAutocomplete
+            value={row[field] ?? ''}
+            onChange={(v) => {
+              const next = [...rows]
+              next[index] = { ...next[index], [field]: v }
+              onChange(next)
+            }}
+            field={field === 'number' ? 'phone' : 'email'}
+            type={searchType}
+            placeholder={placeholder}
+            inputClassName="input w-full"
+            inputType={inputType as 'tel' | 'email'}
+            inputMode={field === 'number' ? 'tel' : 'email'}
+            autoComplete={field === 'number' ? 'tel' : 'email'}
+          />
+        </div>
+        {rows.length > 1 && (
+          <button
+            type="button"
+            onClick={() => onChange(rows.filter((_, idx) => idx !== index))}
+            className="text-gray-400 hover:text-red-500 p-1 flex-shrink-0"
+            aria-label={`Remove ${label.toLowerCase()} row`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {dupMatch && (
+        <DuplicateInlineWarning
+          type={searchType === 'VENDOR' ? 'vendor' : 'buyer'}
+          match={dupMatch}
+          fieldLabel={field === 'number' ? 'phone number' : 'email'}
+        />
+      )}
     </div>
   )
 }

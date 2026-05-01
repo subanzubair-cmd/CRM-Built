@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
   const type = (sp.get('type') ?? 'BUYER').toUpperCase()
   const field = sp.get('field') ?? 'firstName'
   const q = (sp.get('q') ?? '').trim()
+  const excludeContactId = sp.get('excludeContactId') ?? null
   if (!ALLOWED_FIELDS.has(field)) {
     return NextResponse.json({ error: `Unknown field: ${field}` }, { status: 400 })
   }
@@ -86,6 +87,11 @@ export async function GET(req: NextRequest) {
     where = { ...where, type: { [Op.in]: ['BUYER', 'AGENT'] as any } }
   } else if (type === 'VENDOR') {
     where = { ...where, type: 'VENDOR' as any }
+  }
+
+  // Exclude a specific contact (prevents self-match in edit mode).
+  if (excludeContactId) {
+    where = { ...where, id: { [Op.ne]: excludeContactId } }
   }
 
   const rows = await Contact.findAll({

@@ -6,9 +6,8 @@
  * mode; on open in edit mode the modal fetches the current values
  * via GET /api/vendors/[id].
  *
- * Vendor data model is simpler than Buyer (no target geography or
- * custom-question section), so we keep this form lean: name +
- * contact info + category + notes + Active toggle.
+ * Now includes ContactFieldAutocomplete on name/phone/email fields
+ * and inline duplicate warnings via useDuplicateCheck.
  */
 
 import { useEffect, useState } from 'react'
@@ -16,6 +15,9 @@ import { useRouter } from 'next/navigation'
 import { Loader2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { DuplicateWarningModal } from '@/components/ui/DuplicateWarningModal'
+import { DuplicateInlineWarning } from '@/components/ui/DuplicateInlineWarning'
+import { ContactFieldAutocomplete } from '@/components/buyers/ContactFieldAutocomplete'
+import { useDuplicateCheck } from '@/hooks/useDuplicateCheck'
 
 const VENDOR_CATEGORIES = [
   'General Contractor',
@@ -68,14 +70,32 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dup, setDup] = useState<{ message: string; existingVendorId: string } | null>(null)
+  /** Contact id for the vendor being edited — excludes self from dup checks. */
+  const [editContactId, setEditContactId] = useState<string | null>(null)
 
   const isEdit = !!vendorId
+
+  // Inline duplicate checks on phone and email fields.
+  const phoneDup = useDuplicateCheck({
+    value: values.phone,
+    field: 'phone',
+    type: 'VENDOR',
+    excludeContactId: editContactId ?? undefined,
+  })
+  const emailDup = useDuplicateCheck({
+    value: values.email,
+    field: 'email',
+    type: 'VENDOR',
+    excludeContactId: editContactId ?? undefined,
+  })
 
   useEffect(() => {
     if (!open) return
     setError(null)
+    setDup(null)
     if (!isEdit) {
       setValues(EMPTY)
+      setEditContactId(null)
       return
     }
     setLoading(true)
@@ -87,6 +107,7 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
           setError('Vendor not found.')
           return
         }
+        if (v.contactId) setEditContactId(v.contactId)
         setValues({
           firstName: v.contact?.firstName ?? '',
           lastName: v.contact?.lastName ?? '',
@@ -164,6 +185,9 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
     }
   }
 
+  const inputCls =
+    'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
@@ -188,45 +212,70 @@ export function VendorFormModal({ open, onClose, vendorId }: Props) {
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   First Name *
                 </label>
-                <input
+                <ContactFieldAutocomplete
                   value={values.firstName}
-                  onChange={(e) => patch('firstName', e.target.value)}
-                  required
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(v) => patch('firstName', v)}
+                  field="firstName"
+                  type="VENDOR"
+                  inputClassName={inputCls}
+                  autoComplete="given-name"
                 />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Last Name
                 </label>
-                <input
+                <ContactFieldAutocomplete
                   value={values.lastName}
-                  onChange={(e) => patch('lastName', e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(v) => patch('lastName', v)}
+                  field="lastName"
+                  type="VENDOR"
+                  inputClassName={inputCls}
+                  autoComplete="family-name"
                 />
               </div>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Phone</label>
-              <input
-                type="tel"
+              <ContactFieldAutocomplete
                 value={values.phone}
-                onChange={(e) => patch('phone', e.target.value)}
+                onChange={(v) => patch('phone', v)}
+                field="phone"
+                type="VENDOR"
+                inputClassName={inputCls}
+                inputType="tel"
+                inputMode="tel"
                 placeholder="(555) 555-5555"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              {phoneDup.match && (
+                <DuplicateInlineWarning
+                  type="vendor"
+                  match={phoneDup.match}
+                  fieldLabel="phone number"
+                />
+              )}
             </div>
 
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
-              <input
-                type="email"
+              <ContactFieldAutocomplete
                 value={values.email}
-                onChange={(e) => patch('email', e.target.value)}
+                onChange={(v) => patch('email', v)}
+                field="email"
+                type="VENDOR"
+                inputClassName={inputCls}
+                inputType="email"
+                inputMode="email"
                 placeholder="vendor@example.com"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              {emailDup.match && (
+                <DuplicateInlineWarning
+                  type="vendor"
+                  match={emailDup.match}
+                  fieldLabel="email"
+                />
+              )}
             </div>
 
             <div>

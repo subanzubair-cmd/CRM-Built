@@ -3,6 +3,7 @@ import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
 import { Buyer, Contact } from '@crm/database'
 import { z } from 'zod'
+import { findDuplicateContact } from '@/lib/dedupe'
 
 /**
  * Update a buyer + its underlying contact. Accepts the full new
@@ -73,6 +74,31 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const buyer = await Buyer.findByPk(id)
   if (!buyer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // Duplicate check when phones/emails are being changed. Collect all
+  // phone/email values from the patch and compare against other contacts.
+  const patchPhones = data.phones?.map((p) => p.number).filter(Boolean) ?? []
+  const patchEmails = data.emails?.map((e) => e.email).filter(Boolean) ?? []
+  if (data.phone) patchPhones.push(data.phone)
+  if (data.email) patchEmails.push(data.email)
+  if (patchPhones.length > 0 || patchEmails.length > 0) {
+    const dup = await findDuplicateContact({
+      allPhones: patchPhones,
+      allEmails: patchEmails,
+      contactType: data.contactType ?? 'BUYER',
+      excludeContactId: buyer.contactId as string,
+    })
+    if (dup) {
+      const name = [dup.contact.firstName, dup.contact.lastName].filter(Boolean).join(' ')
+      return NextResponse.json(
+        {
+          error: `A buyer with one of these phone numbers / emails already exists: ${name}`,
+          existingBuyerId: dup.buyerId,
+        },
+        { status: 409 },
+      )
+    }
+  }
 
   // Split into Buyer fields vs Contact fields and apply each.
   const buyerPatch: Record<string, unknown> = {}

@@ -3,6 +3,7 @@ import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
 import { Vendor, Contact } from '@crm/database'
 import { z } from 'zod'
+import { findDuplicateContact } from '@/lib/dedupe'
 
 /**
  * Vendor PATCH accepts both Vendor-level fields (isActive, category,
@@ -51,6 +52,28 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     include: [{ model: Contact, as: 'contact' }],
   })
   if (!vendor) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // Duplicate check when phone or email is being changed.
+  const patchPhones = data.phone ? [data.phone] : []
+  const patchEmails = data.email ? [data.email] : []
+  if (patchPhones.length > 0 || patchEmails.length > 0) {
+    const dup = await findDuplicateContact({
+      allPhones: patchPhones,
+      allEmails: patchEmails,
+      contactType: 'VENDOR',
+      excludeContactId: vendor.contactId as string,
+    })
+    if (dup) {
+      const name = [dup.contact.firstName, dup.contact.lastName].filter(Boolean).join(' ')
+      return NextResponse.json(
+        {
+          error: `A vendor with this phone number / email already exists: ${name}`,
+          existingVendorId: dup.vendorId,
+        },
+        { status: 409 },
+      )
+    }
+  }
 
   // Apply Vendor + Contact patches separately. Vendor-level keys
   // first; then if any Contact-level keys arrived, push those to
