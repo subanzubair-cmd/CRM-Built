@@ -3,9 +3,10 @@ import { redirect, notFound } from 'next/navigation'
 import { getVendorById } from '@/lib/vendors'
 import { VendorHeaderActions } from '@/components/vendors/VendorHeaderActions'
 import Link from 'next/link'
-import { ChevronLeft, Phone, Mail, MapPin, User as UserIcon } from 'lucide-react'
+import { ChevronLeft, Phone, Mail, User as UserIcon } from 'lucide-react'
 import { PhoneActions, EmailActions } from '@/components/ui/ContactActionButtons'
 import { AdditionalContactsCard } from '@/components/ui/AdditionalContactsCard'
+import { VendorNotesCard } from '@/components/vendors/VendorNotesCard'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -125,76 +126,89 @@ export default async function VendorDetailPage({ params }: Params) {
         )}
       </div>
 
-      {/* Personal Info — pulls every saved Contact field into one
-          block so the operator can see what they entered. */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
-          <UserIcon className="w-4 h-4 text-gray-400" />
-          Personal Info
-        </h3>
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-          <ProfileField label="First Name" value={vendor.contact.firstName} />
-          <ProfileField label="Last Name" value={vendor.contact.lastName} />
-          <ProfileField label="Category" value={vendor.category} />
-          <ProfileField
-            label="How did you hear about us?"
-            value={(vendor.contact as any).howHeardAbout}
-          />
-          <div className="col-span-2">
-            <ProfileField
-              label="Mailing Address"
-              value={(vendor.contact as any).mailingAddress}
-            />
+      <div className="grid grid-cols-3 gap-4">
+        {/* Left main column */}
+        <div className="col-span-2 space-y-4">
+          {/* Personal Info — pulls every saved Contact field into one
+              block so the operator can see what they entered. */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              <UserIcon className="w-4 h-4 text-gray-400" />
+              Personal Info
+            </h3>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <ProfileField label="First Name" value={vendor.contact.firstName} />
+              <ProfileField label="Last Name" value={vendor.contact.lastName} />
+              <ProfileField label="Category" value={vendor.category} />
+              <ProfileField
+                label="How did you hear about us?"
+                value={(vendor.contact as any).howHeardAbout}
+              />
+              <div className="col-span-2">
+                <ProfileField
+                  label="Mailing Address"
+                  value={(vendor.contact as any).mailingAddress}
+                />
+              </div>
+              <div className="col-span-2">
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                  Phones
+                </p>
+                {phones.length === 0 ? (
+                  <p className="text-sm text-gray-300">—</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {phones.map((p, i) => (
+                      <li key={i} className="flex items-center gap-2 text-sm">
+                        <Phone className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                        <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
+                          {p.label || 'Phone'}
+                        </span>
+                        <span className="text-gray-900 font-mono text-[13px]">
+                          {p.number}
+                        </span>
+                        <PhoneActions number={p.number} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="col-span-2">
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                  Emails
+                </p>
+                {emails.length === 0 ? (
+                  <p className="text-sm text-gray-300">—</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {emails.map((e, i) => (
+                      <li key={i} className="flex items-center gap-2 text-sm">
+                        <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                        <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
+                          {e.label || 'Email'}
+                        </span>
+                        <span className="text-gray-900 text-[13px]">{e.email}</span>
+                        <EmailActions email={e.email} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </dl>
           </div>
-          <div className="col-span-2">
-            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
-              Phones
-            </p>
-            {phones.length === 0 ? (
-              <p className="text-sm text-gray-300">—</p>
-            ) : (
-              <ul className="space-y-2">
-                {phones.map((p, i) => (
-                  <li key={i} className="flex items-center gap-2 text-sm">
-                    <Phone className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
-                      {p.label || 'Phone'}
-                    </span>
-                    <span className="text-gray-900 font-mono text-[13px]">
-                      {p.number}
-                    </span>
-                    <PhoneActions number={p.number} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="col-span-2">
-            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
-              Emails
-            </p>
-            {emails.length === 0 ? (
-              <p className="text-sm text-gray-300">—</p>
-            ) : (
-              <ul className="space-y-2">
-                {emails.map((e, i) => (
-                  <li key={i} className="flex items-center gap-2 text-sm">
-                    <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                    <span className="text-[10px] uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
-                      {e.label || 'Email'}
-                    </span>
-                    <span className="text-gray-900 text-[13px]">{e.email}</span>
-                    <EmailActions email={e.email} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </dl>
-      </div>
 
-      {/* Additional Contacts */}
-      <AdditionalContactsCard subjectType="VENDOR" subjectId={vendor.id} />
+          {/* Additional Contacts */}
+          <AdditionalContactsCard subjectType="VENDOR" subjectId={vendor.id} />
+        </div>
+
+        {/* Right sidebar */}
+        <div className="col-span-1">
+          <VendorNotesCard
+            vendorId={vendor.id}
+            initialNotes={vendor.notes ?? null}
+          />
+        </div>
+      </div>
     </div>
   )
 }
