@@ -9,6 +9,9 @@ import {
   FileText,
   ExternalLink,
   Sparkles,
+  Check,
+  CheckCheck,
+  X,
 } from 'lucide-react'
 import Link from 'next/link'
 import { CallRecordingPlayer } from '@/components/calls/CallRecordingPlayer'
@@ -54,6 +57,14 @@ export interface ActivityRowProps {
   timestamp: string
   /** Optional link to the lead's detail page so the row is clickable. */
   leadHref?: string | null
+  /**
+   * SMS delivery lifecycle: SENT = dispatched, DELIVERED = carrier confirmed,
+   * FAILED / UNDELIVERED = error. For CALL messages FAILED means the call
+   * was not answered (outbound) or missed (inbound).
+   */
+  messageStatus?: string | null
+  /** Provider error detail shown on hover when messageStatus is FAILED. */
+  deliveryFailReason?: string | null
 }
 
 function ChannelIcon({
@@ -123,7 +134,9 @@ function formatAddress(channel: string, raw: string | null | undefined): string 
 
 function directionVerb(channel: string, direction?: string | null, isMissed?: boolean): string {
   if (channel === 'CALL') {
-    if (isMissed) return 'Missed call'
+    if (isMissed) {
+      return direction === 'OUTBOUND' ? 'No answer' : 'Missed call'
+    }
     if (direction === 'OUTBOUND') return 'Outbound call'
     if (direction === 'INBOUND') return 'Inbound call'
     return 'Missed call'
@@ -135,6 +148,43 @@ function directionVerb(channel: string, direction?: string | null, isMissed?: bo
 
 function Dot() {
   return <span className="text-gray-300 select-none">·</span>
+}
+
+/** Inline SMS delivery status indicator — sits after the message body. */
+function DeliveryStatusBadge({
+  status,
+  failReason,
+}: {
+  status: string | null | undefined
+  failReason: string | null | undefined
+}) {
+  if (!status) return null
+  if (status === 'SENT') {
+    return (
+      <span title="Sent — awaiting delivery confirmation" className="inline-flex items-center text-gray-400">
+        <Check className="w-3 h-3" strokeWidth={2.5} />
+      </span>
+    )
+  }
+  if (status === 'DELIVERED') {
+    return (
+      <span title="Delivered" className="inline-flex items-center text-blue-500">
+        <CheckCheck className="w-3.5 h-3.5" strokeWidth={2.5} />
+      </span>
+    )
+  }
+  if (status === 'FAILED' || status === 'UNDELIVERED') {
+    return (
+      <span
+        title={failReason ? `Failed: ${failReason}` : 'Delivery failed'}
+        className="inline-flex items-center gap-0.5 text-red-500"
+      >
+        <X className="w-3 h-3" strokeWidth={2.5} />
+        <span className="text-[11px] font-medium">Failed</span>
+      </span>
+    )
+  }
+  return null
 }
 
 export function ActivityRow(props: ActivityRowProps) {
@@ -154,21 +204,26 @@ export function ActivityRow(props: ActivityRowProps) {
     hasRecording,
     timestamp,
     leadHref,
+    messageStatus,
+    deliveryFailReason,
   } = props
 
   const isCall = channel === 'CALL'
   const isSms = channel === 'SMS'
   const isEmail = channel === 'EMAIL'
 
-  // An inbound call with no recording AND no disposition outcome is a
-  // missed call — the agent never picked up so there's no
-  // conversation. Re-color the icon + relabel the headline so a feed
-  // of unanswered inbound calls reads as red, not green.
-  const isMissedCall =
+  // A call with messageStatus=FAILED was not answered (set by the
+  // Telnyx/Twilio webhook when the call ends without becoming ACTIVE).
+  // Legacy inbound missed calls (no status set) fall back to the
+  // heuristic: no recording + no disposition.
+  const isFailedCall = isCall && messageStatus === 'FAILED'
+  const isMissedByHeuristic =
     isCall &&
     direction === 'INBOUND' &&
     !hasRecording &&
-    !outcomeLabel
+    !outcomeLabel &&
+    !messageStatus
+  const isMissedCall = isFailedCall || isMissedByHeuristic
 
   const themeClass = channelTheme(channel, direction, isMissedCall)
   const verb = directionVerb(channel, direction ?? null, isMissedCall)
@@ -284,6 +339,11 @@ export function ActivityRow(props: ActivityRowProps) {
         {body && !isCall && (
           <p className="text-[14.5px] text-gray-700 mt-1 leading-snug whitespace-pre-wrap break-words">
             {body}
+            {isSms && direction === 'OUTBOUND' && (
+              <span className="ml-1.5 inline-flex items-center align-middle">
+                <DeliveryStatusBadge status={messageStatus} failReason={deliveryFailReason} />
+              </span>
+            )}
           </p>
         )}
 

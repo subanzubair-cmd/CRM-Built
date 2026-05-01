@@ -86,6 +86,10 @@ export interface CommsRow {
   callHasRecording: boolean
   callDurationSec: number | null
   callStatus: string | null
+  /** SMS delivery status: SENT | DELIVERED | FAILED | UNDELIVERED */
+  status: string | null
+  /** Provider error detail when status is FAILED/UNDELIVERED. */
+  failReason: string | null
 }
 
 /**
@@ -199,6 +203,8 @@ export async function getRecentComms(limit = 100): Promise<CommsRow[]> {
       callHasRecording: !!callRow?.recordingStorageKey,
       callDurationSec: durationSec,
       callStatus: callRow?.status ?? null,
+      status: m.status ?? null,
+      failReason: m.failReason ?? null,
     }
   })
 }
