@@ -215,29 +215,44 @@ export async function POST(req: NextRequest) {
         })
 
         if (dup?.buyerId) {
-          // Existing buyer — merge (update contact with any new data)
+          // Existing buyer — fill in MISSING fields only (never overwrite existing data)
           if (dup.contact?.id) {
+            const existingContact = await Contact.findByPk(dup.contact.id, { raw: true }) as any
             const updatePayload: Record<string, unknown> = {}
-            if (row.notes) updatePayload.notes = row.notes
-            if (row.howHeardAbout) updatePayload.howHeardAbout = row.howHeardAbout
-            if (row.mailingAddress) updatePayload.mailingAddress = row.mailingAddress
+
+            if (!existingContact?.phone && normalizedPhone) updatePayload.phone = normalizedPhone
+            if (!existingContact?.email && row.email) updatePayload.email = row.email
+            if (!existingContact?.lastName && row.lastName) updatePayload.lastName = row.lastName
+            if (!existingContact?.notes && row.notes) updatePayload.notes = row.notes
+            if (!existingContact?.howHeardAbout && row.howHeardAbout) updatePayload.howHeardAbout = row.howHeardAbout
+            if (!existingContact?.mailingAddress && row.mailingAddress) updatePayload.mailingAddress = row.mailingAddress
+
             if (row.tags && row.tags.length > 0) {
-              // Append new tags to existing
-              const contact = await Contact.findByPk(dup.contact.id, { attributes: ['tags'] })
-              const existing = (contact?.get({ plain: true }) as any)?.tags ?? []
-              const merged_tags = Array.from(new Set([...existing, ...row.tags]))
-              updatePayload.tags = merged_tags
+              // Append new tags — never remove existing
+              const existingTags: string[] = existingContact?.tags ?? []
+              const merged_tags = Array.from(new Set([...existingTags, ...row.tags]))
+              if (merged_tags.length > existingTags.length) updatePayload.tags = merged_tags
             }
+            // Sync phones JSONB if we filled the scalar phone
+            if (updatePayload.phone && normalizedPhone) {
+              const existingPhones: Array<{ label: string; number: string }> = existingContact?.phones ?? []
+              const digits10 = normalizedPhone.replace(/\D/g, '').slice(-10)
+              const alreadyIn = existingPhones.some((p) => p.number?.replace(/\D/g, '').endsWith(digits10))
+              if (!alreadyIn) updatePayload.phones = [...existingPhones, { label: 'Mobile', number: normalizedPhone }]
+            }
+
             if (Object.keys(updatePayload).length > 0) {
               await Contact.update(updatePayload, { where: { id: dup.contact.id } })
             }
-            // Merge geo data onto the buyer row
+            // Merge geo data onto the buyer row (only fill empty arrays)
             if (dup.buyerId) {
+              const existingBuyer = await Buyer.findByPk(dup.buyerId, { raw: true }) as any
               const buyerUpdate: Record<string, unknown> = {}
-              if (row.targetCities?.length) buyerUpdate.targetCities = row.targetCities
-              if (row.targetZips?.length) buyerUpdate.targetZips = row.targetZips
-              if (row.targetCounties?.length) buyerUpdate.targetCounties = row.targetCounties
-              if (row.targetStates?.length) buyerUpdate.targetStates = row.targetStates
+              if (!existingBuyer?.targetCities?.length && row.targetCities?.length) buyerUpdate.targetCities = row.targetCities
+              if (!existingBuyer?.targetZips?.length && row.targetZips?.length) buyerUpdate.targetZips = row.targetZips
+              if (!existingBuyer?.targetCounties?.length && row.targetCounties?.length) buyerUpdate.targetCounties = row.targetCounties
+              if (!existingBuyer?.targetStates?.length && row.targetStates?.length) buyerUpdate.targetStates = row.targetStates
+              if (!existingBuyer?.notes && row.notes) buyerUpdate.notes = row.notes
               if (Object.keys(buyerUpdate).length > 0) {
                 await Buyer.update(buyerUpdate, { where: { id: dup.buyerId } })
               }

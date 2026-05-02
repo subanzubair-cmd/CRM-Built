@@ -58,12 +58,20 @@ interface ImportResult {
 // ─────────────────────────────────────────────
 
 const SYSTEM_FIELDS = [
-  { key: 'firstName', label: 'First Name' },
-  { key: 'lastName',  label: 'Last Name' },
-  { key: 'fullName',  label: 'Full Name (split on space)' },
-  { key: 'phone',     label: 'Phone' },
-  { key: 'email',     label: 'Email' },
-  { key: 'notes',     label: 'Notes' },
+  { key: 'firstName',      label: 'First Name' },
+  { key: 'lastName',       label: 'Last Name' },
+  { key: 'fullName',       label: 'Full Name (split on space)' },
+  { key: 'phone',          label: 'Phone' },
+  { key: 'email',          label: 'Email' },
+  { key: 'tags',           label: 'Tags (comma-separated)' },
+  { key: 'source',         label: 'Source / Lead Source' },
+  { key: 'howHeardAbout',  label: 'How Heard About' },
+  { key: 'mailingAddress', label: 'Mailing Address' },
+  { key: 'notes',          label: 'Notes' },
+  { key: 'targetCities',   label: 'Target Cities (comma-separated)' },
+  { key: 'targetZips',     label: 'Target Zips (comma-separated)' },
+  { key: 'targetCounties', label: 'Target Counties (comma-separated)' },
+  { key: 'targetStates',   label: 'Target States (comma-separated)' },
 ] as const
 
 type SystemFieldKey = typeof SYSTEM_FIELDS[number]['key']
@@ -81,7 +89,15 @@ function autoMap(header: string): SystemFieldKey | typeof DO_NOT_IMPORT {
   if (['last name', 'lastname', 'last'].includes(h)) return 'lastName'
   if (['phone', 'phone number', 'contact number', 'mobile', 'cell'].includes(h)) return 'phone'
   if (['email', 'email address'].includes(h)) return 'email'
+  if (['tag', 'tags'].includes(h)) return 'tags'
+  if (['source', 'lead source', 'buyer type', 'type'].includes(h)) return 'source'
+  if (['how heard', 'how did you hear', 'heard about', 'source of contact'].includes(h)) return 'howHeardAbout'
+  if (['address', 'mailing address', 'mailing'].includes(h)) return 'mailingAddress'
   if (['note', 'notes'].includes(h)) return 'notes'
+  if (['city', 'cities', 'target city', 'target cities'].includes(h)) return 'targetCities'
+  if (['zip', 'zips', 'target zip', 'target zips', 'postal'].includes(h)) return 'targetZips'
+  if (['county', 'counties', 'target county', 'target counties'].includes(h)) return 'targetCounties'
+  if (['state', 'states', 'target state', 'target states'].includes(h)) return 'targetStates'
 
   return DO_NOT_IMPORT
 }

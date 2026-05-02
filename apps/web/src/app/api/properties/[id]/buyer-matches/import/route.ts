@@ -12,6 +12,14 @@ const RowSchema = z.object({
   phone: z.string().max(40).optional(),
   email: z.string().email().optional(),
   notes: z.string().max(2000).optional(),
+  tags: z.array(z.string()).optional(),
+  source: z.string().max(200).optional(),
+  howHeardAbout: z.string().max(200).optional(),
+  mailingAddress: z.string().max(500).optional(),
+  targetCities: z.array(z.string()).optional(),
+  targetZips: z.array(z.string()).optional(),
+  targetCounties: z.array(z.string()).optional(),
+  targetStates: z.array(z.string()).optional(),
 })
 
 const ImportSchema = z.object({
@@ -46,15 +54,19 @@ export async function POST(req: NextRequest, { params }: Params) {
   let created = 0
   let merged = 0
   let skipped = 0
+  let updated = 0
   const errors: string[] = []
   const skippedDetails: Array<{ name: string; stage: string }> = []
 
   for (const row of rows) {
     try {
       const normalizedPhone = row.phone ? (normalizePhone(row.phone) ?? row.phone) : undefined
+      // source → howHeardAbout fallback (same as buyer directory import)
+      const resolvedHowHeardAbout = row.howHeardAbout || row.source || undefined
 
       // Find or create the buyer
       let buyerId: string | null = null
+      let contactId: string | null = null
 
       const dup = await findDuplicateContact({
         allPhones: normalizedPhone ? [normalizedPhone] : [],
@@ -62,8 +74,76 @@ export async function POST(req: NextRequest, { params }: Params) {
         contactType: 'BUYER',
       })
 
-      if (dup?.buyerId) {
-        buyerId = dup.buyerId
+      if (dup?.contact?.id) {
+        contactId = dup.contact.id
+        buyerId = dup.buyerId ?? null
+
+        // ── Enrich existing contact with any NEW information ──
+        // Only fill blank fields — never overwrite data the contact already has.
+        const existingContact = await Contact.findByPk(dup.contact.id, { raw: true }) as any
+        if (existingContact) {
+          const contactUpdates: Record<string, unknown> = {}
+
+          if (!existingContact.phone && normalizedPhone) {
+            contactUpdates.phone = normalizedPhone
+          }
+          if (!existingContact.email && row.email) {
+            contactUpdates.email = row.email
+          }
+          if (!existingContact.lastName && row.lastName) {
+            contactUpdates.lastName = row.lastName
+          }
+          if (!existingContact.mailingAddress && row.mailingAddress) {
+            contactUpdates.mailingAddress = row.mailingAddress
+          }
+          if (!existingContact.howHeardAbout && resolvedHowHeardAbout) {
+            contactUpdates.howHeardAbout = resolvedHowHeardAbout
+          }
+          // Merge tags (add new ones, don't remove existing)
+          if (row.tags && row.tags.length > 0) {
+            const existingTags: string[] = existingContact.tags ?? []
+            const merged = Array.from(new Set([...existingTags, ...row.tags]))
+            if (merged.length > existingTags.length) {
+              contactUpdates.tags = merged
+            }
+          }
+          // Sync phones JSONB if we filled the scalar phone
+          if (contactUpdates.phone) {
+            const existingPhones: Array<{ label: string; number: string }> = existingContact.phones ?? []
+            const alreadyInArr = existingPhones.some((p: any) =>
+              p.number?.replace(/\D/g, '').endsWith((normalizedPhone as string).replace(/\D/g, '').slice(-10))
+            )
+            if (!alreadyInArr) {
+              contactUpdates.phones = [...existingPhones, { label: 'Mobile', number: normalizedPhone as string }]
+            }
+          }
+
+          if (Object.keys(contactUpdates).length > 0) {
+            await Contact.update(contactUpdates as any, { where: { id: dup.contact.id } })
+            updated++
+          }
+        }
+
+        // Enrich buyer with target arrays if they're empty
+        if (buyerId) {
+          const existingBuyer = await Buyer.findByPk(buyerId, { raw: true }) as any
+          if (existingBuyer) {
+            const buyerUpdates: Record<string, unknown> = {}
+            if ((!existingBuyer.targetCities?.length) && row.targetCities?.length) buyerUpdates.targetCities = row.targetCities
+            if ((!existingBuyer.targetZips?.length) && row.targetZips?.length) buyerUpdates.targetZips = row.targetZips
+            if ((!existingBuyer.targetCounties?.length) && row.targetCounties?.length) buyerUpdates.targetCounties = row.targetCounties
+            if ((!existingBuyer.targetStates?.length) && row.targetStates?.length) buyerUpdates.targetStates = row.targetStates
+            if (!existingBuyer.notes && row.notes) buyerUpdates.notes = row.notes
+            if (Object.keys(buyerUpdates).length > 0) {
+              await Buyer.update(buyerUpdates as any, { where: { id: buyerId } })
+            }
+          }
+        }
+
+        if (!buyerId) {
+          errors.push(`${row.firstName}: found contact but no buyer profile`)
+          continue
+        }
       } else {
         // Create new contact + buyer
         const newBuyer = await sequelize.transaction(async (t) => {
@@ -76,13 +156,20 @@ export async function POST(req: NextRequest, { params }: Params) {
               email: row.email ?? null,
               phones: normalizedPhone ? [{ label: 'Mobile', number: normalizedPhone }] : [],
               emails: row.email ? [{ label: 'Primary', email: row.email }] : [],
-            },
+              tags: row.tags ?? [],
+              mailingAddress: row.mailingAddress ?? null,
+              howHeardAbout: resolvedHowHeardAbout ?? null,
+            } as any,
             { transaction: t },
           )
           return Buyer.create(
             {
               contactId: contact.id,
               notes: row.notes ?? null,
+              targetCities: row.targetCities ?? [],
+              targetZips: row.targetZips ?? [],
+              targetCounties: row.targetCounties ?? [],
+              targetStates: row.targetStates ?? [],
             } as any,
             { transaction: t },
           )
@@ -116,5 +203,5 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
   }
 
-  return NextResponse.json({ success: true, created, merged, skipped, skippedDetails, errors }, { status: 200 })
+  return NextResponse.json({ success: true, created, merged, updated, skipped, skippedDetails, errors }, { status: 200 })
 }

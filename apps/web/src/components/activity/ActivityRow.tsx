@@ -308,7 +308,7 @@ export function ActivityRow(props: ActivityRowProps) {
               headlineNode
             )}
           </div>
-          <span className="text-[12.5px] text-gray-400 whitespace-nowrap flex-shrink-0">
+          <span className="text-[12.5px] text-gray-400 whitespace-nowrap flex-shrink-0" suppressHydrationWarning>
             {timestamp}
           </span>
         </div>

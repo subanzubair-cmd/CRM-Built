@@ -12,6 +12,7 @@ import {
   ActivityLog,
   User,
   Op,
+  literal,
   sequelize,
 } from '@crm/database'
 import { getActiveCommConfig } from '@/lib/comm-provider'
@@ -390,13 +391,19 @@ async function findAllLeadsForPhone(
   // — until the legacy data is migrated to E.164, contacts saved as
   // "4697997747" still need to match a Telnyx hit of "+14697997747".
   const variants = phoneVariants(phone)
+  const digits = phone.replace(/\D/g, '')
+  const last10 = digits.slice(-10)
   const rows = await Contact.findAll({
     where: {
       [Op.or]: [
         { phone: { [Op.in]: variants } },
         { phone2: { [Op.in]: variants } },
+        // Also catch contacts where phone lives only in the JSONB phones[] array
+        ...(last10.length >= 7
+          ? [literal(`"Contact"."phones"::text ILIKE '%${last10}%'`)]
+          : []),
       ],
-    },
+    } as any,
     attributes: ['id'],
     include: [
       {

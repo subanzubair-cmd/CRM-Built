@@ -40,13 +40,21 @@ export async function findLeadsForPhone(
   const variants = phoneVariants(phone)
   if (variants.length === 0) return []
 
+  // Build digit-only variants for JSONB substring search (same approach as dedupe.ts).
+  const digits = phone.replace(/\D/g, '')
+  const last10 = digits.slice(-10)
+
   const rows = await Contact.findAll({
     where: {
       [Op.or]: [
         { phone: { [Op.in]: variants } },
         { phone2: { [Op.in]: variants } },
+        // Also match contacts where the phone is only in the JSONB phones[] array
+        ...(last10.length >= 7
+          ? [literal(`"Contact"."phones"::text ILIKE ${sequelize.escape(`%${last10}%`)}`)]
+          : []),
       ],
-    },
+    } as any,
     attributes: ['id'],
     include: [
       {
