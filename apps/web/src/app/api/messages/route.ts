@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { emitEvent, DomainEvents } from '@/lib/domain-events'
 import { sendSms } from '@/lib/sms-send'
 import { getActiveCommConfig } from '@/lib/comm-provider'
+import { mirrorCommunicationToRelatedLeads } from '@/lib/activity-mirror'
 
 /**
  * Schema accepts both "log only" payloads (channel=NOTE, channel=CALL
@@ -281,6 +282,30 @@ export async function POST(req: NextRequest) {
     )
     return created
   })
+
+  // Mirror the communication to other leads sharing the same phone/email.
+  // Fire-and-forget — mirrors must never delay or block the response.
+  const mirrorPhone =
+    channel === 'SMS' ? (smsTo ?? smsFrom) : channel === 'CALL' ? (callFrom ?? callTo) : null
+  const mirrorEmail = channel === 'EMAIL' ? (emailTo ?? emailFrom) : null
+
+  if (mirrorPhone || mirrorEmail) {
+    void mirrorCommunicationToRelatedLeads({
+      originPropertyId: propertyId,
+      phone: mirrorPhone,
+      email: mirrorEmail,
+      action: 'MESSAGE_LOGGED',
+      detail: {
+        description: `${channel} ${direction === 'INBOUND' ? 'received' : 'sent'}`,
+        channel,
+        direction,
+        ...(mirrorPhone ? { phone: mirrorPhone } : {}),
+        ...(mirrorEmail ? { email: mirrorEmail } : {}),
+      },
+      userId,
+      actorType: 'user',
+    })
+  }
 
   // Emit domain event
   await emitEvent({

@@ -742,6 +742,26 @@ async function handleCallEvent(eventType: string, payload: any) {
           } catch (err) {
             console.warn('[webhook/telnyx] failed to log call activity:', err)
           }
+
+          // Mirror call activity to other leads sharing this phone number.
+          const customerPhone = activeCall.customerPhone as string | null
+          if (customerPhone) {
+            const { mirrorCommunicationToRelatedLeads } = await import('@/lib/activity-mirror')
+            void mirrorCommunicationToRelatedLeads({
+              originPropertyId: activeCall.propertyId,
+              phone: customerPhone,
+              action: 'MESSAGE_LOGGED',
+              detail: {
+                description: summary,
+                channel: 'CALL',
+                direction: activeCall.direction,
+                from: callFrom,
+                to: callTo,
+                durationSec,
+              },
+              actorType: 'system',
+            })
+          }
         }
       } catch (err) {
         console.warn('[webhook/telnyx] failed to persist CALL Message row:', err)

@@ -8,9 +8,11 @@ import {
   LeadCampaign,
   Conversation,
   Message,
+  ActivityLog,
   ActiveCall,
   Op,
 } from '@crm/database'
+import { phoneVariants } from '@crm/shared'
 
 /**
  * POST /api/webhooks/twilio — UNIFIED Twilio webhook (SMS + Voice).
@@ -56,6 +58,103 @@ export async function POST(req: NextRequest) {
 
 // ─── Inbound SMS ──────────────────────────────────────────────────────
 
+/**
+ * Find every lead (Property) attached to the given phone number.
+ * Matches across all format variants to handle legacy stored data.
+ */
+async function findAllLeadsForPhone(
+  phone: string,
+): Promise<Array<{ propertyId: string; contactId: string }>> {
+  const variants = phoneVariants(phone)
+  const rows = await Contact.findAll({
+    where: {
+      [Op.or]: [
+        { phone: { [Op.in]: variants } },
+        { phone2: { [Op.in]: variants } },
+      ],
+    },
+    attributes: ['id'],
+    include: [
+      {
+        model: PropertyContact,
+        as: 'properties',
+        required: false,
+        separate: true,
+        attributes: ['propertyId', 'contactId', 'isPrimary'],
+        order: [['isPrimary', 'DESC']],
+      },
+    ],
+  })
+  const seen = new Set<string>()
+  const out: Array<{ propertyId: string; contactId: string }> = []
+  for (const row of rows) {
+    const plain = row.get({ plain: true }) as any
+    const props = (plain.properties ?? []) as Array<{ propertyId: string; contactId: string }>
+    for (const pc of props) {
+      if (!pc.propertyId || seen.has(pc.propertyId)) continue
+      seen.add(pc.propertyId)
+      out.push({ propertyId: pc.propertyId, contactId: pc.contactId })
+    }
+  }
+  return out
+}
+
+async function persistTwilioInboundSms(args: {
+  propertyId: string
+  contactId: string | null
+  leadCampaignId: string | null
+  body: string
+  from: string
+  to: string | undefined
+  messageSid: string | undefined
+}): Promise<void> {
+  const { propertyId, contactId, leadCampaignId, body, from, to, messageSid } = args
+
+  const where = contactId ? { propertyId, contactId } : { propertyId, contactId: null }
+  let conversation: any = await Conversation.findOne({ where })
+  if (!conversation) {
+    conversation = await Conversation.create({
+      propertyId,
+      contactId,
+      contactPhone: from,
+      isRead: false,
+      lastMessageAt: new Date(),
+    } as any)
+  } else {
+    await conversation.update({ isRead: false, lastMessageAt: new Date() })
+  }
+
+  await Message.create({
+    propertyId,
+    conversationId: conversation.id,
+    ...(contactId ? { contactId } : {}),
+    ...(leadCampaignId ? { leadCampaignId } : {}),
+    channel: 'SMS',
+    direction: 'INBOUND',
+    body,
+    from,
+    to,
+    twilioSid: messageSid,
+  } as any)
+
+  try {
+    await ActivityLog.create({
+      propertyId,
+      userId: null,
+      action: 'MESSAGE_LOGGED',
+      detail: {
+        description: `SMS received: ${body.length > 80 ? body.slice(0, 80) + '…' : body}`,
+        channel: 'SMS',
+        direction: 'INBOUND',
+        from,
+        to,
+      },
+    } as any)
+  } catch (err) {
+    console.warn('[webhook/twilio sms] failed to log activity:', err)
+  }
+}
+
 async function handleInboundSms(params: Record<string, string>) {
   const { From, To, Body, MessageSid } = params
   if (!From) {
@@ -63,67 +162,49 @@ async function handleInboundSms(params: Record<string, string>) {
   }
 
   try {
-    const contactRow = await Contact.findOne({
-      where: { [Op.or]: [{ phone: From }, { phone2: From }] },
-      include: [
-        {
-          model: PropertyContact,
-          as: 'properties',
-          where: { isPrimary: true },
-          required: false,
-          separate: true,
-          limit: 1,
-          order: [['createdAt', 'DESC']],
-          include: [{ model: Property, as: 'property', attributes: ['id'] }],
-        },
-      ],
-    })
-    const contact = contactRow?.get({ plain: true }) as any
-    const propertyId = contact?.properties?.[0]?.property?.id ?? null
-    const contactId = contact?.id ?? null
+    // Fan out to ALL leads sharing this phone number (mirrors Telnyx behaviour).
+    const matches = await findAllLeadsForPhone(From)
+    console.log(
+      `[webhook/twilio sms] inbound from=${From} to=${To ?? '(none)'} → ${matches.length} existing lead match(es)`,
+    )
 
     let leadCampaignId: string | null = null
     if (To) {
       const tn = await TwilioNumber.findOne({ where: { number: To }, attributes: ['id'] })
       if (tn) {
-        const lc = await LeadCampaign.findOne({
+        const lc = (await LeadCampaign.findOne({
           where: { phoneNumberId: tn.id },
           attributes: ['id'],
           raw: true,
-        }) as any
+        })) as any
         leadCampaignId = lc?.id ?? null
       }
     }
 
-    let conversation: any = null
-    if (propertyId) {
-      const where = contactId ? { propertyId, contactId } : { propertyId, contactId: null }
-      conversation = await Conversation.findOne({ where })
-      if (!conversation) {
-        conversation = await Conversation.create({
-          propertyId,
-          contactId,
-          contactPhone: From,
-          isRead: false,
-          lastMessageAt: new Date(),
-        } as any)
-      } else {
-        await conversation.update({ isRead: false, lastMessageAt: new Date() })
-      }
+    for (const m of matches) {
+      await persistTwilioInboundSms({
+        propertyId: m.propertyId,
+        contactId: m.contactId,
+        leadCampaignId,
+        body: Body,
+        from: From,
+        to: To,
+        messageSid: MessageSid,
+      })
     }
 
-    await Message.create({
-      ...(propertyId ? { propertyId } : {}),
-      ...(conversation?.id ? { conversationId: conversation.id } : {}),
-      ...(contactId ? { contactId } : {}),
-      ...(leadCampaignId ? { leadCampaignId } : {}),
-      channel: 'SMS',
-      direction: 'INBOUND',
-      body: Body,
-      from: From,
-      to: To,
-      twilioSid: MessageSid,
-    } as any)
+    // If no lead matched, write an orphaned Message so nothing is lost.
+    if (matches.length === 0) {
+      await Message.create({
+        ...(leadCampaignId ? { leadCampaignId } : {}),
+        channel: 'SMS',
+        direction: 'INBOUND',
+        body: Body,
+        from: From,
+        to: To,
+        twilioSid: MessageSid,
+      } as any)
+    }
 
     return new NextResponse('<Response/>', {
       status: 200,

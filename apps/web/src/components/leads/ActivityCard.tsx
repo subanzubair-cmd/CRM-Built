@@ -28,6 +28,7 @@ interface ActivityLog {
   detail: unknown
   createdAt: Date
   user: { id: string; name: string } | null
+  mirroredFromPropertyId?: string | null
 }
 
 interface StageRecord {
@@ -48,7 +49,7 @@ type FeedItem = {
   createdAt: Date
   label: string
   subtext: string
-  dot: 'blue' | 'gray'
+  dot: 'blue' | 'teal' | 'gray'
 }
 
 function formatStageName(stage: string): string {
@@ -72,10 +73,13 @@ export function ActivityCard({ activityLogs, stageHistory }: Props) {
       subtext: [
         (log.detail as any)?.description ?? '',
         log.user?.name ? `by ${log.user.name}` : '',
+        log.mirroredFromPropertyId
+          ? `Mirrored from ${(log.detail as any)?.mirroredFromAddress ?? 'shared contact'}`
+          : '',
       ]
         .filter(Boolean)
         .join(' · '),
-      dot: 'blue' as const,
+      dot: log.mirroredFromPropertyId ? ('teal' as const) : ('blue' as const),
     })),
     ...stageHistory.map((sh) => ({
       id: `stage-${sh.id}`,
@@ -104,7 +108,9 @@ export function ActivityCard({ activityLogs, stageHistory }: Props) {
                   className={`w-3.5 h-3.5 rounded-full border-2 mt-0.5 flex-shrink-0 ${
                     item.dot === 'blue'
                       ? 'bg-blue-500 border-blue-500'
-                      : 'bg-white border-gray-300'
+                      : item.dot === 'teal'
+                        ? 'bg-teal-400 border-teal-400'
+                        : 'bg-white border-gray-300'
                   }`}
                 />
                 <div className="flex-1 min-w-0 pb-0.5">

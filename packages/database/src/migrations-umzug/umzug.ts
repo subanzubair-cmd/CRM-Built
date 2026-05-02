@@ -92,6 +92,10 @@ import {
   up as dispoStagesSeedUp,
   down as dispoStagesSeedDown,
 } from './20260502000000-seed-dispo-stages'
+import {
+  up as activityLogMirrorUp,
+  down as activityLogMirrorDown,
+} from './20260503000000-add-activity-log-mirror'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -236,6 +240,13 @@ const migrations = [
       dispoStagesSeedUp({ name: '20260502000000-seed-dispo-stages', context }),
     down: ({ context }: { context: any }) =>
       dispoStagesSeedDown({ name: '20260502000000-seed-dispo-stages', context }),
+  },
+  {
+    name: '20260503000000-add-activity-log-mirror',
+    up: ({ context }: { context: any }) =>
+      activityLogMirrorUp({ name: '20260503000000-add-activity-log-mirror', context }),
+    down: ({ context }: { context: any }) =>
+      activityLogMirrorDown({ name: '20260503000000-add-activity-log-mirror', context }),
   },
 ]
 

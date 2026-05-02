@@ -53,6 +53,9 @@ export class ActivityLog extends Model<
   @Column(DataType.JSONB)
   declare detail: Record<string, unknown>
 
+  @Column(DataType.TEXT)
+  declare mirroredFromPropertyId: string | null
+
   @AllowNull(false)
   @Default(DataType.NOW)
   @Column(DataType.DATE)
@@ -67,5 +70,6 @@ export interface ActivityLogAttributes {
   action: string
   actorType: string
   detail: Record<string, unknown>
+  mirroredFromPropertyId: string | null
   createdAt: Date
 }
