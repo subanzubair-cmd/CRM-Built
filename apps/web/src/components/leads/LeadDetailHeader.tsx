@@ -208,6 +208,16 @@ export function LeadDetailHeader({
     enrollments: any[]
   } | null>(null)
   const [showMap, setShowMap] = useState(false)
+  // Pre-cached drip status so stage-change check is instant (no extra round-trip)
+  const dripCacheRef = useRef<{ enrollments: any[]; fetchedAt: number } | null>(null)
+  useEffect(() => {
+    fetch(`/api/properties/${id}/drip-status`)
+      .then((r) => r.json())
+      .then((d) => {
+        dripCacheRef.current = { enrollments: (d.data ?? []).filter((e: any) => e.isActive), fetchedAt: Date.now() }
+      })
+      .catch(() => {})
+  }, [id])
 
 
   const actionsRef = useRef<HTMLDivElement>(null)
@@ -238,9 +248,19 @@ export function LeadDetailHeader({
 
   async function checkAndMaybeShowDripModal(proceed: () => Promise<void>) {
     try {
-      const res = await fetch(`/api/properties/${id}/drip-status`)
-      const data = await res.json()
-      const active = (data.data ?? []).filter((e: any) => e.isActive)
+      // Use pre-cached value (populated on mount). Re-fetch only if cache is
+      // missing or stale (>60 s) — avoids a round-trip on every stage change.
+      const STALE_MS = 60_000
+      const cached = dripCacheRef.current
+      let active: any[]
+      if (cached && Date.now() - cached.fetchedAt < STALE_MS) {
+        active = cached.enrollments
+      } else {
+        const res = await fetch(`/api/properties/${id}/drip-status`)
+        const data = await res.json()
+        active = (data.data ?? []).filter((e: any) => e.isActive)
+        dripCacheRef.current = { enrollments: active, fetchedAt: Date.now() }
+      }
       if (active.length === 0) {
         await proceed()
         return
