@@ -224,32 +224,130 @@ export async function GET(req: NextRequest) {
         signal: AbortSignal.timeout(8_000),
       })
       const status = probeRes.status
+
+      // Read the body so we can detect ngrok-offline / tunnel-not-found
+      // responses, which return HTTP 404 with a recognisable error code
+      // header/body. Without this check, a dead tunnel green-checks as
+      // "reachable" because we got *some* HTTP response back.
+      const ngrokError = probeRes.headers.get('ngrok-error-code')
+      let bodyText = ''
+      try {
+        bodyText = await probeRes.text()
+      } catch {
+        /* ignore — body read may fail on streaming responses */
+      }
+      const isNgrokOffline =
+        ngrokError === 'ERR_NGROK_3200' ||
+        bodyText.includes('ERR_NGROK_3200') ||
+        bodyText.includes('endpoint is offline')
+      const isNgrokError =
+        !!ngrokError ||
+        (status === 404 && (bodyText.includes('ngrok-free') || bodyText.includes('ngrok.com')))
+
       // 401/403 = webhook URL is reachable + signature check is gating
       //          (expected behavior when Public Key is set)
       // 200    = webhook URL is reachable + handler accepted (Public
       //          Key not set, or the body had no event_type so was
       //          ignored — also fine)
-      // 4xx other = handler rejected the body shape (unusual but ok)
+      // 404    = route does NOT exist — handler not registered. Most
+      //          common cause is ngrok tunnel offline (recognised
+      //          above) or a deployed app missing the webhook route.
       // 5xx    = handler crashed
       // network error = URL not reachable from the public internet
-      const reachable = status > 0
       const rejectedBySig = status === 401 || status === 403
+      const handlerAccepted = status === 200 || rejectedBySig
+      const ok = handlerAccepted && !isNgrokError
+
       reachCheck = {
-        ok: reachable,
+        ok,
         status,
-        message: !reachable
-          ? `Could not reach ${expectedWebhook}. Check that ngrok is running and the URL still resolves.`
-          : rejectedBySig
-            ? `Reachable (HTTP ${status}) — signature verification rejected the probe, which is expected. The route is live and Telnyx's signed webhooks will pass.`
-            : status >= 500
-              ? `Reachable but the handler returned HTTP ${status}. Check the dev server console for stack traces.`
-              : `Reachable (HTTP ${status}). Handler accepted the probe.`,
+        message: isNgrokOffline
+          ? `ngrok tunnel is OFFLINE (${ngrokError ?? 'ERR_NGROK_3200'}). Telnyx webhooks return HTTP 404 and are discarded — this is why inbound calls/SMS aren't reaching the CRM. Restart ngrok and update the webhook URLs in Telnyx if the URL changed.`
+          : isNgrokError
+            ? `ngrok returned HTTP ${status}${ngrokError ? ` (${ngrokError})` : ''}. The tunnel is misconfigured. Check that ngrok is running and forwarding to the correct local port.`
+            : rejectedBySig
+              ? `Reachable (HTTP ${status}) — signature verification rejected the probe, which is expected. The route is live and Telnyx's signed webhooks will pass.`
+              : status === 404
+                ? `Reachable but returned HTTP 404 — the webhook route is not registered at this path. Verify the URL is exactly ${expectedWebhook} and that the dev server is running.`
+                : status === 200
+                  ? `Reachable (HTTP 200). Handler accepted the probe.`
+                  : status >= 500
+                    ? `Reachable but the handler returned HTTP ${status}. Check the dev server console for stack traces.`
+                    : `Reachable (HTTP ${status}) — unexpected response from the handler.`,
       }
     } catch (err: any) {
       const msg = err?.name === 'AbortError'
         ? `Timed out reaching ${expectedWebhook} (>8s). The tunnel may be unreachable from this server.`
         : err?.message ?? 'Network error reaching the webhook URL.'
       reachCheck = { ok: false, status: null, message: msg }
+    }
+  }
+
+  // 5b) SIP Connection webhook check.
+  //
+  //     When numbers are routed via a SIP Connection (the browser-call
+  //     path), inbound webhooks fire to the SIP Connection's OWN
+  //     webhook_event_url — separate from the Voice API App's URL.
+  //     If this is empty, Telnyx still rings the browser softphone
+  //     correctly, but the CRM never sees `call.initiated` events and
+  //     can't auto-create leads.
+  type SipConnectionCheck = {
+    ok: boolean
+    message: string
+    webhookUrl?: string | null
+    connectionName?: string | null
+  }
+  let sipConnectionCheck: SipConnectionCheck | null = null
+  if (config.voiceConnectionId && sipAssignedCount > 0) {
+    try {
+      const sipRes = await fetch(
+        `https://api.telnyx.com/v2/credential_connections/${encodeURIComponent(config.voiceConnectionId)}`,
+        { headers: { Authorization: `Bearer ${config.apiKey}` } },
+      )
+      if (sipRes.ok) {
+        const sipJson = (await sipRes.json().catch(() => null)) as any
+        const sip = sipJson?.data
+        // Telnyx exposes the field as webhook_event_url on credential
+        // connections; older SDKs may show it as webhook_url. Accept both.
+        const sipWebhook = (sip?.webhook_event_url ?? sip?.webhook_url ?? '').trim()
+        const sipName = sip?.connection_name ?? sip?.user_name ?? null
+        const sipMatches =
+          expectedWebhook && sipWebhook
+            ? sipWebhook.replace(/\/$/, '') === expectedWebhook.replace(/\/$/, '')
+            : null
+        if (!sipWebhook) {
+          sipConnectionCheck = {
+            ok: false,
+            webhookUrl: null,
+            connectionName: sipName,
+            message: `SIP Connection "${sipName ?? config.voiceConnectionId}" has NO webhook URL set. ${sipAssignedCount} number(s) routed via this connection will NOT fire inbound webhooks — calls will ring the browser softphone but the CRM won't see them. Set it in Telnyx Mission Control → Voice → SIP Connections → ${sipName ?? 'your connection'} → Webhook URL.`,
+          }
+        } else if (sipMatches === false) {
+          sipConnectionCheck = {
+            ok: false,
+            webhookUrl: sipWebhook,
+            connectionName: sipName,
+            message: `SIP Connection webhook is "${sipWebhook}", but the CRM expects "${expectedWebhook}". Update it in Telnyx Mission Control.`,
+          }
+        } else {
+          sipConnectionCheck = {
+            ok: true,
+            webhookUrl: sipWebhook,
+            connectionName: sipName,
+            message: `SIP Connection "${sipName ?? config.voiceConnectionId}" webhook URL: ${sipWebhook}`,
+          }
+        }
+      } else {
+        sipConnectionCheck = {
+          ok: false,
+          message: `Could not fetch SIP Connection ${config.voiceConnectionId} from Telnyx (HTTP ${sipRes.status}).`,
+        }
+      }
+    } catch (err) {
+      sipConnectionCheck = {
+        ok: false,
+        message: err instanceof Error ? `SIP Connection lookup failed: ${err.message}` : 'SIP Connection lookup failed.',
+      }
     }
   }
 
@@ -363,6 +461,7 @@ export async function GET(req: NextRequest) {
                     : `${assignedCount} of ${totalCount} number${totalCount === 1 ? '' : 's'} assigned via the Voice API App (inbound webhook path).`,
               numbers: numbersChecked,
             },
+    ...(sipConnectionCheck ? { sipConnection: sipConnectionCheck } : {}),
     messagingProfile: mpCheck,
     reachability: reachCheck,
     signatureKey: sigCheck,
@@ -373,6 +472,7 @@ export async function GET(req: NextRequest) {
     checks.appExists.ok &&
     checks.webhookMatch.ok &&
     checks.numbersAssigned.ok &&
+    (sipConnectionCheck ? sipConnectionCheck.ok : true) &&
     checks.messagingProfile.ok &&
     checks.reachability.ok
 
