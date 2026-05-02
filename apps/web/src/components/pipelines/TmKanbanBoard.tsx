@@ -20,6 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { Phone, MessageSquare, CheckSquare } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatPhone } from '@/lib/phone'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -185,7 +186,7 @@ function TmKanbanCard({
       <p className="text-[11px] text-gray-600">
         {contact ? `${contact.firstName} ${contact.lastName ?? ''}`.trim() : 'No contact'}
       </p>
-      <p className="text-[11px] text-gray-400">{contact?.phone || 'No phone'}</p>
+      <p className="text-[11px] text-gray-400">{formatPhone(contact?.phone) || 'No phone'}</p>
 
       {/* Row 3: Updated timestamp */}
       <p className="text-[10px] text-blue-600 mt-1">
@@ -284,7 +285,7 @@ function TmKanbanColumn({
       {/* Drop zone */}
       <div
         ref={setNodeRef}
-        className="bg-slate-100 rounded-b-xl p-2 flex flex-col gap-2 min-h-[200px] flex-1"
+        className="bg-slate-100 rounded-b-xl p-2 flex flex-col gap-2 min-h-[80px]"
       >
         <SortableContext
           items={cards.map((c) => c.id)}
@@ -376,7 +377,7 @@ export function TmKanbanBoard({ rows, commStats, stages: stageConfigs }: TmKanba
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex gap-3 overflow-x-auto pb-4 min-h-[60vh]">
+      <div className="flex gap-3 items-start overflow-x-auto pb-4">
         {stages.map((stage) => {
           const stageRows = getRowsForStage(stage.key)
           return (

@@ -614,7 +614,7 @@ export function BuyerKanban({ propertyId, initialMatches, initialStages }: Props
   return (
     <>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        <div className="flex gap-3 h-full overflow-x-auto pb-2">
+        <div className="flex gap-3 items-start overflow-x-auto pb-2">
           {stages.map((stage) => {
             const cards = matches.filter((m) => m.dispoStage === stage.key)
             return (
@@ -705,7 +705,7 @@ function KanbanColumn({
 
       {/* Cards */}
       <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex-1 px-2 pb-2 space-y-2 min-h-[120px]">
+        <div className="px-2 pb-2 space-y-2 min-h-[80px]">
           {cards.length === 0 ? (
             <div className="flex items-center justify-center h-16 text-[10px] text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
               No buyers

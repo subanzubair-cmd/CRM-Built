@@ -20,6 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { Phone, CheckSquare } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatPhone } from '@/lib/phone'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -169,7 +170,7 @@ function InventoryCard({
 
       {/* Row 3: phone */}
       {contact?.phone && (
-        <p className="text-[11px] text-gray-400 mb-1">{contact.phone}</p>
+        <p className="text-[11px] text-gray-400 mb-1">{formatPhone(contact.phone)}</p>
       )}
 
       {/* Row 4: exit strategy badge */}
@@ -249,7 +250,7 @@ function InventoryColumn({
       {/* Drop zone */}
       <div
         ref={setNodeRef}
-        className="bg-slate-100 rounded-b-xl p-2 flex flex-col gap-2 min-h-[200px] flex-1"
+        className="bg-slate-100 rounded-b-xl p-2 flex flex-col gap-2 min-h-[80px]"
       >
         <SortableContext
           items={cards.map((c) => c.id)}
@@ -336,7 +337,7 @@ export function InventoryKanbanBoard({ rows, commStats, stages: stageConfigs }: 
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex gap-3 overflow-x-auto pb-4 min-h-[60vh]">
+      <div className="flex gap-3 items-start overflow-x-auto pb-4">
         {stages.map((stage) => {
           const stageRows = getRowsForStage(stage.key)
           return (
