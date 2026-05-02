@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { z } from 'zod'
 import { User } from '@crm/database'
+import { normalizePhone } from '@/lib/phone'
 
 const UpdateProfileSchema = z.object({
   name: z.string().min(1).optional(),
@@ -20,7 +21,11 @@ export async function PATCH(req: NextRequest) {
   const id = ((session as any)?.user?.id ?? '') as string
   const user = await User.findByPk(id)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  await user.update(parsed.data as any)
+  const updateData = {
+    ...parsed.data,
+    ...(parsed.data.phone !== undefined ? { phone: normalizePhone(parsed.data.phone) ?? undefined } : {}),
+  }
+  await user.update(updateData as any)
   return NextResponse.json({
     id: user.id,
     name: user.name,

@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { User, Role, Op } from '@crm/database'
 import { requirePermission } from '@/lib/auth-utils'
 import { rateLimitMutation } from '@/lib/rate-limit'
+import { normalizePhone } from '@/lib/phone'
 
 const UpdateUserSchema = z.object({
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
@@ -43,8 +44,9 @@ export async function PATCH(
     }
   }
 
-  // Convert vacation date strings to Date objects
+  // Convert vacation date strings to Date objects; normalize phone to E.164
   const data: Record<string, unknown> = { ...parsed.data }
+  if (typeof data.phone === 'string') data.phone = normalizePhone(data.phone as string) ?? data.phone
   if (typeof data.vacationStart === 'string') data.vacationStart = new Date(data.vacationStart)
   if (typeof data.vacationEnd === 'string') data.vacationEnd = new Date(data.vacationEnd)
 

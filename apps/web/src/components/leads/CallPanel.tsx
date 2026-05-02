@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { formatPhone } from '@/lib/phone'
 import {
   Phone,
   PhoneOff,
@@ -376,7 +377,7 @@ export function CallPanel({
             <span className="text-sm font-semibold">
               {contact?.name ?? 'Call'}
             </span>
-            <span className="text-sm text-green-100">{contact?.phone}</span>
+            <span className="text-sm text-green-100">{formatPhone(contact?.phone)}</span>
             <span className="text-sm font-mono bg-green-700 px-2 py-0.5 rounded">
               {fmtTime(elapsed)}
             </span>
@@ -552,7 +553,7 @@ export function CallPanel({
                   {contact.type}
                 </p>
               )}
-              <p className="text-sm font-mono text-gray-700">{contact.phone}</p>
+              <p className="text-sm font-mono text-gray-700">{formatPhone(contact.phone)}</p>
             </div>
           ) : (
             <p className="text-sm text-gray-400">No contacts available</p>

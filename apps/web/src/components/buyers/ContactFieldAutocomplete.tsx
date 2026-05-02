@@ -1,5 +1,7 @@
 'use client'
 
+import { formatPhone } from '@/lib/phone'
+
 /**
  * Lightweight typeahead wrapper around an `<input>` that fetches
  * matching existing contacts as the user types and lets them pick a
@@ -169,7 +171,7 @@ export function ContactFieldAutocomplete({
                   {[m.firstName, m.lastName].filter(Boolean).join(' ') || '(unnamed)'}
                 </span>
                 <span className="block text-[11px] text-gray-500 truncate">
-                  {m.phone || '—'} · {m.email || '—'}
+                  {formatPhone(m.phone) || '—'} · {m.email || '—'}
                 </span>
               </span>
               <span className="text-[10px] text-blue-600 font-semibold flex-shrink-0">

@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { Pagination } from '@/components/ui/Pagination'
+import { formatPhone } from '@/lib/phone'
 
 interface ArchiveRow {
   id: string
@@ -85,7 +86,7 @@ export function ArchiveTable({ rows, total, type, page, pageSize }: Props) {
                   {row.contacts[0]?.contact ? (
                     <div>
                       <p className="text-gray-800">{[row.contacts[0].contact.firstName, row.contacts[0].contact.lastName].filter(Boolean).join(' ')}</p>
-                      <p className="text-[11px] text-gray-400">{row.contacts[0].contact.phone ?? '—'}</p>
+                      <p className="text-[11px] text-gray-400">{formatPhone(row.contacts[0].contact.phone) || '—'}</p>
                     </div>
                   ) : <span className="text-gray-300">—</span>}
                 </td>

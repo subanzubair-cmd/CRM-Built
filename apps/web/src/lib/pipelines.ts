@@ -11,6 +11,7 @@ import {
   BuyerMatch,
   BuyerOffer,
   Buyer,
+  LeadCampaign,
   Op,
   literal,
 } from '@crm/database'
@@ -256,7 +257,15 @@ export async function getPropertyById(id: string) {
     ],
   })
   if (!property) return null
-  return serializeRow(property.get({ plain: true }) as Record<string, any>)
+  const plain = property.get({ plain: true }) as Record<string, any>
+
+  // Resolve campaign name from LeadCampaign if not already set as a text field
+  if (plain.leadCampaignId && !plain.campaignName) {
+    const campaign = await LeadCampaign.findByPk(plain.leadCampaignId, { attributes: ['name'], raw: true }) as { name: string } | null
+    if (campaign) plain.campaignName = campaign.name
+  }
+
+  return serializeRow(plain)
 }
 
 export async function getDispoPropertyBuyerMatches(propertyId: string) {

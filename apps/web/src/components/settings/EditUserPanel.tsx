@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { ChevronRight, CheckCircle, ArrowLeft, Loader2, Plane, Trash2, Plus, Minus } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { BasicDetailsModal } from './BasicDetailsModal'
 import { RoleAssignmentPanel } from './RoleAssignmentPanel'
 import { RoleAssignmentWindow, type RoleConfig } from './RoleAssignmentWindow'
@@ -376,7 +377,7 @@ export function EditUserPanel({ user: initialUser, roles, campaigns, leadCampaig
                       </div>
                       <div>
                         <span className="text-gray-500">Phone:</span>{' '}
-                        <span className="text-gray-800">{user.phone || 'Not set'}</span>
+                        <span className="text-gray-800">{formatPhone(user.phone) || 'Not set'}</span>
                       </div>
                     </div>
                     <button

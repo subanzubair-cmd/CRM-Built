@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { AdditionalContact } from '@crm/database'
 import { z } from 'zod'
+import { normalizePhone } from '@/lib/phone'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -48,7 +49,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   if (data.relationship !== undefined) contact.relationship = data.relationship
   if (data.firstName !== undefined) contact.firstName = data.firstName
   if (data.lastName !== undefined) contact.lastName = data.lastName ?? null
-  if (data.phone !== undefined) contact.phone = data.phone ?? null
+  if (data.phone !== undefined) contact.phone = normalizePhone(data.phone) ?? null
   if (data.email !== undefined) contact.email = data.email ?? null
   if (data.notes !== undefined) contact.notes = data.notes ?? null
 

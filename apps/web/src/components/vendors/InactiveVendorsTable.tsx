@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { RotateCcw, Trash2, AlertTriangle, UserX } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatPhone } from '@/lib/phone'
 
 interface InactiveVendorRow {
   id: string
@@ -127,7 +128,7 @@ export function InactiveVendorsTable({ rows, total }: Props) {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <p className="text-gray-500">{row.contact.phone ?? '—'}</p>
+                    <p className="text-gray-500">{formatPhone(row.contact.phone) || '—'}</p>
                     <p className="text-[11px] text-gray-400">
                       {row.contact.email ?? ''}
                     </p>

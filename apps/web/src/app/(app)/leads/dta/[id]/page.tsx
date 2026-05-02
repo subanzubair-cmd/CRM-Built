@@ -12,7 +12,6 @@ import { PropertyEditPanel } from '@/components/leads/PropertyEditPanel'
 import { AutoFillButton } from '@/components/leads/AutoFillButton'
 import { PropertyAppointmentsCard } from '@/components/leads/PropertyAppointmentsCard'
 import { DocumentsCard } from '@/components/leads/DocumentsCard'
-import { TagsCard } from '@/components/leads/TagsCard'
 import { AssociatedPropertiesCard } from '@/components/leads/AssociatedPropertiesCard'
 import { QuickActionBar } from '@/components/leads/QuickActionBar'
 import { PromoteButton } from '@/components/pipelines/PromoteButton'
@@ -158,7 +157,6 @@ export default async function LeadDtaDetailPage({ params }: PageProps) {
             deadAt={(lead as any).deadAt ?? null}
           />
         ) : null}
-        <TagsCard propertyId={lead.id} initialTags={lead.tags} />
         <AssociatedLeadsCard propertyId={lead.id} />
         <AssociatedPropertiesCard propertyId={lead.id} />
         <details className="group">
@@ -231,6 +229,7 @@ export default async function LeadDtaDetailPage({ params }: PageProps) {
           leadNumber={lead.leadNumber}
           prevLeadId={adjacentIds.prevId}
           nextLeadId={adjacentIds.nextId}
+          tags={(lead as any).tags ?? []}
         />
         <QuickActionBar
           propertyId={lead.id}

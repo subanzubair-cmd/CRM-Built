@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Phone, PhoneOff, X, Minimize2, Maximize2, ExternalLink } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { toast } from 'sonner'
 import { useCallCleanup } from '@/components/calls/useCallCleanup'
 import { useTelnyxCall } from '@/components/calls/useTelnyxCall'
@@ -373,7 +374,7 @@ export function InboundCallNotification() {
             <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
             <Phone className="w-4 h-4" />
             <span className="text-sm font-semibold">{caller.name}</span>
-            <span className="text-sm text-blue-100">{caller.phone}</span>
+            <span className="text-sm text-blue-100">{formatPhone(caller.phone)}</span>
             <span className="text-xs bg-blue-700 px-2 py-0.5 rounded">Incoming Call</span>
           </div>
           <div className="flex items-center gap-2">
@@ -436,7 +437,7 @@ export function InboundCallNotification() {
         {/* Caller identification */}
         <div className="text-center mb-3">
           <p className="text-lg font-semibold text-gray-900">{caller.name}</p>
-          <p className="text-sm text-gray-600 font-mono">{caller.phone}</p>
+          <p className="text-sm text-gray-600 font-mono">{formatPhone(caller.phone)}</p>
           {caller.type && (
             <span className="inline-block mt-1 text-[10px] uppercase tracking-wide bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
               {caller.type}

@@ -36,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   // Auto-qualify the lead when appointment outcome is KEPT
   if (parsed.data.outcome === 'KEPT' && appointment.propertyId) {
     await Property.update(
-      { isQualified: true },
+      { isQualified: true } as any,
       { where: { id: appointment.propertyId } },
     )
   }

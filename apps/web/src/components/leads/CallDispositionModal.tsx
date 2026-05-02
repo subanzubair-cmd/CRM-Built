@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { formatPhone } from '@/lib/phone'
 import {
   Phone,
   X,
@@ -442,7 +443,7 @@ export function CallDispositionModal({
               {propertyAddress}
             </h2>
             <p className="text-xs text-blue-200 mt-0.5">
-              {selectedContact.name} &middot; {selectedContact.phone}
+              {selectedContact.name} &middot; {formatPhone(selectedContact.phone)}
             </p>
           </div>
           <button
@@ -476,7 +477,7 @@ export function CallDispositionModal({
               >
                 {contacts.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} &middot; ({c.phone})
+                    {c.name} &middot; ({formatPhone(c.phone)})
                   </option>
                 ))}
               </select>

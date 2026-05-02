@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { X, Wrench, Check } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 
 const VENDOR_CATEGORIES = [
   'Inspector',
@@ -107,7 +108,7 @@ export function MoveToVendorModal({ propertyId, contacts, onClose }: Props) {
                           {c.firstName} {c.lastName ?? ''}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {[c.phone, c.email].filter(Boolean).join(' | ') || 'No contact info'}
+                          {[formatPhone(c.phone), c.email].filter(Boolean).join(' | ') || 'No contact info'}
                         </p>
                       </div>
                       {selectedContactId === c.id && (

@@ -8,6 +8,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { formatPhone } from '@/lib/phone'
 import { formatDistanceToNow } from 'date-fns'
 import { RotateCcw, Trash2, AlertTriangle, UserX } from 'lucide-react'
 import { toast } from 'sonner'
@@ -119,7 +120,7 @@ export function InactiveBuyersTable({ rows, total }: Props) {
                     <p className="font-medium text-gray-600">{name}</p>
                   </td>
                   <td className="px-4 py-3">
-                    <p className="text-gray-500">{row.contact.phone ?? '—'}</p>
+                    <p className="text-gray-500">{formatPhone(row.contact.phone) || '—'}</p>
                     <p className="text-[11px] text-gray-400">
                       {row.contact.email ?? ''}
                     </p>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { X, Search } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { useRouter } from 'next/navigation'
 import { DuplicateWarningModal } from '@/components/ui/DuplicateWarningModal'
 import { toast } from 'sonner'
@@ -210,7 +211,7 @@ export function AddBuyerToDispoModal({ propertyId, stage, onClose }: Props) {
                       <span className="text-sm font-medium text-gray-900">{bName}</span>
                       {' '}
                       {buyer.contact.email && <span className="text-xs text-gray-500">{buyer.contact.email}</span>}
-                      {buyer.contact.phone && <span className="text-xs text-gray-500 ml-1">{buyer.contact.phone}</span>}
+                      {buyer.contact.phone && <span className="text-xs text-gray-500 ml-1">{formatPhone(buyer.contact.phone)}</span>}
                     </button>
                   )
                 })}

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Phone, Mail, MessageSquare, Pencil, Trash2, Plus } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { AddContactModal } from './AddContactModal'
 import { EditContactModal } from './EditContactModal'
 import { CallPanel } from './CallPanel'
@@ -118,7 +119,7 @@ export function ContactsCard({ propertyId, propertyAddress, contacts }: Props) {
                       {pc.contact.phone && (
                         <span className="flex items-center gap-1 text-xs text-gray-600">
                           <Phone className="w-3 h-3" />
-                          {pc.contact.phone}
+                          {formatPhone(pc.contact.phone)}
                           {pc.contact.doNotCall && (
                             <span className="px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 leading-none">DNC</span>
                           )}

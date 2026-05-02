@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { DollarSign, Phone } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 
 interface BuyerOfferRow {
   id: string
@@ -250,7 +251,7 @@ export function BuyerMatchCard({ propertyId, buyerMatches, offers }: Props) {
                     <p className="text-sm font-medium text-gray-900">
                       {match.buyer.contact.firstName} {match.buyer.contact.lastName}
                     </p>
-                    <p className="text-[11px] text-gray-400">{match.buyer.contact.phone ?? 'No phone'}</p>
+                    <p className="text-[11px] text-gray-400">{formatPhone(match.buyer.contact.phone) || 'No phone'}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {existingOffer ? (

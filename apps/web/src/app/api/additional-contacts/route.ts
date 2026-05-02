@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { AdditionalContact } from '@crm/database'
 import { z } from 'zod'
+import { normalizePhone } from '@/lib/phone'
 
 /**
  * GET  /api/additional-contacts?subjectType=BUYER|VENDOR&subjectId=...
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
     relationship: parsed.data.relationship,
     firstName: parsed.data.firstName,
     lastName: parsed.data.lastName ?? null,
-    phone: parsed.data.phone ?? null,
+    phone: normalizePhone(parsed.data.phone) ?? null,
     email: parsed.data.email ?? null,
     notes: parsed.data.notes ?? null,
   })

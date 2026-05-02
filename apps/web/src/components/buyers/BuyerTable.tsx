@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { UserCheck, UserX, Send, Mail, Pencil, Trash2 } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { toast } from 'sonner'
 import { BuyerBlastModal } from './BuyerBlastModal'
 import { BulkSmsModal } from './BulkSmsModal'
@@ -189,7 +190,7 @@ export function BuyerTable({ rows, total }: Props) {
                   </p>
                 </td>
                 <td className="px-4 py-3">
-                  <p className="text-gray-600">{row.contact.phone ?? '—'}</p>
+                  <p className="text-gray-600">{formatPhone(row.contact.phone) || '—'}</p>
                   <p className="text-[11px] text-gray-400">{row.contact.email ?? ''}</p>
                 </td>
                 <td className="px-4 py-3">

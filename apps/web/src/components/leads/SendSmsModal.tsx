@@ -3,6 +3,7 @@
 import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { X, Loader2, Clock, Paperclip, ChevronDown, Check } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { toast } from 'sonner'
 
 /* ── Types ── */
@@ -282,7 +283,7 @@ export function SendSmsModal({
               >
                 {contacts.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} {c.type ? `\u00B7 ${c.type}` : ''} ({c.phone})
+                    {c.name} {c.type ? `\u00B7 ${c.type}` : ''} ({formatPhone(c.phone)})
                   </option>
                 ))}
               </select>

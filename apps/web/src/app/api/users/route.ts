@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto'
 import { User, Role, literal, Op } from '@crm/database'
 import { getUserList } from '@/lib/settings'
 import { requirePermission } from '@/lib/auth-utils'
+import { normalizePhone } from '@/lib/phone'
 
 const InviteUserSchema = z.object({
   name: z.string().min(1),
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
   const user = await User.create({
     name: parsed.data.name,
     email: parsed.data.email,
-    phone: parsed.data.phone ?? null,
+    phone: normalizePhone(parsed.data.phone) ?? null,
     roleId: parsed.data.roleId,
     permissions: parsed.data.permissions ?? [],
     marketIds: parsed.data.marketIds ?? [],

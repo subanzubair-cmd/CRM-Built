@@ -1,5 +1,7 @@
 'use client'
 
+import { formatPhone } from '@/lib/phone'
+
 /**
  * Client wrapper for the bulk SMS blast detail page. Handles:
  *   - Status filter pill row (All / Queued / Sent / Delivered / Failed / Skipped)
@@ -203,7 +205,7 @@ export function BlastDetailClient({
                   <tr key={r.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 text-gray-900">{r.name}</td>
                     <td className="px-4 py-3 text-gray-600 font-mono text-[12px]">
-                      {r.phone}
+                      {formatPhone(r.phone)}
                     </td>
                     <td className="px-4 py-3">
                       <span

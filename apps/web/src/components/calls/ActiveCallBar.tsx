@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Phone, PhoneOff, ExternalLink } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { useTabTitleIndicator } from '@/components/calls/useTabTitleIndicator'
 import { useCrossTabCallSync } from '@/components/calls/useCrossTabCallSync'
 
@@ -223,7 +224,7 @@ export function ActiveCallBar() {
           <div className="w-2 h-2 bg-white rounded-full animate-pulse flex-shrink-0" />
           <Phone className="w-4 h-4 flex-shrink-0" />
           <span className="font-semibold truncate">On Call · {caller.name}</span>
-          <span className="text-emerald-100 font-mono text-xs truncate">{caller.phone}</span>
+          <span className="text-emerald-100 font-mono text-xs truncate">{formatPhone(caller.phone)}</span>
           {leadHref && (
             <Link
               href={leadHref}

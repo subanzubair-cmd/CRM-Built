@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Phone, X, Minimize2, Maximize2, ChevronDown } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { CallOutcomeModal } from './CallOutcomeModal'
 
 interface TwilioNumber {
@@ -111,7 +112,7 @@ export function InitiateCallModal({ propertyId, contacts, propertyAddress, onClo
             <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
             <Phone className="w-4 h-4" />
             <span className="text-sm font-semibold">{selectedContact?.name ?? 'Call'}</span>
-            <span className="text-sm text-green-100">{selectedContact?.phone}</span>
+            <span className="text-sm text-green-100">{formatPhone(selectedContact?.phone)}</span>
             <span className="text-sm font-mono bg-green-700 px-2 py-0.5 rounded">{fmtTime(elapsed)}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -194,7 +195,7 @@ export function InitiateCallModal({ propertyId, contacts, propertyAddress, onClo
                 {selectedContact?.name ?? 'Contact'}
               </p>
               <p className={`text-sm font-mono ${selectedContact?.phone ? 'text-gray-900' : 'text-red-500'}`}>
-                {selectedContact?.phone ?? 'No phone number on file'}
+                {formatPhone(selectedContact?.phone) || 'No phone number on file'}
               </p>
             </div>
           )}
@@ -204,7 +205,7 @@ export function InitiateCallModal({ propertyId, contacts, propertyAddress, onClo
             <>
               <div>
                 <p className="text-xs text-gray-500 mb-0.5">{selectedContact?.name ?? 'Contact'}</p>
-                <p className="text-sm font-mono text-gray-900">{selectedContact?.phone}</p>
+                <p className="text-sm font-mono text-gray-900">{formatPhone(selectedContact?.phone)}</p>
               </div>
               <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700 flex items-center gap-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse flex-shrink-0" />

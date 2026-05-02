@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Pencil, UserPlus } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { AddUserPanel } from './AddUserPanel'
 import { EditUserPanel } from './EditUserPanel'
 
@@ -141,7 +142,7 @@ export function UsersList({ users, roles, campaigns, leadCampaigns, currentUserI
                       {u.email}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {u.phone || '-'}
+                      {formatPhone(u.phone) || '-'}
                     </td>
                     <td className="px-4 py-3">
                       <button

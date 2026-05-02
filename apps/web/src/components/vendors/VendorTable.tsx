@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { Send, UserCheck, UserX, Pencil, Trash2 } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { toast } from 'sonner'
 import { BulkSmsModal } from '@/components/buyers/BulkSmsModal'
 import { BuyerFilterBar } from '@/components/buyers/BuyerFilterBar'
@@ -183,7 +184,7 @@ export function VendorTable({ rows, total }: Props) {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <p className="text-gray-600">{row.contact.phone ?? '—'}</p>
+                    <p className="text-gray-600">{formatPhone(row.contact.phone) || '—'}</p>
                     <p className="text-[11px] text-gray-400">{row.contact.email ?? ''}</p>
                   </td>
                   <td className="px-4 py-3">

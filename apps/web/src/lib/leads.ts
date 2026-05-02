@@ -4,6 +4,7 @@ import {
   Contact,
   User,
   Market,
+  LeadCampaign,
   LeadType,
   LeadStatus,
   Op,
@@ -291,7 +292,14 @@ export async function getLeadById(id: string) {
   })
 
   if (!row) return null
-  return serializeRow(row.get({ plain: true }) as Record<string, any>)
+  const plain = row.get({ plain: true }) as Record<string, any>
+
+  if (plain.leadCampaignId && !plain.campaignName) {
+    const campaign = await LeadCampaign.findByPk(plain.leadCampaignId, { attributes: ['name'], raw: true }) as { name: string } | null
+    if (campaign) plain.campaignName = campaign.name
+  }
+
+  return serializeRow(plain)
 }
 
 // ─── Adjacent Leads (prev/next within pipeline) ──────────────────────────────

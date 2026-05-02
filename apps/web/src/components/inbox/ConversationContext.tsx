@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { formatPhone } from '@/lib/phone'
 import {
   ExternalLink,
   User,
@@ -98,7 +99,7 @@ export function ConversationContext({ context, loading }: Props) {
             {primaryContact.phone && (
               <div className="flex items-center gap-2 text-xs text-gray-600">
                 <Phone className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                <span className="truncate">{primaryContact.phone}</span>
+                <span className="truncate">{formatPhone(primaryContact.phone)}</span>
               </div>
             )}
             {primaryContact.email && (

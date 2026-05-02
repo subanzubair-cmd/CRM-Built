@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { Phone, Mic, MicOff, PhoneOff, RefreshCw } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 
 interface ActiveCall {
   id: string
@@ -161,7 +162,7 @@ export function ActiveCallsPanel() {
                   <td className="px-4 py-3 text-gray-900 font-medium">
                     {call.agent?.name ?? '—'}
                     {call.agent?.phone && (
-                      <span className="block text-xs text-gray-400 font-mono">{call.agent.phone}</span>
+                      <span className="block text-xs text-gray-400 font-mono">{formatPhone(call.agent.phone)}</span>
                     )}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-700">

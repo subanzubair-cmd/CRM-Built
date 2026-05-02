@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Search, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatPhone } from '@/lib/phone'
 
 interface BuyerInfo {
   id: string
@@ -176,7 +177,7 @@ export function SoldDetailsModal({ propertyId, onConfirm, onCancel }: Props) {
                         <div>
                           <p className="text-sm font-medium text-green-800">{buyer.name}</p>
                           <p className="text-[11px] text-green-600">
-                            {[buyer.phone, buyer.email].filter(Boolean).join(' | ')}
+                            {[formatPhone(buyer.phone), buyer.email].filter(Boolean).join(' | ')}
                           </p>
                         </div>
                         <button onClick={() => removeBuyer(idx)} className="p-1 text-green-600 hover:text-red-600">

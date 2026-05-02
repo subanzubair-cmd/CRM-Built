@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { Pagination } from '@/components/ui/Pagination'
 import { formatElapsed, activityColorClass } from '@/lib/format-elapsed'
+import { formatPhone } from '@/lib/phone'
 
 interface PipelineRow {
   id: string
@@ -136,7 +137,7 @@ export function PipelineTable({ rows, total, basePath, page, pageSize, stageLabe
                   {primary ? (
                     <div>
                       <p className="text-gray-800">{[primary.firstName, primary.lastName].filter(Boolean).join(' ')}</p>
-                      <p className="text-[11px] text-gray-400">{primary.phone ?? '—'}</p>
+                      <p className="text-[11px] text-gray-400">{formatPhone(primary.phone) || '—'}</p>
                     </div>
                   ) : <span className="text-gray-300">—</span>}
                 </td>
