@@ -6,7 +6,7 @@ import {
   Flame, Phone, MessageSquare, Mail, ChevronDown,
   ChevronLeft, ChevronRight, Tag, MoreHorizontal,
   Pencil, Trash2, Zap, GitMerge, Users, X, Wrench, FileText, ArrowRight,
-  Home, Copy, Check, Search, MapPin, Eye, BadgeCheck, CircleHelp,
+  Home, Copy, Check, MapPin, BadgeCheck, CircleHelp,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { UnderContractModal, type UnderContractData } from './UnderContractModal'
@@ -17,6 +17,8 @@ import { MoveToBuyerModal } from './MoveToBuyerModal'
 import { MoveToVendorModal } from './MoveToVendorModal'
 import { DeadLeadReasonModal } from './DeadLeadReasonModal'
 import { ActivateDripModal } from '@/components/campaigns/ActivateDripModal'
+import { DripStatusBadge } from './DripStatusBadge'
+import { formatPhone } from '@/lib/phone'
 
 /* ── Pipeline stages + move-out statuses ── */
 const DTS_PIPELINE_STAGES = [
@@ -124,6 +126,7 @@ interface Props {
   inventoryStage?: string | null
   prevLeadId?: string | null
   nextLeadId?: string | null
+  tags?: string[]
 }
 
 export function LeadDetailHeader({
@@ -137,6 +140,7 @@ export function LeadDetailHeader({
   viewContext = 'leads',
   tmStage, inventoryStage,
   prevLeadId, nextLeadId,
+  tags: initialTags = [],
 }: Props) {
   const router = useRouter()
   const navBasePath =
@@ -184,13 +188,23 @@ export function LeadDetailHeader({
   const [showActions, setShowActions] = useState(false)
   const [showTagInput, setShowTagInput] = useState(false)
   const [tagValue, setTagValue] = useState('')
+  const [availableTags, setAvailableTags] = useState<Array<{ id: string; name: string; color: string }>>([])
+
+  useEffect(() => {
+    const category = pipeline === 'dts' ? 'dts' : 'dta'
+    fetch(`/api/tags?category=${category}`)
+      .then((r) => r.json())
+      .then((d) => setAvailableTags(d.data ?? []))
+      .catch(() => {})
+  }, [pipeline])
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [showBuyerModal, setShowBuyerModal] = useState(false)
   const [showVendorModal, setShowVendorModal] = useState(false)
   const [showActivateDrip, setShowActivateDrip] = useState(false)
   const [copied, setCopied] = useState(false)
   const [showMap, setShowMap] = useState(false)
-  const [showStreetView, setShowStreetView] = useState(false)
+
+
   const actionsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -274,17 +288,48 @@ export function LeadDetailHeader({
     patch({ exitStrategy: value || null })
   }
 
+  const [liveTags, setLiveTags] = useState<string[]>(initialTags)
+
+  async function ensureTagInCatalog(name: string) {
+    // If the typed name isn't already in the catalog, create it so it shows in Settings.
+    if (availableTags.some((t) => t.name === name)) return
+    const category = pipeline === 'dts' ? 'dts' : 'dta'
+    try {
+      const res = await fetch('/api/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category, color: '#3B82F6' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setAvailableTags((prev) => [...prev, data.data])
+      }
+    } catch { /* non-fatal — tag still gets added to property */ }
+  }
+
   async function addTag() {
     const tag = tagValue.trim().toLowerCase().replace(/\s+/g, '-')
-    if (!tag) return
-    const res = await fetch(`/api/leads/${id}`)
-    if (res.ok) {
-      const data = await res.json()
-      const currentTags: string[] = data.data?.tags ?? []
-      if (!currentTags.includes(tag)) await patch({ tags: [...currentTags, tag] })
-    }
+    if (!tag || liveTags.includes(tag)) { setTagValue(''); setShowTagInput(false); return }
+    await ensureTagInCatalog(tag)
+    const next = [...liveTags, tag]
+    setLiveTags(next)
+    await patch({ tags: next })
     setTagValue('')
     setShowTagInput(false)
+  }
+
+  async function removeTag(tag: string) {
+    const next = liveTags.filter((t) => t !== tag)
+    setLiveTags(next)
+    await patch({ tags: next })
+  }
+
+  async function addTagByName(name: string) {
+    if (liveTags.includes(name)) return
+    const next = [...liveTags, name]
+    setLiveTags(next)
+    setShowTagInput(false)
+    await patch({ tags: next })
   }
 
   async function deleteLead() {
@@ -456,45 +501,18 @@ export function LeadDetailHeader({
         </div>
       )}
 
-      {/* ── Street View Popup ── */}
-      {showStreetView && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => setShowStreetView(false)}
-        >
-          <div className="absolute inset-0 bg-black/50" />
-          <div
-            className="relative w-[52vw] h-[48vh] bg-white rounded-xl shadow-2xl overflow-hidden flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
-              <span className="text-sm font-medium text-gray-800 truncate pr-4">Street View — {fullAddress}</span>
-              <button onClick={() => setShowStreetView(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400 flex-shrink-0">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <iframe
-              src={`https://maps.google.com/maps?q=${encodedAddress}&layer=c&output=embed`}
-              width="100%"
-              height="100%"
-              style={{ border: 0 }}
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
-          </div>
-        </div>
-      )}
+      {/* Street View — opens in Google Maps new tab (embedding requires paid API key) */}
 
       <div className="bg-white">
 
         {/* ═══ ROW 1 — Address bar + Nav ═══ */}
-        <div className="flex items-center justify-between py-2 gap-2">
+        <div className="flex items-center justify-between py-3 gap-2">
 
           {/* Left: pipeline badge + breadcrumb + address + action icons */}
-          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
             {/* Pipeline badge */}
-            <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wide flex-shrink-0 ${pipeline === 'dts' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
-              <Home className="w-3 h-3" />
+            <span className={`flex items-center gap-1 px-2 py-0.5 rounded text-sm font-bold uppercase tracking-wide flex-shrink-0 ${pipeline === 'dts' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
+              <Home className="w-4 h-4" />
               {pipeline.toUpperCase()}
             </span>
 
@@ -502,7 +520,7 @@ export function LeadDetailHeader({
               {breadcrumbLabel}
             </a>
             <span className="text-sm text-gray-400 flex-shrink-0">&gt;</span>
-            <span className="text-sm font-semibold text-gray-900 truncate">{fullAddress}</span>
+            <span className="text-base font-semibold text-gray-900 truncate">{fullAddress}</span>
 
             {/* Copy address */}
             <button
@@ -510,79 +528,87 @@ export function LeadDetailHeader({
               title="Copy address"
               className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
-
-            {/* Hot toggle */}
-            <button
-              onClick={() => patch({ isHot: !isHot })}
-              title={isHot ? 'Mark not hot' : 'Mark hot'}
-              className="flex-shrink-0 p-1 rounded hover:bg-orange-50 transition-colors"
-            >
-              {isHot
-                ? <Flame className="w-3.5 h-3.5 text-orange-500" />
-                : <Flame className="w-3.5 h-3.5 text-gray-300 hover:text-orange-400" />}
+              {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
             </button>
 
             {/* Qualified toggle */}
             <button
               onClick={() => patch({ isQualified: !isQualified })}
               title={isQualified ? 'Qualified — click to unqualify' : 'Not qualified — click to qualify'}
-              className={`flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border transition-colors ${
+              className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
                 isQualified
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                   : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-100'
               }`}
             >
-              {isQualified ? <BadgeCheck className="w-3 h-3" /> : <CircleHelp className="w-3 h-3" />}
+              {isQualified ? <BadgeCheck className="w-3.5 h-3.5" /> : <CircleHelp className="w-3.5 h-3.5" />}
               {isQualified ? 'Qualified' : 'Not Qualified'}
             </button>
 
-            {/* Google search */}
+            {/* Hot toggle — after Qualified */}
+            <button
+              onClick={() => patch({ isHot: !isHot })}
+              title={isHot ? 'Mark not hot' : 'Mark hot'}
+              className="flex-shrink-0 p-1 rounded hover:bg-orange-50 transition-colors"
+            >
+              {isHot
+                ? <Flame className="w-4 h-4 text-orange-500" />
+                : <Flame className="w-4 h-4 text-gray-300 hover:text-orange-400" />}
+            </button>
+
+            {/* Google search — real Google G */}
             <a
               href={`https://www.google.com/search?q=${encodedAddress}`}
               target="_blank"
               rel="noopener noreferrer"
               title="Search on Google"
-              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              className="flex-shrink-0 p-1 rounded hover:bg-gray-50 transition-colors"
             >
-              <Search className="w-3.5 h-3.5" />
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
             </a>
 
-            {/* Zillow */}
+            {/* Zillow — official icon */}
             <a
               href={`https://www.zillow.com/homes/${encodedAddress}`}
               target="_blank"
               rel="noopener noreferrer"
               title="View on Zillow"
-              className="flex-shrink-0 flex items-center justify-center w-5 h-5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors text-[11px] font-extrabold"
+              className="flex-shrink-0 flex items-center justify-center w-5 h-5 rounded hover:bg-blue-50 transition-colors"
             >
-              Z
+              <svg viewBox="0 0 23.283 25.577" className="w-3.5 h-3.5" fill="none" clipRule="evenodd" fillRule="evenodd" strokeLinejoin="round" strokeMiterlimit="2">
+                <g fill="#006aff" fillRule="nonzero">
+                  <path d="m15.743 6.897c.117-.026.169.013.24.091.403.448 1.691 2.021 2.041 2.45.065.078.02.163-.032.208-2.6 2.028-5.493 4.901-7.105 6.955-.032.046-.006.046.02.039 2.808-1.209 9.405-3.14 12.376-3.679v-3.763l-11.628-9.198-11.648 9.191v4.114c3.607-2.144 11.953-5.466 15.736-6.408z"/>
+                  <path d="m6.279 22.705c-.097.052-.176.039-.254-.039l-2.171-2.587c-.058-.072-.065-.111.013-.221 1.678-2.457 5.103-6.286 7.287-7.904.039-.026.026-.059-.02-.039-2.275.741-8.742 3.523-11.134 4.875v8.787h23.277v-8.462c-3.172.539-12.675 3.367-16.998 5.59z"/>
+                </g>
+              </svg>
             </a>
 
             {/* Google Maps popup */}
             <button
               onClick={() => setShowMap(true)}
               title="View on Google Maps"
-              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              className="flex-shrink-0 p-1 rounded hover:bg-red-50 transition-colors"
             >
-              <MapPin className="w-3.5 h-3.5" />
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#EA4335"/>
+                <circle cx="12" cy="9" r="2.5" fill="white"/>
+              </svg>
             </button>
 
-            {/* Street View popup */}
-            <button
-              onClick={() => setShowStreetView(true)}
-              title="View Street View"
-              className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <Eye className="w-3.5 h-3.5" />
-            </button>
+            {/* Active drip indicator — only renders when an enrollment exists */}
+            <DripStatusBadge propertyId={id} />
+
           </div>
 
           {/* Right: saving spinner + prev/next + actions */}
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             {saving && (
-              <svg className="w-3.5 h-3.5 animate-spin text-blue-500 mr-1" fill="none" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 animate-spin text-blue-500 mr-1" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
@@ -591,25 +617,25 @@ export function LeadDetailHeader({
             <button
               onClick={() => prevLeadId && router.push(`${navBasePath}/${prevLeadId}`)}
               disabled={!prevLeadId}
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Previous"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-5 h-5" />
             </button>
             <button
               onClick={() => nextLeadId && router.push(`${navBasePath}/${nextLeadId}`)}
               disabled={!nextLeadId}
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Next"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-5 h-5" />
             </button>
 
             {/* Actions dropdown */}
             <div className="relative" ref={actionsRef}>
               <button
                 onClick={() => setShowActions(!showActions)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 text-gray-500 text-xs font-medium transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-500 text-sm font-medium transition-colors"
               >
                 <MoreHorizontal className="w-4 h-4" />
                 Actions
@@ -742,14 +768,14 @@ export function LeadDetailHeader({
         </div>
 
         {/* ═══ ROW 2 — Stage + Exit + Source info | Comm stats ═══ */}
-        <div className="flex items-center justify-between py-1.5 gap-2">
-          <div className="flex items-center gap-2 flex-wrap text-sm min-w-0">
-            <span className="bg-gray-100 text-gray-600 rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide flex-shrink-0">
+        <div className="flex items-center justify-between py-1 gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap text-xs min-w-0">
+            <span className="bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide flex-shrink-0">
               {viewContext === 'sold' ? 'SOLD' : viewContext === 'rental' ? 'RENTAL' : viewContext === 'tm' ? 'STATUS' : viewContext === 'inventory' ? 'STATUS' : 'LEAD'}
             </span>
 
             {(viewContext === 'sold' || viewContext === 'rental') ? (
-              <span className="px-3 py-1 rounded-lg text-sm font-medium bg-blue-600 text-white">
+              <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-blue-600 text-white">
                 {viewContext === 'sold' ? 'Sold' : 'Rental'}
               </span>
             ) : (
@@ -758,7 +784,7 @@ export function LeadDetailHeader({
                   value={currentValue || (viewContext === 'tm' ? 'NEW_CONTRACT' : viewContext === 'inventory' ? 'NEW_INVENTORY' : 'NEW_LEAD')}
                   onChange={(e) => handleUnifiedChange(e.target.value)}
                   disabled={saving}
-                  className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-lg pl-3 pr-7 py-1 text-sm font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
+                  className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-md pl-2 pr-6 py-0.5 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
                 >
                   <option value="" disabled className="bg-white text-gray-700">Set Stage</option>
                   {viewContext === 'tm' ? (
@@ -792,13 +818,13 @@ export function LeadDetailHeader({
                     </>
                   )}
                 </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none" />
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 text-white pointer-events-none" />
               </div>
             )}
 
-            <span className="text-xs text-gray-400 uppercase font-semibold tracking-wide flex-shrink-0">Exit</span>
+            <span className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide flex-shrink-0">Exit</span>
             {(viewContext === 'sold' || viewContext === 'rental') ? (
-              <span className="bg-blue-600 text-white rounded-lg px-3 py-1 text-sm font-medium flex-shrink-0">
+              <span className="bg-blue-600 text-white rounded-md px-2 py-0.5 text-xs font-medium flex-shrink-0">
                 {EXIT_STRATEGIES.find(s => s.value === exitStrategy)?.label ?? exitStrategy ?? 'N/A'}
               </span>
             ) : (
@@ -807,27 +833,27 @@ export function LeadDetailHeader({
                   value={exitStrategy ?? ''}
                   onChange={(e) => handleExitChange(e.target.value)}
                   disabled={saving}
-                  className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-lg pl-3 pr-7 py-1 text-sm font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
+                  className={`appearance-none bg-blue-600 text-white border border-blue-700 rounded-md pl-2 pr-6 py-0.5 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${saving ? 'opacity-70 cursor-not-allowed' : 'hover:bg-blue-700'} transition-colors`}
                 >
                   <option value="" className="bg-white text-gray-700">Select Exit</option>
                   {EXIT_STRATEGIES.map((s) => <option key={s.value} value={s.value} className="bg-white text-gray-700">{s.label}</option>)}
                 </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none" />
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 text-white pointer-events-none" />
               </div>
             )}
 
             <span className="text-gray-300 flex-shrink-0">|</span>
-            {source && <span className="text-gray-600 text-sm truncate max-w-[120px]" title={source}>{source}</span>}
+            {source && <span className="text-gray-500 text-sm truncate max-w-[120px]" title={source}>{source}</span>}
             {campaignName && (
               <>
                 <span className="text-gray-400 text-xs flex-shrink-0">&gt;</span>
-                <span className="text-gray-600 text-sm truncate max-w-[150px]" title={campaignName}>{campaignName}</span>
+                <span className="text-gray-500 text-sm truncate max-w-[150px]" title={campaignName}>{campaignName}</span>
               </>
             )}
-            {displayPhone && (
+            {defaultOutboundNumber && (
               <>
                 <span className="text-gray-400 text-xs flex-shrink-0">&gt;</span>
-                <span className="text-blue-600 text-sm font-medium flex-shrink-0">{displayPhone}</span>
+                <span className="text-blue-600 text-sm font-medium flex-shrink-0">{formatPhone(defaultOutboundNumber)}</span>
               </>
             )}
           </div>
@@ -847,25 +873,55 @@ export function LeadDetailHeader({
         </div>
 
         {/* ═══ ROW 3 — Tags ═══ */}
-        <div className="flex items-center gap-2 py-1.5 border-t border-gray-100">
+        <div className="flex items-center gap-1.5 py-1 border-t border-gray-100 flex-wrap">
+          {liveTags.map((tag) => {
+            const def = availableTags.find((t) => t.name === tag)
+            return (
+              <span
+                key={tag}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide flex-shrink-0"
+                style={def ? { backgroundColor: `${def.color}18`, color: def.color, border: `1px solid ${def.color}40` } : { backgroundColor: '#f3f4f6', color: '#374151' }}
+              >
+                {tag}
+                <button onClick={() => removeTag(tag)} className="opacity-60 hover:opacity-100 transition-opacity">
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            )
+          })}
           {showTagInput ? (
-            <div className="flex items-center gap-1">
+            <div className="relative flex-shrink-0">
               <input
                 value={tagValue}
                 onChange={(e) => setTagValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') addTag(); if (e.key === 'Escape') setShowTagInput(false) }}
-                placeholder="Tag name..."
+                placeholder="Search tags..."
                 autoFocus
-                className="border border-blue-300 rounded-lg px-2 py-1 text-xs w-32 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                className="border border-blue-300 rounded-md px-2 py-0.5 text-[11px] w-32 focus:outline-none focus:ring-1 focus:ring-blue-400"
               />
-              <button onClick={addTag} className="text-blue-600 hover:text-blue-800 text-xs font-medium transition-colors">Add</button>
-              <button onClick={() => setShowTagInput(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X className="w-3 h-3" />
+              {availableTags.filter((t) => !liveTags.includes(t.name) && (!tagValue || t.name.toLowerCase().includes(tagValue.toLowerCase()))).length > 0 && (
+                <div className="absolute left-0 top-full mt-0.5 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 min-w-[140px] max-h-40 overflow-y-auto">
+                  {availableTags
+                    .filter((t) => !liveTags.includes(t.name) && (!tagValue || t.name.toLowerCase().includes(tagValue.toLowerCase())))
+                    .map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => { setTagValue(''); addTagByName(t.name) }}
+                        className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-gray-50 flex items-center gap-1.5"
+                      >
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
+                        {t.name}
+                      </button>
+                    ))}
+                </div>
+              )}
+              <button onClick={() => setShowTagInput(false)} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                <X className="w-2.5 h-2.5" />
               </button>
             </div>
           ) : (
-            <button onClick={() => setShowTagInput(true)} className="flex items-center gap-1 text-blue-600 text-sm hover:text-blue-800 transition-colors">
-              <Tag className="w-3.5 h-3.5" />
+            <button onClick={() => setShowTagInput(true)} className="flex items-center gap-1 text-blue-600 text-xs hover:text-blue-800 transition-colors flex-shrink-0">
+              <Tag className="w-3 h-3" />
               <span>+Add Tag</span>
             </button>
           )}
