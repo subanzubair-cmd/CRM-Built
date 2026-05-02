@@ -5,7 +5,7 @@ import { BuyerMatch } from '@crm/database'
 import { z } from 'zod'
 
 const PatchSchema = z.object({
-  dispoStage: z.enum(['POTENTIAL_BUYER', 'COLD_BUYER', 'WARM_BUYER', 'HOT_BUYER', 'DISPO_OFFER_RECEIVED', 'SOLD']).optional(),
+  dispoStage: z.string().min(1).max(100).optional(),
   dispoOfferAmount: z.number().positive().optional(),
 })
 

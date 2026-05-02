@@ -9,6 +9,7 @@ import { BuyerNotesCard } from '@/components/buyers/BuyerNotesCard'
 import { BuyerHeaderActions } from '@/components/buyers/BuyerHeaderActions'
 import Link from 'next/link'
 import { ChevronLeft, MapPin, User as UserIcon, MegaphoneIcon } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { AdditionalContactsCard } from '@/components/ui/AdditionalContactsCard'
 import { BuyerContactSection } from '@/components/buyers/BuyerContactSection'
 
@@ -127,7 +128,7 @@ export default async function BuyerDetailPage({ params }: Params) {
               </span>
             </div>
             <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-              {buyer.contact.phone && <span>{buyer.contact.phone}</span>}
+              {buyer.contact.phone && <span>{formatPhone(buyer.contact.phone)}</span>}
               {buyer.contact.email && <span>{buyer.contact.email}</span>}
             </div>
             {buyer.notes && <p className="text-sm text-gray-500 mt-2 max-w-lg">{buyer.notes}</p>}
@@ -227,6 +228,7 @@ export default async function BuyerDetailPage({ params }: Params) {
                 </div>
                 <BuyerContactSection
                   buyerId={buyer.id}
+                  buyerName={fullName}
                   phones={phones}
                   emails={emails}
                 />

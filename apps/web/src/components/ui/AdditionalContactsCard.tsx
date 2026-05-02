@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { formatPhone } from '@/lib/phone'
 import {
   UserPlus,
   Pencil,
@@ -289,7 +290,7 @@ export function AdditionalContactsCard({ subjectType, subjectId }: Props) {
                     <div className="flex items-center gap-2 mt-1 text-sm">
                       <Phone className="w-3 h-3 text-gray-400 flex-shrink-0" />
                       <span className="text-gray-700 font-mono text-[13px]">
-                        {c.phone}
+                        {formatPhone(c.phone)}
                       </span>
                       <PhoneActions number={c.phone} />
                     </div>

@@ -1,9 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { ExternalLink, Users, DollarSign, MapPin } from 'lucide-react'
-import { BuyerKanban, type BuyerMatchRow } from './BuyerKanban'
+import { ExternalLink, Users, DollarSign, MapPin, Upload } from 'lucide-react'
+import { BuyerKanban, type BuyerMatchRow, type DispoStageItem } from './BuyerKanban'
+import { ImportBuyersToDispoModal } from './ImportBuyersToDispoModal'
 
 export interface DispoProperty {
   id: string
@@ -22,6 +24,7 @@ interface Props {
   properties: DispoProperty[]
   selectedPropertyId: string | null
   buyerMatches: BuyerMatchRow[]
+  initialStages?: DispoStageItem[]
 }
 
 const EXIT_LABELS: Record<string, string> = {
@@ -42,9 +45,10 @@ const EXIT_LABELS: Record<string, string> = {
   TURNKEY:               'Turnkey',
 }
 
-export function DispoWorkspace({ properties, selectedPropertyId, buyerMatches }: Props) {
+export function DispoWorkspace({ properties, selectedPropertyId, buyerMatches, initialStages }: Props) {
   const router = useRouter()
   const pathname = usePathname()
+  const [showImport, setShowImport] = useState(false)
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId) ?? null
 
@@ -130,18 +134,35 @@ export function DispoWorkspace({ properties, selectedPropertyId, buyerMatches }:
                   {[selectedProperty.city, selectedProperty.state, selectedProperty.zip].filter(Boolean).join(', ')} · Buyer Pipeline
                 </p>
               </div>
-              <Link
-                href={`/dispo/${selectedProperty.id}`}
-                className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg px-3 py-1.5 transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                Full record
-              </Link>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowImport(true)}
+                  className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Import CSV
+                </button>
+                <Link
+                  href={`/dispo/${selectedProperty.id}`}
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Full record
+                </Link>
+              </div>
             </div>
+
+            {showImport && (
+              <ImportBuyersToDispoModal
+                propertyId={selectedProperty.id}
+                stages={(initialStages ?? []).map((s) => ({ key: s.key, label: s.label }))}
+                onClose={() => setShowImport(false)}
+              />
+            )}
 
             {/* Kanban board */}
             <div className="flex-1 overflow-auto p-4">
-              <BuyerKanban propertyId={selectedProperty.id} initialMatches={buyerMatches} />
+              <BuyerKanban propertyId={selectedProperty.id} initialMatches={buyerMatches} initialStages={initialStages} />
             </div>
           </>
         ) : (

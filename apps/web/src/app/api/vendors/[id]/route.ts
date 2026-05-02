@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { requirePermission } from '@/lib/auth-utils'
-import { Vendor, Contact } from '@crm/database'
+import { Vendor, Contact, Buyer, BulkSmsBlastRecipient, sequelize } from '@crm/database'
 import { z } from 'zod'
 import { findDuplicateContact } from '@/lib/dedupe'
+import { normalizePhone } from '@/lib/phone'
 
 /**
  * Vendor PATCH accepts both Vendor-level fields (isActive, category,
@@ -55,7 +56,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!vendor) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // Duplicate check when phone or email is being changed.
-  const patchPhones = data.phone ? [data.phone] : []
+  const normalizedPhone = data.phone !== undefined ? (normalizePhone(data.phone) ?? data.phone) : undefined
+  const patchPhones = normalizedPhone ? [normalizedPhone] : []
   const patchEmails = data.email ? [data.email] : []
   if (patchPhones.length > 0 || patchEmails.length > 0) {
     const dup = await findDuplicateContact({
@@ -90,7 +92,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const contactPatch: Record<string, unknown> = {}
   if (data.firstName !== undefined) contactPatch.firstName = data.firstName
   if (data.lastName !== undefined) contactPatch.lastName = data.lastName
-  if (data.phone !== undefined) contactPatch.phone = data.phone
+  if (data.phone !== undefined) contactPatch.phone = normalizedPhone ?? null
   if (data.email !== undefined) contactPatch.email = data.email
   if (data.howHeardAbout !== undefined) contactPatch.howHeardAbout = data.howHeardAbout
   if (Object.keys(contactPatch).length > 0) {
@@ -110,32 +112,50 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   if (!permanent) {
     // Soft delete — mark inactive, preserve data.
-    const vendor = await Vendor.findByPk(id)
-    if (!vendor) return NextResponse.json({ success: true })
-    await vendor.update({ isActive: false })
-    return NextResponse.json({ success: true })
+    try {
+      const vendor = await Vendor.findByPk(id)
+      if (!vendor) return NextResponse.json({ success: true })
+      await vendor.update({ isActive: false })
+      return NextResponse.json({ success: true })
+    } catch (err: any) {
+      console.error('[DELETE /api/vendors/:id] soft-delete failed:', err)
+      return NextResponse.json(
+        { error: err?.message ?? 'Failed to deactivate vendor' },
+        { status: 500 },
+      )
+    }
   }
 
   // Hard delete — permanently remove the vendor and orphaned contact.
-  const { Buyer, BulkSmsBlastRecipient, sequelize } = await import('@crm/database')
+  try {
+    const vendor = await Vendor.findByPk(id)
+    if (!vendor) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    const contactId = vendor.contactId as string
 
-  const vendor = await Vendor.findByPk(id)
-  if (!vendor) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  const contactId = vendor.contactId as string
+    await sequelize.transaction(async (t: any) => {
+      // Remove any bulk-SMS blast recipient rows for this vendor.
+      await BulkSmsBlastRecipient.destroy({
+        where: { subjectType: 'VENDOR', subjectId: id },
+        transaction: t,
+      } as any)
 
-  await sequelize.transaction(async (t: any) => {
-    await BulkSmsBlastRecipient.destroy({ where: { subjectId: id }, transaction: t } as any)
+      // Delete the Vendor row itself.
+      await Vendor.destroy({ where: { id }, transaction: t } as any)
 
-    // Delete the Vendor row itself.
-    await Vendor.destroy({ where: { id }, transaction: t } as any)
+      // Delete the Contact only if it isn't linked to another entity.
+      const otherBuyer = await Buyer.findOne({ where: { contactId } as any, transaction: t })
+      const otherVendor = await Vendor.findOne({ where: { contactId } as any, transaction: t })
+      if (!otherBuyer && !otherVendor) {
+        await Contact.destroy({ where: { id: contactId }, transaction: t } as any)
+      }
+    })
 
-    // Delete the Contact only if it isn't linked to another entity.
-    const otherBuyer = await Buyer.findOne({ where: { contactId } as any, transaction: t })
-    const otherVendor = await Vendor.findOne({ where: { contactId } as any, transaction: t })
-    if (!otherBuyer && !otherVendor) {
-      await Contact.destroy({ where: { id: contactId }, transaction: t } as any)
-    }
-  })
-
-  return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true })
+  } catch (err: any) {
+    console.error('[DELETE /api/vendors/:id] hard-delete failed:', err)
+    return NextResponse.json(
+      { error: err?.message ?? 'Failed to delete vendor' },
+      { status: 500 },
+    )
+  }
 }

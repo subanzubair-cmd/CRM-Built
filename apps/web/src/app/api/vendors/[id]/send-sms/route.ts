@@ -9,6 +9,9 @@ import { getActiveCommConfig } from '@/lib/comm-provider'
 const Schema = z.object({
   phone: z.string().min(1),
   body: z.string().min(1).max(1600),
+  from: z.string().optional(),
+  scheduledAt: z.string().optional(),
+  timezone: z.string().optional(),
 })
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -22,8 +25,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = Schema.safeParse(rawBody)
   if (!parsed.success) return NextResponse.json({ error: 'Invalid request.' }, { status: 422 })
 
+  const { phone, body, from, scheduledAt, timezone } = parsed.data
+
   const commConfig = await getActiveCommConfig()
-  const fromNumber = commConfig?.defaultNumber
+  const fromNumber = from || commConfig?.defaultNumber
   if (!fromNumber) {
     return NextResponse.json(
       { error: 'No outbound number configured in Settings → SMS & Phone.' },
@@ -31,20 +36,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     )
   }
 
-  try {
-    await sendSms({ from: fromNumber, to: parsed.data.phone, text: parsed.data.body })
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'SMS send failed' },
-      { status: 502 },
-    )
+  if (!scheduledAt) {
+    try {
+      await sendSms({ from: fromNumber, to: phone, text: body })
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : 'SMS send failed' },
+        { status: 502 },
+      )
+    }
   }
 
   await ActivityLog.create({
     userId,
-    action: 'SMS_SENT',
-    detail: { vendorId: id, to: parsed.data.phone, body: parsed.data.body },
-  })
+    action: scheduledAt ? 'SMS_SCHEDULED' : 'SMS_SENT',
+    detail: {
+      vendorId: id,
+      to: phone,
+      from: fromNumber,
+      body,
+      ...(scheduledAt ? { scheduledAt, timezone } : {}),
+    },
+  } as any)
 
   return NextResponse.json({ ok: true })
 }

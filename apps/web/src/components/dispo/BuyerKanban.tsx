@@ -23,6 +23,7 @@ import { GripVertical, Plus, Phone, MessageSquare, X, StickyNote, ExternalLink, 
 import { toast } from 'sonner'
 import Link from 'next/link'
 import { InitiateCallModal } from '@/components/leads/InitiateCallModal'
+import { formatPhone } from '@/lib/phone'
 import { SendSmsModal } from '@/components/leads/SendSmsModal'
 import { AddBuyerToDispoModal } from './AddBuyerToDispoModal'
 
@@ -48,13 +49,15 @@ export interface BuyerMatchRow {
 interface Props {
   propertyId: string
   initialMatches: BuyerMatchRow[]
+  initialStages?: DispoStageItem[]
 }
 
-type DispoStageItem = { key: string; label: string; color: string; dot: string }
+export type DispoStageItem = { key: string; label: string; color: string; dot: string }
 
-const SYSTEM_STAGE_COLORS: Record<string, { color: string; dot: string }> = {
+export const SYSTEM_STAGE_COLORS: Record<string, { color: string; dot: string }> = {
   POTENTIAL_BUYER:      { color: 'bg-gray-50 border-gray-200',    dot: 'bg-gray-400' },
   COLD_BUYER:           { color: 'bg-blue-50 border-blue-200',    dot: 'bg-blue-400' },
+  INQUIRIES:            { color: 'bg-sky-50 border-sky-200',      dot: 'bg-sky-400' },
   WARM_BUYER:           { color: 'bg-amber-50 border-amber-200',  dot: 'bg-amber-400' },
   HOT_BUYER:            { color: 'bg-red-50 border-red-200',      dot: 'bg-red-500' },
   DISPO_OFFER_RECEIVED: { color: 'bg-green-50 border-green-200',  dot: 'bg-green-500' },
@@ -70,12 +73,10 @@ const EXTRA_COLORS = [
 ]
 
 const FALLBACK_STAGES: DispoStageItem[] = [
-  { key: 'POTENTIAL_BUYER',      label: 'Potential', ...SYSTEM_STAGE_COLORS.POTENTIAL_BUYER },
-  { key: 'COLD_BUYER',           label: 'Cold',      ...SYSTEM_STAGE_COLORS.COLD_BUYER },
-  { key: 'WARM_BUYER',           label: 'Warm',      ...SYSTEM_STAGE_COLORS.WARM_BUYER },
-  { key: 'HOT_BUYER',            label: 'Hot 🔥',    ...SYSTEM_STAGE_COLORS.HOT_BUYER },
-  { key: 'DISPO_OFFER_RECEIVED', label: 'Offer',     ...SYSTEM_STAGE_COLORS.DISPO_OFFER_RECEIVED },
-  { key: 'SOLD',                 label: 'Sold',      ...SYSTEM_STAGE_COLORS.SOLD },
+  { key: 'COLD_BUYER',           label: 'Cold Buyers',  ...SYSTEM_STAGE_COLORS.COLD_BUYER },
+  { key: 'INQUIRIES',            label: 'Inquiries',    ...SYSTEM_STAGE_COLORS.INQUIRIES },
+  { key: 'DISPO_OFFER_RECEIVED', label: 'Offers Received', ...SYSTEM_STAGE_COLORS.DISPO_OFFER_RECEIVED },
+  { key: 'SOLD',                 label: 'Sold',         ...SYSTEM_STAGE_COLORS.SOLD },
 ]
 
 function buildDispoStages(raw: Array<{ stageCode: string; label: string; isActive: boolean; sortOrder: number }>): DispoStageItem[] {
@@ -194,7 +195,7 @@ function BuyerDetailModal({
         <div className="space-y-1 mb-4">
           {match.buyer.contact.phone && (
             <p className="text-sm text-gray-600 flex items-center gap-2">
-              <Phone className="w-3.5 h-3.5 text-gray-400" /> {match.buyer.contact.phone}
+              <Phone className="w-3.5 h-3.5 text-gray-400" /> {formatPhone(match.buyer.contact.phone)}
             </p>
           )}
           {match.buyer.contact.email && (
@@ -395,7 +396,7 @@ function BuyerCard({
             </div>
             <p className="text-[10px] text-gray-400">Matched {date}</p>
             {match.buyer.contact.phone && (
-              <p className="text-[10px] text-gray-500 mt-0.5">{match.buyer.contact.phone}</p>
+              <p className="text-[10px] text-gray-500 mt-0.5">{formatPhone(match.buyer.contact.phone)}</p>
             )}
             {match.dispoOfferAmount != null && match.dispoOfferAmount > 0 && (
               <p className="text-[10px] font-semibold text-green-600 mt-0.5">${match.dispoOfferAmount.toLocaleString()}</p>
@@ -532,13 +533,13 @@ function OfferAmountPrompt({ buyerName, propertyId, buyerId, matchId, targetStag
 }
 
 /* ── Main Kanban Component ───────────────────────────────────────────────── */
-export function BuyerKanban({ propertyId, initialMatches }: Props) {
+export function BuyerKanban({ propertyId, initialMatches, initialStages }: Props) {
   const router = useRouter()
   const [matches, setMatches] = useState<BuyerMatchRow[]>(initialMatches)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedMatch, setSelectedMatch] = useState<BuyerMatchRow | null>(null)
   const [offerPrompt, setOfferPrompt] = useState<{ matchId: string; buyerName: string; buyerId: string; targetStage: string } | null>(null)
-  const [stages, setStages] = useState<DispoStageItem[]>(FALLBACK_STAGES)
+  const [stages, setStages] = useState<DispoStageItem[]>(initialStages ?? FALLBACK_STAGES)
 
   useEffect(() => {
     fetch('/api/pipeline-stages?pipeline=dispo')

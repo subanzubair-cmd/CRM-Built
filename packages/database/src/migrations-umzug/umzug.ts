@@ -84,6 +84,14 @@ import {
   up as pipelineStageConfigUp,
   down as pipelineStageConfigDown,
 } from './20260501070000-create-pipeline-stage-config'
+import {
+  up as leadQualificationUp,
+  down as leadQualificationDown,
+} from './20260501080000-add-lead-qualification'
+import {
+  up as dispoStagesSeedUp,
+  down as dispoStagesSeedDown,
+} from './20260502000000-seed-dispo-stages'
 
 // List Umzug migrations explicitly. When a new migration is added, append
 // its module here. We deliberately do NOT use a glob — explicit is safer
@@ -214,6 +222,20 @@ const migrations = [
       pipelineStageConfigUp({ name: '20260501070000-create-pipeline-stage-config', context }),
     down: ({ context }: { context: any }) =>
       pipelineStageConfigDown({ name: '20260501070000-create-pipeline-stage-config', context }),
+  },
+  {
+    name: '20260501080000-add-lead-qualification',
+    up: ({ context }: { context: any }) =>
+      leadQualificationUp({ name: '20260501080000-add-lead-qualification', context }),
+    down: ({ context }: { context: any }) =>
+      leadQualificationDown({ name: '20260501080000-add-lead-qualification', context }),
+  },
+  {
+    name: '20260502000000-seed-dispo-stages',
+    up: ({ context }: { context: any }) =>
+      dispoStagesSeedUp({ name: '20260502000000-seed-dispo-stages', context }),
+    down: ({ context }: { context: any }) =>
+      dispoStagesSeedDown({ name: '20260502000000-seed-dispo-stages', context }),
   },
 ]
 

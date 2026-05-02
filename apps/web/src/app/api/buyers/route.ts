@@ -3,6 +3,7 @@ import { auth } from '@/auth'
 import { Buyer, Contact, Op, literal, sequelize } from '@crm/database'
 import { getMarketScope } from '@/lib/auth-utils'
 import { z } from 'zod'
+import { normalizePhone } from '@/lib/phone'
 
 /**
  * `phones` / `emails` arrays match the Contact model's new multi-value
@@ -119,8 +120,8 @@ export async function POST(req: NextRequest) {
   // is rejected as a duplicate even if the matching phone lives at
   // phones[1] of an existing row.
   const allPhones = [
-    ...data.phones.map((p) => p.number).filter(Boolean),
-    ...(data.phone ? [data.phone] : []),
+    ...data.phones.map((p) => normalizePhone(p.number)).filter(Boolean) as string[],
+    ...(data.phone ? [normalizePhone(data.phone)].filter(Boolean) as string[] : []),
   ]
   const allEmails = [
     ...data.emails.map((e) => e.email).filter(Boolean),
@@ -185,7 +186,7 @@ export async function POST(req: NextRequest) {
     lastName: data.lastName,
     email: primaryEmail,
     phone: primaryPhone,
-    phones: data.phones,
+    phones: data.phones.map((p) => ({ ...p, number: normalizePhone(p.number) ?? p.number })),
     emails: data.emails,
     mailingAddress: data.mailingAddress,
     howHeardAbout: data.howHeardAbout,

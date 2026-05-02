@@ -7,7 +7,7 @@ import { requirePermission } from '@/lib/auth-utils'
 const CreateTagSchema = z.object({
   name: z.string().min(1).max(64).trim(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6'),
-  category: z.enum(['lead', 'buyer', 'task']).default('lead'),
+  category: z.enum(['dts', 'dta', 'buyer', 'vendor', 'lead', 'task']).default('dts'),
 })
 
 export async function GET(req: NextRequest) {

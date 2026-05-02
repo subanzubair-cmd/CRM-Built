@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Tag, Plus, Loader2, X, Pencil, Check } from 'lucide-react'
+import { Tag, Plus, Loader2, X, Pencil, Check, GitMerge } from 'lucide-react'
 
 const TAG_TABS = [
-  { key: 'lead', label: 'Lead Tags' },
+  { key: 'dts', label: 'DTS Tags' },
+  { key: 'dta', label: 'DTA Tags' },
   { key: 'buyer', label: 'Buyer Tags' },
-  { key: 'task', label: 'Task Tags' },
+  { key: 'vendor', label: 'Vendor Tags' },
 ] as const
 
 type TagTab = (typeof TAG_TABS)[number]['key']
@@ -29,8 +30,111 @@ interface TagRecord {
   updatedAt: string
 }
 
+// ---------------------------------------------------------------------------
+// Merge Modal
+// ---------------------------------------------------------------------------
+
+interface MergeModalProps {
+  sourceTag: TagRecord
+  otherTags: TagRecord[]
+  onConfirm: (targetTagId: string) => Promise<void>
+  onClose: () => void
+}
+
+function MergeModal({ sourceTag, otherTags, onConfirm, onClose }: MergeModalProps) {
+  const [targetTagId, setTargetTagId] = useState<string>(otherTags[0]?.id ?? '')
+  const [merging, setMerging] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleConfirm() {
+    if (!targetTagId) return
+    setMerging(true)
+    setError(null)
+    try {
+      await onConfirm(targetTagId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Merge failed')
+    } finally {
+      setMerging(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-gray-800">Merge Tag</h3>
+          <button
+            onClick={onClose}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <p className="text-xs text-gray-500 mb-4">
+          All properties tagged{' '}
+          <span className="font-semibold" style={{ color: sourceTag.color }}>
+            {sourceTag.name}
+          </span>{' '}
+          will be re-tagged with the target. The source tag will then be deleted.
+        </p>
+
+        {otherTags.length === 0 ? (
+          <p className="text-xs text-red-500">
+            No other tags in this category to merge into.
+          </p>
+        ) : (
+          <>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Merge into
+            </label>
+            <select
+              value={targetTagId}
+              onChange={(e) => setTargetTagId(e.target.value)}
+              className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 mb-4"
+            >
+              {otherTags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+
+            {error && (
+              <p className="text-xs text-red-600 mb-3">{error}</p>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={onClose}
+                disabled={merging}
+                className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirm}
+                disabled={merging || !targetTagId}
+                className="text-sm px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {merging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitMerge className="w-3.5 h-3.5" />}
+                Merge
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// TagsPanel
+// ---------------------------------------------------------------------------
+
 export function TagsPanel() {
-  const [activeTab, setActiveTab] = useState<TagTab>('lead')
+  const [activeTab, setActiveTab] = useState<TagTab>('dts')
   const [tags, setTags] = useState<TagRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -48,6 +152,9 @@ export function TagsPanel() {
 
   // Delete confirm
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Merge modal
+  const [mergingTag, setMergingTag] = useState<TagRecord | null>(null)
 
   const fetchTags = useCallback(async () => {
     try {
@@ -135,6 +242,21 @@ export function TagsPanel() {
     }
   }
 
+  async function handleMerge(sourceTagId: string, targetTagId: string) {
+    const res = await fetch(`/api/tags/${sourceTagId}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetTagId }),
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      throw new Error((json as { error?: string }).error ?? 'Failed to merge tags')
+    }
+    // Remove the source tag from local state
+    setTags((prev) => prev.filter((t) => t.id !== sourceTagId))
+    setMergingTag(null)
+  }
+
   function startEdit(tag: TagRecord) {
     setEditingId(tag.id)
     setEditName(tag.name)
@@ -143,6 +265,16 @@ export function TagsPanel() {
 
   return (
     <div className="max-w-4xl space-y-4">
+      {/* Merge modal */}
+      {mergingTag && (
+        <MergeModal
+          sourceTag={mergingTag}
+          otherTags={filteredTags.filter((t) => t.id !== mergingTag.id)}
+          onConfirm={(targetTagId) => handleMerge(mergingTag.id, targetTagId)}
+          onClose={() => setMergingTag(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div>
@@ -183,6 +315,7 @@ export function TagsPanel() {
                 setActiveTab(t.key)
                 setEditingId(null)
                 setDeletingId(null)
+                setMergingTag(null)
               }}
               className={`px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 activeTab === t.key
@@ -360,6 +493,19 @@ export function TagsPanel() {
                   />
                   {tag.name}
                   <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+                  {/* Merge button — only shown when there are other tags in this category */}
+                  {filteredTags.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setMergingTag(tag)
+                      }}
+                      title={`Merge "${tag.name}" into another tag`}
+                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-500 transition-all"
+                    >
+                      <GitMerge className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -375,7 +521,7 @@ export function TagsPanel() {
           </div>
           <p className="text-xs text-gray-400 mt-4">
             {filteredTags.length} tag{filteredTags.length !== 1 ? 's' : ''} in this category. Click
-            a tag to edit, or hover and click X to delete.
+            a tag to edit, hover for merge/delete actions.
           </p>
         </div>
       )}

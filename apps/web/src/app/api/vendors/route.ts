@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { Contact, Vendor, sequelize, Op, literal } from '@crm/database'
+import { Contact, Vendor, Op, literal } from '@crm/database'
 import { z } from 'zod'
+import { normalizePhone } from '@/lib/phone'
 
 function escapeLiteral(v: string): string {
   return `'${String(v).replace(/'/g, "''")}'`
@@ -9,13 +10,13 @@ function escapeLiteral(v: string): string {
 
 const CreateVendorSchema = z.object({
   firstName: z.string().min(1).max(100),
-  lastName: z.string().max(100).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().max(20).optional(),
+  lastName: z.string().max(100).nullish(),
+  email: z.string().email().nullish(),
+  phone: z.string().max(20).nullish(),
   category: z.string().min(1).max(100),
   markets: z.array(z.string()).default([]),
-  howHeardAbout: z.string().max(200).nullable().optional(),
-  notes: z.string().max(2000).optional(),
+  howHeardAbout: z.string().max(200).nullish(),
+  notes: z.string().max(2000).nullish(),
 })
 
 export async function POST(req: NextRequest) {
@@ -26,7 +27,8 @@ export async function POST(req: NextRequest) {
   const parsed = CreateVendorSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
-  const { firstName, lastName, email, phone, category, markets, howHeardAbout, notes } = parsed.data
+  const { firstName, lastName, email, category, markets, howHeardAbout, notes } = parsed.data
+  const phone = normalizePhone(parsed.data.phone) ?? parsed.data.phone
 
   // REQUIRED: at least one of phone OR email. Vendors aren't worth
   // recording without a contact channel.
@@ -68,37 +70,50 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Two-step create wrapped in a transaction (Prisma's nested-create idiom
-  // doesn't translate directly to Sequelize). Contact first, then Vendor
-  // referencing its id.
-  const vendor = await sequelize.transaction(async (t) => {
-    const contact = await Contact.create(
-      {
-        type: 'VENDOR',
-        firstName,
-        lastName: lastName ?? null,
-        email: email ?? null,
-        phone: phone ?? null,
-        phones: phone ? [{ label: 'Mobile', number: phone }] : [],
-        emails: email ? [{ label: 'Primary', email }] : [],
-        howHeardAbout: howHeardAbout ?? null,
-      },
-      { transaction: t },
+  // Two-step create: Contact first, then Vendor referencing its id.
+  // Matches the buyer creation pattern (sequential, no explicit transaction
+  // wrapper) which is proven to work reliably with this Sequelize setup.
+  let contact: InstanceType<typeof Contact>
+  let vendorRow: InstanceType<typeof Vendor>
+  try {
+    contact = await Contact.create({
+      type: 'VENDOR',
+      firstName,
+      lastName: lastName ?? null,
+      email: email ?? null,
+      phone: phone ?? null,
+      phones: phone ? [{ label: 'Mobile', number: phone }] : [],
+      emails: email ? [{ label: 'Primary', email }] : [],
+      howHeardAbout: howHeardAbout ?? null,
+    } as any)
+  } catch (err: any) {
+    console.error('[POST /api/vendors] Contact.create failed:', err?.message)
+    return NextResponse.json(
+      { error: err?.original?.message ?? err?.message ?? 'Failed to create contact' },
+      { status: 500 },
     )
-    return Vendor.create(
-      {
-        contactId: contact.id,
-        category,
-        markets,
-        notes: notes ?? null,
-      },
-      { transaction: t },
+  }
+
+  try {
+    vendorRow = await Vendor.create({
+      contactId: contact.id,
+      category,
+      markets,
+      notes: notes ?? null,
+    } as any)
+  } catch (err: any) {
+    // Rollback the contact if vendor creation fails so we don't leave orphans.
+    await contact.destroy().catch(() => {})
+    console.error('[POST /api/vendors] Vendor.create failed:', err?.message)
+    return NextResponse.json(
+      { error: err?.original?.message ?? err?.message ?? 'Failed to create vendor' },
+      { status: 500 },
     )
-  })
+  }
 
   // Re-read with eager-loaded contact so the response matches the previous
   // Prisma `include: { contact: true }` shape.
-  const fresh = await Vendor.findByPk(vendor.id, {
+  const fresh = await Vendor.findByPk(vendorRow.id, {
     include: [{ model: Contact, as: 'contact' }],
   })
   return NextResponse.json({ success: true, data: fresh }, { status: 201 })

@@ -4,6 +4,7 @@ import { getVendorById } from '@/lib/vendors'
 import { VendorHeaderActions } from '@/components/vendors/VendorHeaderActions'
 import Link from 'next/link'
 import { ChevronLeft, Phone, Mail, User as UserIcon } from 'lucide-react'
+import { formatPhone } from '@/lib/phone'
 import { AdditionalContactsCard } from '@/components/ui/AdditionalContactsCard'
 import { VendorContactSection } from '@/components/vendors/VendorContactSection'
 import { VendorNotesCard } from '@/components/vendors/VendorNotesCard'
@@ -83,7 +84,7 @@ export default async function VendorDetailPage({ params }: Params) {
               {vendor.contact.phone && (
                 <span className="flex items-center gap-1">
                   <Phone className="w-3.5 h-3.5" />
-                  {vendor.contact.phone}
+                  {formatPhone(vendor.contact.phone)}
                 </span>
               )}
               {vendor.contact.email && (
@@ -173,6 +174,7 @@ export default async function VendorDetailPage({ params }: Params) {
                 </div>
                 <VendorContactSection
                   vendorId={vendor.id}
+                  vendorName={fullName}
                   phones={phones}
                   emails={emails}
                 />

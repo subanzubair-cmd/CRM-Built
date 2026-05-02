@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { BuyerMatch, Buyer, Contact } from '@crm/database'
+import { BuyerMatch, Buyer, Contact, PipelineStageConfig } from '@crm/database'
 import { z } from 'zod'
 
 type Params = { params: Promise<{ id: string }> }
@@ -51,7 +51,28 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const existing = await BuyerMatch.findOne({ where: { propertyId, buyerId }, raw: true })
   if (existing) {
-    return NextResponse.json({ error: 'This buyer is already matched to this property' }, { status: 409 })
+    // Look up buyer name + current stage label for a helpful error message
+    const [buyerRow, stageRow] = await Promise.all([
+      Buyer.findByPk(buyerId, {
+        include: [{ model: Contact, as: 'contact', attributes: ['firstName', 'lastName'] }],
+      }),
+      PipelineStageConfig.findOne({
+        where: { pipeline: 'dispo', stageCode: (existing as any).dispoStage },
+        raw: true,
+      }),
+    ])
+    const buyerName = buyerRow
+      ? [
+          (buyerRow as any).contact?.firstName ?? '',
+          (buyerRow as any).contact?.lastName ?? '',
+        ].join(' ').trim() || 'This buyer'
+      : 'This buyer'
+    const stageLabel = (stageRow as any)?.label ?? (existing as any).dispoStage ?? 'another stage'
+
+    return NextResponse.json(
+      { error: `${buyerName} is already in the "${stageLabel}" stage`, currentStage: (existing as any).dispoStage },
+      { status: 409 },
+    )
   }
 
   const match = await BuyerMatch.create({

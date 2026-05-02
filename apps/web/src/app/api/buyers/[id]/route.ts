@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth-utils'
 import { Buyer, Contact } from '@crm/database'
 import { z } from 'zod'
 import { findDuplicateContact } from '@/lib/dedupe'
+import { normalizePhone } from '@/lib/phone'
 
 /**
  * Update a buyer + its underlying contact. Accepts the full new
@@ -77,9 +78,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   // Duplicate check when phones/emails are being changed. Collect all
   // phone/email values from the patch and compare against other contacts.
-  const patchPhones = data.phones?.map((p) => p.number).filter(Boolean) ?? []
+  const patchPhones = data.phones?.map((p) => normalizePhone(p.number)).filter(Boolean) as string[] ?? []
   const patchEmails = data.emails?.map((e) => e.email).filter(Boolean) ?? []
-  if (data.phone) patchPhones.push(data.phone)
+  if (data.phone) { const n = normalizePhone(data.phone); if (n) patchPhones.push(n) }
   if (data.email) patchEmails.push(data.email)
   if (patchPhones.length > 0 || patchEmails.length > 0) {
     const dup = await findDuplicateContact({
@@ -127,10 +128,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (data.howHeardAbout !== undefined) contactPatch.howHeardAbout = data.howHeardAbout
   if (data.assignedUserId !== undefined) contactPatch.assignedUserId = data.assignedUserId
   if (data.phones !== undefined) {
-    contactPatch.phones = data.phones
-    contactPatch.phone = data.phones[0]?.number ?? null
+    contactPatch.phones = data.phones.map((p) => ({ ...p, number: normalizePhone(p.number) ?? p.number }))
+    contactPatch.phone = normalizePhone(data.phones[0]?.number) ?? null
   } else if (data.phone !== undefined) {
-    contactPatch.phone = data.phone
+    contactPatch.phone = normalizePhone(data.phone) ?? data.phone
   }
   if (data.emails !== undefined) {
     contactPatch.emails = data.emails
