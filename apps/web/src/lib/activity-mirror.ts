@@ -192,6 +192,12 @@ export interface MirrorOpts {
  *
  * Always fire-and-forget — wrap the call in `void` at the call site.
  * Failures are logged but never propagate to the caller.
+ *
+ * ⚠️  RECURSION SAFETY: This function is safe from infinite recursion TODAY
+ * because it is only called from route handlers and webhook handlers, NOT
+ * from a Sequelize model hook or afterCreate listener. If you ever add an
+ * ActivityLog.afterCreate hook, do NOT call mirrorCommunicationToRelatedLeads
+ * from inside it — mirrored logs would trigger re-entry immediately.
  */
 export async function mirrorCommunicationToRelatedLeads(opts: MirrorOpts): Promise<void> {
   try {

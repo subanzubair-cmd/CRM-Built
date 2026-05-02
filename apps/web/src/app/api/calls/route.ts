@@ -187,7 +187,9 @@ export async function GET(_req: NextRequest) {
         {
           where: {
             status: 'INITIATING',
-            startedAt: { [Op.lt]: new Date(now - 2 * 60 * 1000) },
+            // startedAt is NULL for all new calls until they're answered —
+            // use createdAt (always set at INSERT) so stuck rows are caught.
+            createdAt: { [Op.lt]: new Date(now - 2 * 60 * 1000) },
           },
         },
       ).catch((err) => console.warn('[GET /api/calls] sweep INITIATING failed:', err)),
@@ -196,7 +198,9 @@ export async function GET(_req: NextRequest) {
         {
           where: {
             status: 'RINGING',
-            startedAt: { [Op.lt]: new Date(now - 5 * 60 * 1000) },
+            // Inbound RINGING calls have startedAt=NULL until answered —
+            // use createdAt so they're included in the sweep.
+            createdAt: { [Op.lt]: new Date(now - 5 * 60 * 1000) },
           },
         },
       ).catch((err) => console.warn('[GET /api/calls] sweep RINGING failed:', err)),
@@ -205,7 +209,9 @@ export async function GET(_req: NextRequest) {
         {
           where: {
             status: 'ACTIVE',
-            startedAt: { [Op.lt]: new Date(now - 4 * 60 * 60 * 1000) },
+            // Use createdAt for consistency; startedAt should be set for ACTIVE
+            // calls but createdAt is guaranteed non-null.
+            createdAt: { [Op.lt]: new Date(now - 4 * 60 * 60 * 1000) },
           },
         },
       ).catch((err) => console.warn('[GET /api/calls] sweep ACTIVE failed:', err)),
@@ -220,16 +226,17 @@ export async function GET(_req: NextRequest) {
         // converts stuck rows so they're already excluded by the time
         // we read.
         status: { [Op.in]: ['INITIATING', 'RINGING', 'ACTIVE'] },
-        // Hard ceiling: a healthy call shouldn't be older than 30 min;
-        // anything older hides from the panel even if the sweep above
-        // missed (e.g., DB error rolled back).
-        startedAt: { [Op.gte]: new Date(now - 30 * 60 * 1000) },
+        // Use createdAt (always set at INSERT) rather than startedAt.
+        // Inbound RINGING calls have startedAt=NULL until answered, so
+        // the old startedAt >= cutoff filter excluded them entirely —
+        // NULL >= <timestamp> is UNKNOWN in SQL → row dropped.
+        createdAt: { [Op.gte]: new Date(now - 30 * 60 * 1000) },
       },
       include: [
         { model: User, as: 'agent', attributes: ['id', 'name', 'phone'] },
         { model: Property, as: 'property', attributes: ['id', 'streetAddress', 'city', 'propertyStatus'] },
       ],
-      order: [['startedAt', 'DESC']],
+      order: [['createdAt', 'DESC']],
     })
 
     return NextResponse.json({ data: calls.map((c) => c.get({ plain: true })) })

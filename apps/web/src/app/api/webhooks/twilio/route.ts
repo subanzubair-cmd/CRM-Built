@@ -11,6 +11,8 @@ import {
   ActivityLog,
   ActiveCall,
   Op,
+  literal,
+  sequelize,
 } from '@crm/database'
 import { phoneVariants } from '@crm/shared'
 
@@ -66,13 +68,19 @@ async function findAllLeadsForPhone(
   phone: string,
 ): Promise<Array<{ propertyId: string; contactId: string }>> {
   const variants = phoneVariants(phone)
+  const digits = phone.replace(/\D/g, '')
+  const last10 = digits.slice(-10)
   const rows = await Contact.findAll({
     where: {
       [Op.or]: [
         { phone: { [Op.in]: variants } },
         { phone2: { [Op.in]: variants } },
+        // Also catch contacts where phone lives only in the JSONB phones[] array
+        ...(last10.length >= 7
+          ? [literal(`"Contact"."phones"::text ILIKE ${sequelize.escape(`%${last10}%`)}`)]
+          : []),
       ],
-    },
+    } as any,
     attributes: ['id'],
     include: [
       {
@@ -124,18 +132,27 @@ async function persistTwilioInboundSms(args: {
     await conversation.update({ isRead: false, lastMessageAt: new Date() })
   }
 
-  await Message.create({
-    propertyId,
-    conversationId: conversation.id,
-    ...(contactId ? { contactId } : {}),
-    ...(leadCampaignId ? { leadCampaignId } : {}),
-    channel: 'SMS',
-    direction: 'INBOUND',
-    body,
-    from,
-    to,
-    twilioSid: messageSid,
-  } as any)
+  try {
+    await Message.create({
+      propertyId,
+      conversationId: conversation.id,
+      ...(contactId ? { contactId } : {}),
+      ...(leadCampaignId ? { leadCampaignId } : {}),
+      channel: 'SMS',
+      direction: 'INBOUND',
+      body,
+      from,
+      to,
+      twilioSid: messageSid,
+    } as any)
+  } catch (err) {
+    console.error(
+      `[webhook/twilio sms] Message.create FAILED for property=${propertyId} from=${from}:`,
+      err,
+    )
+    // Continue — still log the ActivityLog so the SMS shows up in the
+    // activity feed even if the Message row couldn't be inserted.
+  }
 
   try {
     await ActivityLog.create({
@@ -239,8 +256,14 @@ async function handleCallEvent(params: Record<string, string>) {
           }) as any
           leadCampaignId = lc?.id ?? null
         }
+        const callerVariants = phoneVariants(From)
         const contactRow = await Contact.findOne({
-          where: { [Op.or]: [{ phone: From }, { phone2: From }] },
+          where: {
+            [Op.or]: [
+              { phone: { [Op.in]: callerVariants } },
+              { phone2: { [Op.in]: callerVariants } },
+            ],
+          },
           include: [
             {
               model: PropertyContact,

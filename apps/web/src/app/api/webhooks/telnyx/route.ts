@@ -400,7 +400,7 @@ async function findAllLeadsForPhone(
         { phone2: { [Op.in]: variants } },
         // Also catch contacts where phone lives only in the JSONB phones[] array
         ...(last10.length >= 7
-          ? [literal(`"Contact"."phones"::text ILIKE '%${last10}%'`)]
+          ? [literal(`"Contact"."phones"::text ILIKE ${sequelize.escape(`%${last10}%`)}`)]
           : []),
       ],
     } as any,
@@ -460,18 +460,27 @@ async function persistInboundSms(args: {
     await conversation.update({ isRead: false, lastMessageAt: new Date() })
   }
 
-  await Message.create({
-    propertyId,
-    conversationId: conversation.id,
-    ...(contactId ? { contactId } : {}),
-    ...(leadCampaignId ? { leadCampaignId } : {}),
-    channel: 'SMS',
-    direction: 'INBOUND',
-    body: text,
-    from: fromPhone,
-    to: toPhone,
-    twilioSid: telnyxId,
-  } as any)
+  try {
+    await Message.create({
+      propertyId,
+      conversationId: conversation.id,
+      ...(contactId ? { contactId } : {}),
+      ...(leadCampaignId ? { leadCampaignId } : {}),
+      channel: 'SMS',
+      direction: 'INBOUND',
+      body: text,
+      from: fromPhone,
+      to: toPhone,
+      twilioSid: telnyxId,
+    } as any)
+  } catch (err) {
+    console.error(
+      `[webhook/telnyx sms] Message.create FAILED for property=${propertyId} from=${fromPhone}:`,
+      err,
+    )
+    // Continue — we still want the ActivityLog entry so the SMS shows up
+    // in the activity feed even if the Message row couldn't be inserted.
+  }
 
   try {
     await ActivityLog.create({
