@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { Phone, CheckSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatPhone } from '@/lib/phone'
+import { DripContinuationModal } from '@/components/leads/DripContinuationModal'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -279,6 +280,10 @@ export function InventoryKanbanBoard({ rows, commStats, stages: stageConfigs }: 
   const [activeRow, setActiveRow] = useState<InventoryRow | null>(null)
   const stages = buildStageItems(stageConfigs)
   const defaultStage = stages[0]?.key ?? 'NEW_INVENTORY'
+  const [dripModal, setDripModal] = useState<{
+    enrollments: any[]
+    proceed: () => Promise<void>
+  } | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -308,52 +313,92 @@ export function InventoryKanbanBoard({ rows, commStats, stages: stageConfigs }: 
     const row = localRows.find((r) => r.id === active.id)
     if (!row || row.inventoryStage === targetStage) return
 
-    // Optimistic update
-    setLocalRows((prev) =>
-      prev.map((r) => (r.id === active.id ? { ...r, inventoryStage: targetStage } : r))
-    )
-
-    try {
-      const res = await fetch(`/api/leads/${active.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inventoryStage: targetStage }),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        const msg = typeof body?.error === 'string' ? body.error : `Move failed (${res.status})`
-        throw new Error(msg)
+    const doMove = async () => {
+      // Optimistic update
+      setLocalRows((prev) =>
+        prev.map((r) => (r.id === active.id ? { ...r, inventoryStage: targetStage } : r))
+      )
+      try {
+        const res = await fetch(`/api/leads/${active.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inventoryStage: targetStage }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          const msg = typeof body?.error === 'string' ? body.error : `Move failed (${res.status})`
+          throw new Error(msg)
+        }
+      } catch (err) {
+        setLocalRows(rows)
+        toast.error(err instanceof Error ? err.message : 'Failed to move. Reverted.')
       }
-    } catch (err) {
-      setLocalRows(rows)
-      toast.error(err instanceof Error ? err.message : 'Failed to move. Reverted.')
     }
+
+    // Check for active drip enrollments before committing the move
+    try {
+      const dripRes = await fetch(`/api/properties/${active.id}/drip-status`)
+      const dripData = await dripRes.json()
+      const activeEnrollments = (dripData.data ?? []).filter((e: any) => e.isActive)
+      if (activeEnrollments.length > 0) {
+        setDripModal({ enrollments: activeEnrollments, proceed: doMove })
+        return
+      }
+    } catch {
+      // If drip check fails, silently proceed
+    }
+
+    await doMove()
   }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCorners}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="flex gap-3 items-start overflow-x-auto pb-4">
-        {stages.map((stage) => {
-          const stageRows = getRowsForStage(stage.key)
-          return (
-            <InventoryColumn
-              key={stage.key}
-              stage={stage}
-              cards={stageRows}
-              commStats={commStats}
-            />
-          )
-        })}
-      </div>
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="flex gap-3 items-start overflow-x-auto pb-4">
+          {stages.map((stage) => {
+            const stageRows = getRowsForStage(stage.key)
+            return (
+              <InventoryColumn
+                key={stage.key}
+                stage={stage}
+                cards={stageRows}
+                commStats={commStats}
+              />
+            )
+          })}
+        </div>
 
-      <DragOverlay>
-        {activeRow && <InventoryCard row={activeRow} commStats={commStats} />}
-      </DragOverlay>
-    </DndContext>
+        <DragOverlay>
+          {activeRow && <InventoryCard row={activeRow} commStats={commStats} />}
+        </DragOverlay>
+      </DndContext>
+
+      {dripModal && (
+        <DripContinuationModal
+          campaignName={dripModal.enrollments[0].campaign.name}
+          enrollmentId={dripModal.enrollments[0].id}
+          onKeepRunning={async () => {
+            await dripModal.proceed()
+            setDripModal(null)
+          }}
+          onStopDrip={async () => {
+            for (const e of dripModal.enrollments) {
+              await fetch(`/api/campaign-enrollments/${e.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'cancel' }),
+              })
+            }
+            await dripModal.proceed()
+            setDripModal(null)
+          }}
+        />
+      )}
+    </>
   )
 }

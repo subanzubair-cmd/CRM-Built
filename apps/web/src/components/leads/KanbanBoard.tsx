@@ -25,6 +25,7 @@ import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import { OfferMadeModal } from './OfferMadeModal'
 import { UnderContractModal, type UnderContractData } from './UnderContractModal'
+import { DripContinuationModal } from './DripContinuationModal'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -352,6 +353,10 @@ export function KanbanBoard({ rows, pipeline, commStats, stages: stageConfigs }:
   const stages = buildStageItems(stageConfigs)
   const [showOfferModal, setShowOfferModal] = useState<string | null>(null) // propertyId
   const [showUCModal, setShowUCModal] = useState<{ propertyId: string; initialData: UnderContractData } | null>(null)
+  const [dripModal, setDripModal] = useState<{
+    enrollments: any[]
+    proceed: () => Promise<void>
+  } | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -423,28 +428,44 @@ export function KanbanBoard({ rows, pipeline, commStats, stages: stageConfigs }:
       return
     }
 
-    // Optimistic update for all other stages
-    setLocalRows((prev) =>
-      prev.map((r) => (r.id === active.id ? { ...r, activeLeadStage: targetStage } : r))
-    )
-
-    try {
-      const res = await fetch(`/api/leads/${active.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ activeLeadStage: targetStage }),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        const msg = typeof body?.error === 'string' ? body.error : `Move failed (${res.status})`
-        throw new Error(msg)
+    const doMove = async () => {
+      // Optimistic update
+      setLocalRows((prev) =>
+        prev.map((r) => (r.id === active.id ? { ...r, activeLeadStage: targetStage } : r))
+      )
+      try {
+        const res = await fetch(`/api/leads/${active.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activeLeadStage: targetStage }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          const msg = typeof body?.error === 'string' ? body.error : `Move failed (${res.status})`
+          throw new Error(msg)
+        }
+        const stageLabel = stages.find((s) => s.key === targetStage)?.label ?? targetStage
+        toast.success(`Moved to ${stageLabel}`)
+      } catch (err) {
+        setLocalRows(rows)
+        toast.error(err instanceof Error ? err.message : 'Failed to move lead')
       }
-      const stageLabel = stages.find((s) => s.key === targetStage)?.label ?? targetStage
-      toast.success(`Moved to ${stageLabel}`)
-    } catch (err) {
-      setLocalRows(rows)
-      toast.error(err instanceof Error ? err.message : 'Failed to move lead')
     }
+
+    // Check for active drip enrollments before committing the move
+    try {
+      const dripRes = await fetch(`/api/properties/${active.id}/drip-status`)
+      const dripData = await dripRes.json()
+      const activeEnrollments = (dripData.data ?? []).filter((e: any) => e.isActive)
+      if (activeEnrollments.length > 0) {
+        setDripModal({ enrollments: activeEnrollments, proceed: doMove })
+        return
+      }
+    } catch {
+      // If drip check fails, silently proceed
+    }
+
+    await doMove()
   }
 
   return (
@@ -507,6 +528,29 @@ export function KanbanBoard({ rows, pipeline, commStats, stages: stageConfigs }:
             toast.success('Moved to Under Contract')
           }}
           onCancel={() => setShowUCModal(null)}
+        />
+      )}
+
+      {/* Drip continuation modal — shown when a stage move is initiated for a lead with active drip */}
+      {dripModal && (
+        <DripContinuationModal
+          campaignName={dripModal.enrollments[0].campaign.name}
+          enrollmentId={dripModal.enrollments[0].id}
+          onKeepRunning={async () => {
+            await dripModal.proceed()
+            setDripModal(null)
+          }}
+          onStopDrip={async () => {
+            for (const e of dripModal.enrollments) {
+              await fetch(`/api/campaign-enrollments/${e.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'cancel' }),
+              })
+            }
+            await dripModal.proceed()
+            setDripModal(null)
+          }}
         />
       )}
     </>

@@ -18,6 +18,7 @@ import { MoveToVendorModal } from './MoveToVendorModal'
 import { DeadLeadReasonModal } from './DeadLeadReasonModal'
 import { ActivateDripModal } from '@/components/campaigns/ActivateDripModal'
 import { DripStatusBadge } from './DripStatusBadge'
+import { DripContinuationModal } from './DripContinuationModal'
 import { formatPhone } from '@/lib/phone'
 
 /* ── Pipeline stages + move-out statuses ── */
@@ -202,6 +203,10 @@ export function LeadDetailHeader({
   const [showVendorModal, setShowVendorModal] = useState(false)
   const [showActivateDrip, setShowActivateDrip] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [pendingStageMove, setPendingStageMove] = useState<{
+    proceed: () => Promise<void>
+    enrollments: any[]
+  } | null>(null)
   const [showMap, setShowMap] = useState(false)
 
 
@@ -228,6 +233,22 @@ export function LeadDetailHeader({
       startTransition(() => router.refresh())
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function checkAndMaybeShowDripModal(proceed: () => Promise<void>) {
+    try {
+      const res = await fetch(`/api/properties/${id}/drip-status`)
+      const data = await res.json()
+      const active = (data.data ?? []).filter((e: any) => e.isActive)
+      if (active.length === 0) {
+        await proceed()
+        return
+      }
+      setPendingStageMove({ proceed, enrollments: active })
+    } catch {
+      // If the check fails, silently proceed with the move
+      await proceed()
     }
   }
 
@@ -258,11 +279,11 @@ export function LeadDetailHeader({
     }
 
     if (viewContext === 'tm' && tmStages.some((s) => s.value === value)) {
-      patch({ tmStage: value }); return
+      await checkAndMaybeShowDripModal(async () => { await patch({ tmStage: value }) }); return
     }
 
     if (viewContext === 'inventory' && inventoryStages.some((s) => s.value === value)) {
-      patch({ inventoryStage: value }); return
+      await checkAndMaybeShowDripModal(async () => { await patch({ inventoryStage: value }) }); return
     }
 
     const isStatus = MOVE_OUT_STATUSES.some((s) => s.value === value)
@@ -279,8 +300,10 @@ export function LeadDetailHeader({
       const reactivate = (leadStatus !== 'ACTIVE' && leadStatus !== 'LEAD') || ['DEAD', 'WARM', 'REFERRED', 'REFERRED_TO_AGENT'].includes(leadStatus)
         ? { leadStatus: 'ACTIVE', propertyStatus: 'LEAD', deadAt: null, warmAt: null, referredAt: null }
         : {}
-      await patch({ activeLeadStage: value, ...reactivate })
-      if (Object.keys(reactivate).length > 0) router.push(`/leads/${pipeline}/${id}`)
+      await checkAndMaybeShowDripModal(async () => {
+        await patch({ activeLeadStage: value, ...reactivate })
+        if (Object.keys(reactivate).length > 0) router.push(`/leads/${pipeline}/${id}`)
+      })
     }
   }
 
@@ -471,6 +494,28 @@ export function LeadDetailHeader({
         module={viewContext === 'sold' ? 'SOLD' : 'LEADS'}
         onActivated={() => router.refresh()}
       />
+
+      {pendingStageMove && (
+        <DripContinuationModal
+          campaignName={pendingStageMove.enrollments[0].campaign.name}
+          enrollmentId={pendingStageMove.enrollments[0].id}
+          onKeepRunning={async () => {
+            await pendingStageMove.proceed()
+            setPendingStageMove(null)
+          }}
+          onStopDrip={async () => {
+            for (const e of pendingStageMove.enrollments) {
+              await fetch(`/api/campaign-enrollments/${e.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'cancel' }),
+              })
+            }
+            await pendingStageMove.proceed()
+            setPendingStageMove(null)
+          }}
+        />
+      )}
 
       {/* ── Google Map Popup ── */}
       {showMap && (
