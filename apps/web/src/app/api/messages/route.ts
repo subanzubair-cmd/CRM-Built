@@ -290,6 +290,27 @@ export async function POST(req: NextRequest) {
   const mirrorEmail = channel === 'EMAIL' ? (emailTo ?? emailFrom) : null
 
   if (mirrorPhone || mirrorEmail) {
+    // Pass `message` for SMS/CALL so related leads ALSO receive a real
+    // Conversation + Message row (visible in their Comm & Notes feed),
+    // matching the inbound SMS webhook fan-out pattern. NOTE/EMAIL still
+    // get ActivityLog-only mirroring (omit `message`).
+    const mirrorMessage =
+      channel === 'SMS' || channel === 'CALL'
+        ? {
+            channel: channel as 'SMS' | 'CALL',
+            direction: direction as 'INBOUND' | 'OUTBOUND',
+            body: messageBody ?? null,
+            from: callFrom ?? smsFrom ?? null,
+            to: callTo ?? smsTo ?? null,
+            twilioSid:
+              channel === 'CALL' && activeCallId
+                ? activeCallId
+                : channel === 'SMS' && providerMessageId
+                  ? providerMessageId
+                  : null,
+          }
+        : null
+
     void mirrorCommunicationToRelatedLeads({
       originPropertyId: propertyId,
       phone: mirrorPhone,
@@ -304,6 +325,7 @@ export async function POST(req: NextRequest) {
       },
       userId,
       actorType: 'user',
+      message: mirrorMessage,
     })
   }
 

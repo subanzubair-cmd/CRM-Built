@@ -18,6 +18,8 @@ import {
   PropertyContact,
   Property,
   ActivityLog,
+  Conversation,
+  Message,
   Op,
   literal,
   sequelize,
@@ -26,6 +28,13 @@ import { phoneVariants } from '@crm/shared'
 
 interface LeadRef {
   propertyId: string
+  /**
+   * The Contact row that holds the matching phone (or email) on this lead.
+   * Needed when the mirror also creates Message rows — Message.contactId
+   * and Conversation.contactId both expect the lead-local contact, not
+   * the origin lead's contact.
+   */
+  contactId: string | null
   address: string | null
 }
 
@@ -79,6 +88,7 @@ export async function findLeadsForPhone(
 
   for (const row of rows) {
     const plain = row.get({ plain: true }) as any
+    const contactId = (plain.id as string) ?? null
     const props = (plain.properties ?? []) as Array<{
       propertyId: string
       property: { id: string; streetAddress: string | null; city: string | null; state: string | null } | null
@@ -92,7 +102,7 @@ export async function findLeadsForPhone(
       const address = p
         ? [p.streetAddress, p.city, p.state].filter(Boolean).join(', ') || null
         : null
-      out.push({ propertyId: pc.propertyId, address })
+      out.push({ propertyId: pc.propertyId, contactId, address })
     }
   }
 
@@ -147,6 +157,7 @@ export async function findLeadsForEmail(
 
   for (const row of rows) {
     const plain = row.get({ plain: true }) as any
+    const contactId = (plain.id as string) ?? null
     const contactEmail: string | null = plain.email
     const contactEmails: Array<{ label: string; email: string }> = plain.emails ?? []
 
@@ -169,7 +180,7 @@ export async function findLeadsForEmail(
       const address = p
         ? [p.streetAddress, p.city, p.state].filter(Boolean).join(', ') || null
         : null
-      out.push({ propertyId: pc.propertyId, address })
+      out.push({ propertyId: pc.propertyId, contactId, address })
     }
   }
 
@@ -184,6 +195,33 @@ export interface MirrorOpts {
   detail: Record<string, unknown>
   userId?: string | null
   actorType?: string
+  /**
+   * When provided AND `phone` matched related leads, the mirror also
+   * writes a real `Message` row (with a Conversation upsert) into each
+   * related lead — so the Comm & Notes feed renders the SMS/call thread
+   * on every lead the number is currently attached to, just like the
+   * inbound SMS fan-out does on the webhook side.
+   *
+   * Forward-only: the mirror still runs at write-time of new comms, so
+   * adding a phone to a lead never backfills past activity. Leads remain
+   * fully independent — each gets its own Message + Conversation rows.
+   *
+   * Leave undefined for pure ActivityLog mirroring (NOTE, EMAIL, or
+   * legacy callers that don't want comms-feed visibility).
+   */
+  message?: {
+    channel: 'SMS' | 'CALL'
+    direction: 'INBOUND' | 'OUTBOUND'
+    body: string | null
+    from: string | null
+    to: string | null
+    /**
+     * Provider id for cross-mirror continuity. For CALL this is the
+     * ActiveCall.id (so the recording player resolves the same audio
+     * from any mirrored lead); for SMS it's the provider message uuid.
+     */
+    twilioSid: string | null
+  } | null
 }
 
 /**
@@ -201,15 +239,20 @@ export interface MirrorOpts {
  */
 export async function mirrorCommunicationToRelatedLeads(opts: MirrorOpts): Promise<void> {
   try {
-    const { originPropertyId, phone, email, action, detail, userId, actorType = 'system' } = opts
+    const { originPropertyId, phone, email, action, detail, userId, actorType = 'system', message } = opts
 
-    // Collect all related leads, deduped by propertyId.
-    const relatedMap = new Map<string, string | null>() // propertyId → address
+    // Collect all related leads, deduped by propertyId. Track contactId so
+    // the optional Message fan-out knows which contact each lead's
+    // Conversation + Message should attach to.
+    const relatedMap = new Map<
+      string,
+      { address: string | null; contactId: string | null }
+    >()
 
     if (phone) {
       const phoneLeads = await findLeadsForPhone(phone, originPropertyId)
       for (const ref of phoneLeads) {
-        relatedMap.set(ref.propertyId, ref.address)
+        relatedMap.set(ref.propertyId, { address: ref.address, contactId: ref.contactId })
       }
     }
 
@@ -217,7 +260,7 @@ export async function mirrorCommunicationToRelatedLeads(opts: MirrorOpts): Promi
       const emailLeads = await findLeadsForEmail(email, originPropertyId)
       for (const ref of emailLeads) {
         if (!relatedMap.has(ref.propertyId)) {
-          relatedMap.set(ref.propertyId, ref.address)
+          relatedMap.set(ref.propertyId, { address: ref.address, contactId: ref.contactId })
         }
       }
     }
@@ -235,8 +278,8 @@ export async function mirrorCommunicationToRelatedLeads(opts: MirrorOpts): Promi
         ? [originProp.streetAddress, originProp.city, originProp.state].filter(Boolean).join(', ') || null
         : null
 
-    // Write a mirrored ActivityLog for each related property.
-    const creates = Array.from(relatedMap.entries()).map(([propertyId]) =>
+    // Write a mirrored ActivityLog for each related property (always).
+    const activityCreates = Array.from(relatedMap.entries()).map(([propertyId]) =>
       ActivityLog.create({
         propertyId,
         userId: userId ?? null,
@@ -255,7 +298,57 @@ export async function mirrorCommunicationToRelatedLeads(opts: MirrorOpts): Promi
       }),
     )
 
-    await Promise.all(creates)
+    // When the caller supplied a `message` payload, also fan out a real
+    // Conversation + Message into each related lead so the Comm & Notes
+    // feed (which reads Message rows, not ActivityLog) renders the
+    // SMS/call thread there too. Mirrors the inbound SMS webhook
+    // fan-out pattern; each lead gets its OWN Conversation +
+    // Message — leads stay fully independent.
+    const messageCreates = message
+      ? Array.from(relatedMap.entries()).map(async ([propertyId, ref]) => {
+          try {
+            // Find or create the Conversation for this lead's contact.
+            // Same key as persistInboundSms in the Telnyx webhook —
+            // (propertyId, contactId) — so a follow-up inbound SMS lands
+            // on the same thread we just mirrored to.
+            const where = ref.contactId
+              ? { propertyId, contactId: ref.contactId }
+              : { propertyId, contactId: null }
+            let conversation: any = await Conversation.findOne({ where })
+            if (!conversation) {
+              conversation = await Conversation.create({
+                propertyId,
+                contactId: ref.contactId,
+                contactPhone: phone ?? message.from ?? message.to ?? null,
+                isRead: false,
+                lastMessageAt: new Date(),
+              } as any)
+            } else {
+              await conversation.update({ isRead: false, lastMessageAt: new Date() })
+            }
+
+            await Message.create({
+              propertyId,
+              conversationId: conversation.id,
+              ...(ref.contactId ? { contactId: ref.contactId } : {}),
+              channel: message.channel,
+              direction: message.direction,
+              body: message.body ?? '',
+              ...(message.from ? { from: message.from } : {}),
+              ...(message.to ? { to: message.to } : {}),
+              ...(message.twilioSid ? { twilioSid: message.twilioSid } : {}),
+              ...(userId ? { sentById: userId } : {}),
+            } as any)
+          } catch (err) {
+            console.warn(
+              `[activity-mirror] failed to mirror Message into property ${propertyId}:`,
+              err,
+            )
+          }
+        })
+      : []
+
+    await Promise.all([...activityCreates, ...messageCreates])
   } catch (err) {
     // Mirror failures must never surface to the caller.
     console.warn('[activity-mirror] mirrorCommunicationToRelatedLeads error:', err)

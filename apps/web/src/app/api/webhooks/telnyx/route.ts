@@ -778,6 +778,18 @@ async function handleCallEvent(eventType: string, payload: any) {
                 activeCallId: activeCall.id,
               },
               actorType: 'system',
+              // Fan out a real Message + Conversation into each related
+              // lead so the call shows up in their Comm & Notes feed
+              // (with the recording player resolving the same audio via
+              // ActiveCall.id stored as twilioSid).
+              message: {
+                channel: 'CALL',
+                direction: activeCall.direction === 'INBOUND' ? 'INBOUND' : 'OUTBOUND',
+                body: summary,
+                from: callFrom,
+                to: callTo,
+                twilioSid: activeCall.id,
+              },
             })
           }
         }
