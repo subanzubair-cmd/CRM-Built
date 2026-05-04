@@ -285,9 +285,33 @@ export async function POST(req: NextRequest) {
 
   // Mirror the communication to other leads sharing the same phone/email.
   // Fire-and-forget — mirrors must never delay or block the response.
-  const mirrorPhone =
-    channel === 'SMS' ? (smsTo ?? smsFrom) : channel === 'CALL' ? (callFrom ?? callTo) : null
-  const mirrorEmail = channel === 'EMAIL' ? (emailTo ?? emailFrom) : null
+  //
+  // The mirror key is the COUNTERPARTY's identifier (the customer's phone
+  // / email), not our own CRM number. Which side that is depends on
+  // direction:
+  //   OUTBOUND → counterparty is the recipient (to)
+  //   INBOUND  → counterparty is the sender (from)
+  // The earlier `smsTo ?? smsFrom` / `callFrom ?? callTo` shortcut was
+  // direction-blind and broke for outbound calls — `callFrom` is the
+  // agent's CRM number on outbound, so findLeadsForPhone resolved to
+  // zero matches and the mirror silently no-op'd.
+  const customerPhone =
+    channel === 'SMS'
+      ? direction === 'OUTBOUND'
+        ? smsTo
+        : smsFrom
+      : channel === 'CALL'
+        ? direction === 'OUTBOUND'
+          ? callTo
+          : callFrom
+        : null
+  const mirrorPhone = customerPhone ?? null
+  const mirrorEmail =
+    channel === 'EMAIL'
+      ? direction === 'OUTBOUND'
+        ? emailTo
+        : emailFrom
+      : null
 
   if (mirrorPhone || mirrorEmail) {
     // Pass `message` for SMS/CALL so related leads ALSO receive a real
