@@ -93,6 +93,10 @@ import {
   down as dispoStagesSeedDown,
 } from './20260502000000-seed-dispo-stages'
 import {
+  up as callMessageIndexesUp,
+  down as callMessageIndexesDown,
+} from './20260502100000-add-call-message-indexes'
+import {
   up as activityLogMirrorUp,
   down as activityLogMirrorDown,
 } from './20260503000000-add-activity-log-mirror'
@@ -240,6 +244,13 @@ const migrations = [
       dispoStagesSeedUp({ name: '20260502000000-seed-dispo-stages', context }),
     down: ({ context }: { context: any }) =>
       dispoStagesSeedDown({ name: '20260502000000-seed-dispo-stages', context }),
+  },
+  {
+    name: '20260502100000-add-call-message-indexes',
+    up: ({ context }: { context: any }) =>
+      callMessageIndexesUp({ name: '20260502100000-add-call-message-indexes', context }),
+    down: ({ context }: { context: any }) =>
+      callMessageIndexesDown({ name: '20260502100000-add-call-message-indexes', context }),
   },
   {
     name: '20260503000000-add-activity-log-mirror',
