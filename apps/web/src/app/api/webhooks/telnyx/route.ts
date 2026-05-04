@@ -753,6 +753,7 @@ async function handleCallEvent(eventType: string, payload: any) {
                 from: callFrom,
                 to: callTo,
                 durationSec,
+                activeCallId: activeCall.id,
               },
             } as any)
           } catch (err) {
@@ -774,6 +775,7 @@ async function handleCallEvent(eventType: string, payload: any) {
                 from: callFrom,
                 to: callTo,
                 durationSec,
+                activeCallId: activeCall.id,
               },
               actorType: 'system',
             })

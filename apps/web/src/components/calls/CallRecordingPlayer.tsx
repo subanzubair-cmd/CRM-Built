@@ -20,15 +20,33 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Play, Pause, Loader2, AlertCircle, Download } from 'lucide-react'
+import { buildRecordingDisplayLabel } from '@/lib/recording-label'
 
 interface Props {
   callId: string
+  /**
+   * When true, fetches the recording metadata on mount so the header line
+   * (address / duration / date / user) renders before the user clicks play.
+   * Default false to preserve the lazy-fetch behaviour for offscreen rows.
+   */
+  eagerMeta?: boolean
 }
 
 interface RecordingMeta {
   url: string
   durationSec: number | null
   expiresInSeconds: number
+  /** Property.streetAddress, or null when no property is attached. */
+  propertyAddress: string | null
+  /** ISO string of ActiveCall.startedAt. */
+  startedAt: string | null
+  /** Agent (User.name), or null when the call wasn't attributed to a user. */
+  agentName: string | null
+  /**
+   * Server-built filename for `<a download>`. Always present, gracefully
+   * degraded when fields are missing (worst case: "Call Recording.webm").
+   */
+  downloadName: string
 }
 
 const SPEEDS = [0.5, 1, 1.25, 1.5, 2] as const
@@ -44,7 +62,7 @@ function formatTime(s: number): string {
   return `${mm}:${pad(ss)}`
 }
 
-export function CallRecordingPlayer({ callId }: Props) {
+export function CallRecordingPlayer({ callId, eagerMeta = false }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [meta, setMeta] = useState<RecordingMeta | null>(null)
   const [loading, setLoading] = useState(false)
@@ -112,7 +130,7 @@ export function CallRecordingPlayer({ callId }: Props) {
       const blobUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = blobUrl
-      a.download = `call-${callId}.${ext}`
+      a.download = data.downloadName ?? `call-${callId}.${ext}`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -150,6 +168,14 @@ export function CallRecordingPlayer({ callId }: Props) {
     if (audioRef.current) audioRef.current.playbackRate = speed
   }, [speed, meta])
 
+  // Optional: eagerly fetch metadata on mount so the header line renders
+  // before the user clicks play. Default behaviour (eagerMeta=false) keeps
+  // the original lazy-fetch contract — saves S3 sigs on offscreen rows.
+  useEffect(() => {
+    if (eagerMeta && !meta) void ensureLoaded()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callId, eagerMeta])
+
   function commitDurationFromAudio() {
     const audio = audioRef.current
     if (!audio) return
@@ -161,8 +187,26 @@ export function CallRecordingPlayer({ callId }: Props) {
   const progress = total > 0 ? Math.min(currentTime, total) : 0
   const hasError = !!error
 
+  // Build the header label from whatever fields the API returned. Returns
+  // null when nothing is available, so we hide the line entirely instead
+  // of rendering an empty row.
+  const headerLabel = meta
+    ? buildRecordingDisplayLabel({
+        propertyAddress: meta.propertyAddress,
+        durationSec: meta.durationSec,
+        startedAt: meta.startedAt,
+        agentName: meta.agentName,
+      })
+    : null
+
   return (
-    <div className="w-full inline-flex items-center gap-1.5 bg-white border border-gray-200 rounded-md px-1.5 py-1 max-w-full">
+    <div className="w-full max-w-full">
+      {headerLabel && (
+        <div className="text-[11px] font-medium text-gray-700 mb-1 truncate" title={headerLabel}>
+          {headerLabel}
+        </div>
+      )}
+      <div className="w-full inline-flex items-center gap-1.5 bg-white border border-gray-200 rounded-md px-1.5 py-1 max-w-full">
       {/* Play / Pause — icon-only to save horizontal space. */}
       <button
         type="button"
@@ -277,6 +321,7 @@ export function CallRecordingPlayer({ callId }: Props) {
           onError={() => setError('Playback failed')}
         />
       )}
+      </div>
     </div>
   )
 }

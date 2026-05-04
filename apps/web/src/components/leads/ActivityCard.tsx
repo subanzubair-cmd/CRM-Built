@@ -1,4 +1,5 @@
 import { format } from 'date-fns'
+import { CallRecordingPlayer } from '@/components/calls/CallRecordingPlayer'
 
 const ACTION_LABELS: Record<string, string> = {
   LEAD_CREATED: 'Lead Created',
@@ -50,6 +51,13 @@ type FeedItem = {
   label: string
   subtext: string
   dot: 'blue' | 'teal' | 'gray'
+  /**
+   * When set (CALL channel ActivityLog rows that carry the back-pointer in
+   * detail.activeCallId), the feed item renders an inline CallRecordingPlayer.
+   * Mirrored items get this too — the player resolves the recording from
+   * ActiveCall.id, so a mirrored lead can still play the audio.
+   */
+  activeCallId: string | null
 }
 
 function formatStageName(stage: string): string {
@@ -61,32 +69,41 @@ function formatStageName(stage: string): string {
 
 export function ActivityCard({ activityLogs, stageHistory }: Props) {
   const items: FeedItem[] = [
-    ...activityLogs.map((log) => ({
-      id: `act-${log.id}`,
-      createdAt: new Date(log.createdAt),
-      label:
-        ACTION_LABELS[log.action] ??
-        log.action
-          .replace(/_/g, ' ')
-          .toLowerCase()
-          .replace(/\b\w/g, (c) => c.toUpperCase()),
-      subtext: [
-        (log.detail as any)?.description ?? '',
-        log.user?.name ? `by ${log.user.name}` : '',
-        log.mirroredFromPropertyId
-          ? `Mirrored from ${(log.detail as any)?.mirroredFromAddress ?? 'shared contact'}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join(' · '),
-      dot: log.mirroredFromPropertyId ? ('teal' as const) : ('blue' as const),
-    })),
+    ...activityLogs.map((log) => {
+      const detail = log.detail as { channel?: string; activeCallId?: string | null } | null
+      const activeCallId =
+        detail?.channel === 'CALL' && typeof detail?.activeCallId === 'string'
+          ? detail.activeCallId
+          : null
+      return {
+        id: `act-${log.id}`,
+        createdAt: new Date(log.createdAt),
+        label:
+          ACTION_LABELS[log.action] ??
+          log.action
+            .replace(/_/g, ' ')
+            .toLowerCase()
+            .replace(/\b\w/g, (c) => c.toUpperCase()),
+        subtext: [
+          (log.detail as any)?.description ?? '',
+          log.user?.name ? `by ${log.user.name}` : '',
+          log.mirroredFromPropertyId
+            ? `Mirrored from ${(log.detail as any)?.mirroredFromAddress ?? 'shared contact'}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        dot: log.mirroredFromPropertyId ? ('teal' as const) : ('blue' as const),
+        activeCallId,
+      }
+    }),
     ...stageHistory.map((sh) => ({
       id: `stage-${sh.id}`,
       createdAt: new Date(sh.createdAt),
       label: `Moved to ${formatStageName(sh.toStage)}`,
       subtext: `${sh.pipeline} · by ${sh.changedByName}`,
       dot: 'gray' as const,
+      activeCallId: null,
     })),
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
 
@@ -121,6 +138,11 @@ export function ActivityCard({ activityLogs, stageHistory }: Props) {
                   <p className="text-[11px] text-gray-300 mt-0.5">
                     {format(item.createdAt, 'MMM d, yyyy h:mm a')}
                   </p>
+                  {item.activeCallId && (
+                    <div className="mt-2 max-w-md">
+                      <CallRecordingPlayer callId={item.activeCallId} eagerMeta />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
