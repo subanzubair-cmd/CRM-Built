@@ -93,9 +93,34 @@ export async function POST(req: NextRequest, { params }: Params) {
   const providerHangup: {
     attempted: boolean
     ok: boolean
+    /**
+     * True when Telnyx returned 422 / code 90018 ("Call has already ended").
+     * That's a no-op success — the caller hung up before our command landed,
+     * so our intent (end the call) is satisfied. The client uses this flag
+     * to render a friendlier toast than "Reject accepted by Telnyx".
+     */
+    alreadyEnded: boolean
     status: number | null
     detail: string | null
-  } = { attempted: false, ok: false, status: null, detail: null }
+  } = { attempted: false, ok: false, alreadyEnded: false, status: null, detail: null }
+
+  /**
+   * Detect Telnyx error code 90018 ("Call has already ended"). Telnyx
+   * returns this when our hangup/reject command races a call.hangup that
+   * was already in flight — totally normal, not a real failure.
+   */
+  const isCallAlreadyEnded = (text: string | null): boolean => {
+    if (!text) return false
+    try {
+      const json = JSON.parse(text)
+      const errors = Array.isArray(json?.errors) ? json.errors : []
+      return errors.some((e: any) => String(e?.code ?? '') === '90018')
+    } catch {
+      // Body wasn't pure JSON (truncation, transport oddity) — fall back
+      // to a substring match so we still recognize the case.
+      return /"code"\s*:\s*"?90018"?/.test(text)
+    }
+  }
 
   if (conferenceName && !isPlaceholderCallId(conferenceName)) {
     const config = await getActiveCommConfig()
@@ -132,15 +157,26 @@ export async function POST(req: NextRequest, { params }: Params) {
             body: JSON.stringify(body),
           })
           const txt = res.ok ? '' : (await res.text().catch(() => '')).slice(0, 400)
+          // 422 with code 90018 means the call ended on its own before our
+          // command landed — that's success for our purposes (we wanted the
+          // call gone; it's gone), not a failure to surface.
+          const alreadyEnded = !res.ok && isCallAlreadyEnded(txt)
+          const ok = res.ok || alreadyEnded
           console.log(
-            `[calls/reject] Telnyx ${action} → ${res.status} ${res.ok ? 'OK' : 'FAIL'} ` +
-              `(callControlId=${conferenceName.slice(0, 16)}…) ${txt}`,
+            `[calls/reject] Telnyx ${action} → ${res.status} ` +
+              `${ok ? (alreadyEnded ? 'OK (already-ended)' : 'OK') : 'FAIL'} ` +
+              `(callControlId=${conferenceName.slice(0, 16)}…) ${alreadyEnded ? '[call already ended — no-op]' : txt}`,
           )
-          return { ok: res.ok, status: res.status, detail: txt || null }
+          return {
+            ok,
+            status: res.status,
+            detail: alreadyEnded ? 'Call already ended' : (txt || null),
+            alreadyEnded,
+          }
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err)
           console.warn(`[calls/reject] Telnyx ${action} threw:`, detail)
-          return { ok: false, status: 0, detail }
+          return { ok: false, status: 0, detail, alreadyEnded: false }
         }
       }
 
@@ -150,17 +186,22 @@ export async function POST(req: NextRequest, { params }: Params) {
       const hangupResult = await tryAction('hangup')
       providerHangup.status = hangupResult.status
       providerHangup.ok = hangupResult.ok
+      providerHangup.alreadyEnded = hangupResult.alreadyEnded
       providerHangup.detail = hangupResult.detail
 
-      // Step 2: only if /hangup didn't take, try /reject — some
-      // Voice App configurations refuse hangup on still-ringing
-      // calls and need an explicit reject.
-      if (!hangupResult.ok) {
+      // Step 2: only if /hangup didn't take AND the call isn't already
+      // ended, try /reject. If hangup already said "call ended", reject
+      // will fail the exact same way and we'd just stitch two identical
+      // 422s into the toast detail. Skip it.
+      if (!hangupResult.ok && !hangupResult.alreadyEnded) {
         const rejectResult = await tryAction('reject')
         if (rejectResult.ok) {
           providerHangup.status = rejectResult.status
           providerHangup.ok = true
-          providerHangup.detail = `hangup failed (${hangupResult.status}: ${hangupResult.detail}), reject OK`
+          providerHangup.alreadyEnded = rejectResult.alreadyEnded
+          providerHangup.detail = rejectResult.alreadyEnded
+            ? 'Call already ended'
+            : `hangup failed (${hangupResult.status}: ${hangupResult.detail}), reject OK`
         } else {
           providerHangup.detail = `hangup ${hangupResult.status}: ${hangupResult.detail}; reject ${rejectResult.status}: ${rejectResult.detail}`
         }

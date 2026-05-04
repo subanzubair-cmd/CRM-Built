@@ -329,7 +329,12 @@ export function InboundCallNotification() {
 
         const ph = json?.providerHangup
         const stamp = `Telnyx HTTP ${ph?.status ?? '—'}${ph?.detail ? ` · ${ph.detail}` : ''}`
-        if (ph?.ok) {
+        if (ph?.alreadyEnded) {
+          // Call ended on its own (caller hung up before our reject landed,
+          // or another agent took it). Not an error — surface as info-level
+          // success so the user knows the action was a no-op, not a failure.
+          toast.success('Call already ended.', { duration: 4000 })
+        } else if (ph?.ok) {
           toast.success(`Reject accepted by Telnyx (${stamp}).`, {
             duration: 8000,
           })
