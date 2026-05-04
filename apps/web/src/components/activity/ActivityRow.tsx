@@ -238,8 +238,10 @@ export function ActivityRow(props: ActivityRowProps) {
       <span className="inline-flex items-baseline gap-1.5 flex-wrap">
         {fromFormatted && (
           <span className="inline-flex items-baseline gap-1">
-            <span className="text-gray-400">From</span>
-            <span className={`text-[12.5px] text-gray-700 ${isEmail ? '' : 'font-mono'}`}>
+            <span className="text-gray-500 font-medium">From</span>
+            <span
+              className={`text-[12.5px] font-semibold text-gray-900 ${isEmail ? '' : 'font-mono'}`}
+            >
               {fromFormatted}
             </span>
           </span>
@@ -247,8 +249,10 @@ export function ActivityRow(props: ActivityRowProps) {
         {fromFormatted && toFormatted && <span className="text-gray-300">→</span>}
         {toFormatted && (
           <span className="inline-flex items-baseline gap-1">
-            <span className="text-gray-400">To</span>
-            <span className={`text-[12.5px] text-gray-700 ${isEmail ? '' : 'font-mono'}`}>
+            <span className="text-gray-500 font-medium">To</span>
+            <span
+              className={`text-[12.5px] font-semibold text-gray-900 ${isEmail ? '' : 'font-mono'}`}
+            >
               {toFormatted}
             </span>
           </span>
@@ -283,10 +287,12 @@ export function ActivityRow(props: ActivityRowProps) {
       : 'text-gray-600'
 
   return (
-    <div className="px-3 py-2 flex items-start gap-2.5 group hover:bg-gray-50/60 transition-colors">
-      {/* Tiny channel chip — 20×20 dot with colored glyph. */}
+    <div className="px-4 py-3 flex items-start gap-3 group hover:bg-gray-50/60 transition-colors">
+      {/* Channel chip — 24×24 dot with colored glyph. Slightly larger than
+          before so the icon doesn't feel cramped against the bolder phone
+          numbers in the meta line. */}
       <div
-        className={`w-5 h-5 rounded-full ${themeClass} flex items-center justify-center flex-shrink-0 mt-[3px]`}
+        className={`w-6 h-6 rounded-full ${themeClass} flex items-center justify-center flex-shrink-0 mt-[1px]`}
       >
         <ChannelIcon channel={channel} direction={direction ?? null} isMissed={isMissedCall} />
       </div>
@@ -313,31 +319,34 @@ export function ActivityRow(props: ActivityRowProps) {
           </span>
         </div>
 
-        {/* Meta — From → To plus By <Agent>. */}
+        {/* Meta — From → To plus By <Agent>. Phone numbers are bold so
+            they read as primary identifiers, not body chrome. */}
         {(fromToNode || byName) && (
-          <div className="text-[12.5px] text-gray-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+          <div className="text-[12.5px] text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
             {fromToNode}
             {fromToNode && byName && <Dot />}
             {byName && (
               <span className="inline-flex items-baseline gap-1">
-                <span className="text-gray-400">By</span>
-                <span className="text-gray-700">{byName}</span>
+                <span className="text-gray-500 font-medium">By</span>
+                <span className="font-semibold text-gray-900">{byName}</span>
               </span>
             )}
           </div>
         )}
 
-        {/* Outcome — calls only. Sized 2pt smaller than the headline
-            so "LEAD CONNECTED / NOT-CONNECTED" sits as a tight,
-            secondary status under the channel label rather than
-            competing with it. */}
+        {/* Outcome — calls only. Renders inline with the By/From-To meta
+            when present (matches REsimpli's "LEAD NOT-CONNECTED · By:"
+            single-line layout), or on its own line when there's nothing
+            else to attach to. */}
         {outcomeLabel && (
-          <p className={`text-[11px] font-semibold mt-1 ${outcomeColor}`}>{outcomeLabel}</p>
+          <p className={`text-[11.5px] font-semibold mt-1 ${outcomeColor}`}>{outcomeLabel}</p>
         )}
 
-        {/* Body — SMS / email text only. */}
+        {/* Body — SMS / email text only. Set a real top gap so the
+            message sits visually separated from the phones-in-meta line
+            above instead of running into them. */}
         {body && !isCall && (
-          <p className="text-[14.5px] text-gray-700 mt-1 leading-snug whitespace-pre-wrap break-words">
+          <p className="text-[14px] text-gray-800 mt-2 leading-relaxed whitespace-pre-wrap break-words">
             {body}
             {isSms && direction === 'OUTBOUND' && (
               <span className="ml-1.5 inline-flex items-center align-middle">

@@ -202,12 +202,11 @@ export function MessageThread({ messages: initialMessages }: Props) {
             <span className="text-[11px] text-gray-400 font-medium">{group.date}</span>
             <div className="flex-1 h-px bg-gray-100" />
           </div>
-          {/* No nested rounded rectangle — the outer Comm & Notes tab
-              already provides the card boundary. Removing the inner
-              border lets each row use the full width available so the
-              recording player + From/To meta don't have to compete
-              with stacked horizontal padding. */}
-          <div className="divide-y divide-gray-50">
+          {/* Stronger divider between rows so each entry reads as its
+              own card. divide-gray-50 was so faint that an SMS bled
+              into the call below it; gray-100 gives a clear separator
+              while still feeling light against the white background. */}
+          <div className="divide-y divide-gray-100">
             {group.msgs.map((msg) => {
               const isNote = msg.channel === 'NOTE'
               if (isNote) {
